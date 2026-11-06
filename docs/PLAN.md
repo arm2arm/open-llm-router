@@ -1,4 +1,4 @@
-# AIP LLM Router — Plan
+# open-llm-router — Plan
 
 Status: **plan, not implemented** (2026-11-06). Owner: A. Khalatyan (AIP). Discussion: Monday 2026-11-09.
 

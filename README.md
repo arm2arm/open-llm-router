@@ -1,6 +1,6 @@
-# aip-llm-router
+# open-llm-router
 
-Small open-source LLM router for AIP's local models: OpenAI- and Anthropic-compatible API,
+Small open-source LLM router for local models (first deployment: AIP): OpenAI- and Anthropic-compatible API,
 Keycloak SSO, per-user API keys, group-based model access, usage metrics.
 
 Status: **planning** — see [docs/PLAN.md](docs/PLAN.md).
