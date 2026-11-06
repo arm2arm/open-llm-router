@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use open-llm-router, please cite it using the metadata from this file."
+title: "open-llm-router"
+abstract: >-
+  Small open-source LLM router for locally hosted models. It exposes
+  OpenAI- and Anthropic-compatible APIs, authenticates users with Keycloak
+  (OIDC/SSO) and per-user API keys, routes requests by model to vLLM
+  backends, and records per-user usage metadata without storing prompts.
+type: software
+authors:
+  - family-names: "Khalatyan"
+    given-names: "Arman"
+    affiliation: "Leibniz Institute for Astrophysics Potsdam (AIP)"
+repository-code: "https://github.com/arm2arm/open-llm-router"
+url: "https://github.com/arm2arm/open-llm-router"
+license: MIT
+version: "0.0.1"
+date-released: "2026-11-06"
+keywords:
+  - LLM
+  - router
+  - gateway
+  - vLLM
+  - OpenAI API
+  - Anthropic API
+  - Keycloak
+  - OIDC
+  - SSO

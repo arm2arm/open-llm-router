@@ -7,6 +7,10 @@ Status: **planning** — see [docs/PLAN.md](docs/PLAN.md).
 
 Authors: A. Khalatyan (AIP), with Hermes agent.
 
+## Citation
+
+See [CITATION.cff](CITATION.cff) (GitHub: "Cite this repository").
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
