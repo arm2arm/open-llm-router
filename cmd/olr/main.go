@@ -1,0 +1,106 @@
+// Command olr is the open-llm-router: one binary that serves the API and,
+// later, the portal and the admin commands.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/server"
+)
+
+const usage = `usage: olr <command> [flags]
+
+commands:
+  serve    run the router
+
+Run "olr <command> -h" for the flags of a command.
+`
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	var err error
+	switch cmd, args := os.Args[1], os.Args[2:]; cmd {
+	case "serve":
+		err = serve(args)
+	case "help", "-h", "-help", "--help":
+		fmt.Print(usage)
+	default:
+		fmt.Fprintf(os.Stderr, "olr: unknown command %q\n\n%s", cmd, usage)
+		os.Exit(2)
+	}
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+	case errors.Is(err, errUsage):
+		os.Exit(2)
+	case err != nil:
+		// Start-up errors go to stderr as plain text: they are read by the
+		// person who started the process. Everything after that is a JSON
+		// log line on stdout.
+		fmt.Fprintf(os.Stderr, "olr: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// errUsage reports a command line that the flag package has already
+// explained on stderr.
+var errUsage = errors.New("invalid command line")
+
+func serve(args []string) error {
+	fs := flag.NewFlagSet("olr serve", flag.ContinueOnError)
+	configPath := fs.String("config", os.Getenv("OLR_CONFIG"), "path of the YAML config `file` (default: $OLR_CONFIG)")
+	listen := fs.String("listen", ":8080", "`address` to listen on")
+	grace := fs.Duration("shutdown-grace", 30*time.Second, "`time` that requests in flight get to finish after SIGTERM")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return errUsage
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "olr serve: unexpected argument %q\n", fs.Arg(0))
+		return errUsage
+	}
+	if *configPath == "" {
+		return errors.New("no config file: set OLR_CONFIG or pass -config")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return err
+	}
+
+	// The first SIGTERM or Ctrl-C starts a graceful shutdown. Handling of the
+	// signal is then switched off again, so that a second one ends the
+	// process at once.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+
+	log.Info("listening", "addr", ln.Addr().String(), "config", *configPath, "models", len(cfg.Models))
+	if err := server.New(log).Run(ctx, ln, *grace); err != nil {
+		return err
+	}
+	log.Info("stopped")
+	return nil
+}

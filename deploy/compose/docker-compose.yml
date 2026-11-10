@@ -1,0 +1,16 @@
+# Local development stack. For now it is the router alone; Postgres and the
+# mock backends are added in #4, Keycloak in #14.
+name: olr
+
+services:
+  router:
+    build: ../..
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Read by config.example.yaml. Nothing connects to it before the portal exists.
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8080/realms/olr-dev}
+    volumes:
+      - ../../config.example.yaml:/etc/olr/config.yaml:ro
+    # A little longer than the router's own shutdown grace of 30 s.
+    stop_grace_period: 35s
