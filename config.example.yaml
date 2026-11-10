@@ -19,11 +19,15 @@ models:
   chat-model:
     protocols: [openai, anthropic]
     timeout_s: 900
+    idle_timeout_s: 30             # max silence between response chunks
+    # upstream_model: backend-served-name  # optional, also applied to aliases
     pool:
       # weight is the relative throughput of a replica; max_inflight caps the
       # requests it serves at once.
       - {url: http://mock-llm-a:8000, weight: 2.0, max_inflight: 64}
       - {url: http://mock-llm-b:8000, weight: 1.0, max_inflight: 32}
+      # For a vLLM --api-key backend, add bearer_token_env: VLLM_API_KEY
+      # to its replica and export that variable in the router's environment.
 
 # Policy per identity-provider group. A limit that is left out is not enforced.
 groups:

@@ -25,21 +25,30 @@ const (
 
 // Server is the router's HTTP server.
 type Server struct {
-	log *slog.Logger
-	mux *http.ServeMux
+	log   *slog.Logger
+	mux   *http.ServeMux
+	ready func() bool
 }
 
 // New returns a server that answers the health endpoints. Further routes are
 // added with Handle.
 func New(log *slog.Logger) *Server {
-	s := &Server{log: log, mux: http.NewServeMux()}
-	// healthz: the process is up. readyz: the router can take traffic; the
-	// configuration is loaded before the server exists, so for now that is the
-	// same thing.
+	s := &Server{log: log, mux: http.NewServeMux(), ready: func() bool { return true }}
 	s.mux.HandleFunc("GET /healthz", status("ok"))
-	s.mux.HandleFunc("GET /readyz", status("ready"))
+	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if !s.ready() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			status("unavailable")(w, r)
+			return
+		}
+		status("ready")(w, r)
+	})
 	return s
 }
+
+// SetReadiness installs the readiness probe before serving requests.
+func (s *Server) SetReadiness(check func() bool) { s.ready = check }
 
 func status(text string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {

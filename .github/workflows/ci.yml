@@ -56,6 +56,11 @@ jobs:
         run: make up
       - name: Probe router and both mock backends
         run: make smoke
+      - name: Official OpenAI and Anthropic SDKs against router and mocks
+        run: |
+          python3 -m venv /tmp/olr-sdk
+          /tmp/olr-sdk/bin/pip install 'openai==3.49.0' 'anthropic==2.8.0'
+          make sdk SDK_RUN=/tmp/olr-sdk/bin/python
       - name: Show logs on failure
         if: failure()
         run: docker compose logs --no-color

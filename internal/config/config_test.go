@@ -321,3 +321,38 @@ func TestLoad(t *testing.T) {
 		}
 	})
 }
+
+func TestRoutingSettings(t *testing.T) {
+	yaml := change(t, "timeout_s: 900", "timeout_s: 900\n    idle_timeout_s: 45\n    upstream_model: served-name")
+	yaml = strings.Replace(yaml, "weight: 2.0,", "bearer_token_env: BACKEND_KEY, weight: 2.0,", 1)
+	env := map[string]string{"OIDC_ISSUER": "http://kc", "BACKEND_KEY": "private-backend-key"}
+	cfg, err := Parse([]byte(yaml), lookupIn(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := cfg.Models["chat-model"]
+	if model.IdleTimeoutS != 45 || model.UpstreamModel != "served-name" || model.Pool[0].BearerToken != env["BACKEND_KEY"] {
+		t.Fatal("routing settings not loaded")
+	}
+	for _, token := range []string{"", "bad\r\nheader"} {
+		env["BACKEND_KEY"] = token
+		if _, err := Parse([]byte(yaml), lookupIn(env)); err == nil || !strings.Contains(err.Error(), "bearer_token_env") || strings.Contains(err.Error(), "bad\r") {
+			t.Fatal("invalid token not safely rejected")
+		}
+	}
+	delete(env, "BACKEND_KEY")
+	if _, err := Parse([]byte(yaml), lookupIn(env)); err == nil {
+		t.Fatal("missing backend token accepted")
+	}
+	for _, tc := range []struct{ old, new string }{
+		{"weight: 1.0", "weight: .nan"},
+		{"weight: 1.0", "weight: .inf"},
+		{"timeout_s: 900", "timeout_s: 900\n    idle_timeout_s: -1"},
+		{"http://backend-b:8000", "http://backend-b:8000/path"},
+		{"http://backend-b:8000", "http://backend-b:8000?query=value"},
+	} {
+		if _, err := Parse([]byte(change(t, tc.old, tc.new)), lookupIn(validEnv)); err == nil {
+			t.Fatalf("accepted %s", tc.new)
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/url"
 	"os"
 	"slices"
@@ -54,16 +55,20 @@ type OIDC struct {
 
 // Model is one model name served to clients and the replicas behind it.
 type Model struct {
-	Protocols []string  `yaml:"protocols"`
-	TimeoutS  int       `yaml:"timeout_s"`
-	Pool      []Replica `yaml:"pool"`
+	Protocols     []string  `yaml:"protocols"`
+	UpstreamModel string    `yaml:"upstream_model"`
+	TimeoutS      int       `yaml:"timeout_s"`
+	IdleTimeoutS  int       `yaml:"idle_timeout_s"` // default 30; between response chunks
+	Pool          []Replica `yaml:"pool"`
 }
 
 // Replica is one backend server of a model.
 type Replica struct {
-	URL         string  `yaml:"url"`
-	Weight      float64 `yaml:"weight"` // relative throughput
-	MaxInflight int     `yaml:"max_inflight"`
+	URL            string  `yaml:"url"`
+	Weight         float64 `yaml:"weight"` // relative throughput
+	MaxInflight    int     `yaml:"max_inflight"`
+	BearerTokenEnv string  `yaml:"bearer_token_env"`
+	BearerToken    string  `yaml:"-"` // resolved from BearerTokenEnv, never written to YAML
 }
 
 // Group is the policy for the members of one identity-provider group. A limit
@@ -129,6 +134,27 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		if cfg.OIDC.UsernameClaim == "" {
 			cfg.OIDC.UsernameClaim = "preferred_username"
 		}
+	}
+	for name, model := range cfg.Models {
+		if model.IdleTimeoutS == 0 {
+			model.IdleTimeoutS = 30
+		}
+		for i := range model.Pool {
+			r := &model.Pool[i]
+			if r.BearerTokenEnv == "" {
+				continue
+			}
+			token, ok := lookup(r.BearerTokenEnv)
+			if !isVarName(r.BearerTokenEnv) || !ok || token == "" || strings.ContainsAny(token, "\r\n") {
+				problems = append(problems, fmt.Sprintf("models.%s.pool[%d].bearer_token_env: must name a set, nonempty environment variable containing a single-line token", name, i))
+			} else {
+				r.BearerToken = token
+			}
+		}
+		cfg.Models[name] = model
+	}
+	if len(problems) > 0 {
+		return nil, problems
 	}
 	if problems = cfg.validate(); len(problems) > 0 {
 		return nil, problems
@@ -271,6 +297,9 @@ func (c *Config) validate() Problems {
 		if m.TimeoutS <= 0 {
 			add("%s.timeout_s: must be greater than 0", at)
 		}
+		if m.IdleTimeoutS <= 0 {
+			add("%s.idle_timeout_s: must be greater than 0", at)
+		}
 		if len(m.Pool) == 0 {
 			add("%s.pool: at least one replica is required", at)
 		}
@@ -278,13 +307,13 @@ func (c *Config) validate() Problems {
 		for i, r := range m.Pool {
 			at := fmt.Sprintf("%s.pool[%d]", at, i)
 			switch {
-			case !isHTTPURL(r.URL):
+			case !isBackendURL(r.URL):
 				add("%s.url: must be an http or https URL, got %q", at, r.URL)
 			case seen[r.URL]:
 				add("%s.url: %s is listed twice in this pool", at, r.URL)
 			}
 			seen[r.URL] = true
-			if r.Weight <= 0 {
+			if r.Weight <= 0 || math.IsNaN(r.Weight) || math.IsInf(r.Weight, 0) {
 				add("%s.weight: must be greater than 0", at)
 			}
 			if r.MaxInflight <= 0 {
@@ -345,4 +374,10 @@ func deref[T any](p *T) T {
 func isHTTPURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// Backend URLs name origins; paths and queries come exclusively from the caller.
+func isBackendURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && isHTTPURL(s) && u.User == nil && u.RawQuery == "" && u.Fragment == "" && (u.Path == "" || u.Path == "/")
 }
