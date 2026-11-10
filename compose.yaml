@@ -1,0 +1,5 @@
+# Keep the deployable definition in deploy/compose while supporting
+# `docker compose up` from the repository root (Compose 2.20+).
+name: olr
+include:
+  - deploy/compose/docker-compose.yml
