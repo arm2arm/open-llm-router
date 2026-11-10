@@ -1,12 +1,30 @@
-# open-llm-router — Plan v0.2
+# open-llm-router — Plan v0.3
 
-Status: **plan, not implemented**. v0.1: 2026-11-06. v0.2: 2026-11-10.
+Status: **plan, not implemented**. v0.1: 2026-11-06. v0.2: 2026-11-10. v0.3: 2026-11-10.
 Owner: A. Khalatyan. License: MIT.
 
 Site-specific values (hostnames, realms, GPU layout, quotas) are **not** kept in this public repository.
 They live in a private deployment file that sets the same configuration keys as `config.example.yaml`.
 
-## 0. Changes since v0.1
+## 0. Changes
+
+### Since v0.2 (v0.3)
+
+- Router backend in **Go** (standard-library HTTP server, client and reverse proxy; one static
+  binary) instead of Python/FastAPI: streaming every token for many concurrent clients must not
+  cost them tokens per second, and one process should use all cores.
+- Portal is a **React single-page app** (Vite, TypeScript) served from the same binary and backed
+  by a JSON API, instead of server-rendered pages.
+- **Per-call tracing** is part of v1: tokens, time to first token and tokens per second are
+  recorded for every call, shown to the user, exported as metrics and, optionally, as
+  OpenTelemetry spans. Metadata only.
+- Users are keyed by **issuer plus `sub`** with a surrogate ID; email is an attribute and is never
+  used to match users (§10).
+- Users can **delete their own activity records**; an operator can erase a user completely (§13).
+- Delivery order, scope cut and current estimates are in [WEEK1.md](WEEK1.md); §15 keeps the
+  acceptance tests.
+
+### Since v0.1 (v0.2)
 
 - Whole stack runs **locally with Docker Compose**: router, Postgres, **local Keycloak** with an imported
   test realm, mock LLM backend. Nothing external is needed for development or CI.
@@ -32,13 +50,15 @@ A small, maintainable router in front of **locally hosted** LLMs that
 - lets users **self-serve**: log in, create/revoke keys, see their usage and limits,
 - enforces **per-user quotas, rate and concurrency limits** by group,
 - **balances load** over many replicas of the same model, including mixed GPU types,
-- records **usage metadata** per user (never prompts or responses).
+- records **usage metadata** per user (never prompts or responses),
+- **traces every call** (tokens, time to first token, tokens per second) and adds **no measurable
+  latency or throughput loss** to token streaming.
 
 ### Non-goals (v1)
 
 - External/cloud providers, billing in money, protocol translation.
 - Prompt/response storage, semantic cache, guardrails, MCP gateway.
-- Full tracing UI (Langfuse/OpenTelemetry export is a later, optional add-on).
+- Full tracing UI: the router exports metadata spans over OpenTelemetry to an external backend.
 
 ## 2. Why build instead of an existing gateway
 
@@ -48,7 +68,7 @@ A small, maintainable router in front of **locally hosted** LLMs that
 | Per-user quotas + own usage view | yes | budgets yes; self-service needs SSO | budgets yes; no user login | yes |
 | OpenAI + Anthropic passthrough | yes (vLLM native) | translates | translates | Claude relay; untested with vLLM |
 | License | MIT | MIT core + enterprise dir | Apache-2.0 core + enterprise | AGPLv3 + attribution terms |
-| Size / control | ~2–3k lines, ours | large | large | large |
+| Size / control | small Go service + React portal, ours | large | large | large |
 
 Fallback if schedule slips: New API can provide a pilot within about a day, accepting AGPLv3 and an
 unverified Keycloak/Anthropic path.
@@ -78,7 +98,7 @@ To verify early (M1):
                  ▼                                         │ JWKS
         /portal (login, keys, my usage, my limits)         │
                                                            ▼
- client ── Bearer <api-key | Keycloak token> ──>  ROUTER (FastAPI, async, stateless)
+ client ── Bearer <api-key | Keycloak token> ──>  ROUTER (Go, one binary, stateless)
   OpenAI SDK, Anthropic SDK, Claude Code,           │ authn → authz(model) → quota/limits
   opencode, agents, Open WebUI (trusted forwarder)  │ → pick replica (weighted least-outstanding)
                                                     │ → stream passthrough, cancel on disconnect
@@ -101,7 +121,7 @@ instance, per-user concurrency counters move to Redis (or Postgres advisory lock
 | `POST /v1/messages`, `/v1/messages/count_tokens` | Anthropic | stream, tools, thinking |
 | `GET  /v1/me/usage` | JSON | caller's quota, used, reset times (for agents/scripts) |
 | `GET  /healthz`, `/readyz`; `/metrics` | ops | metrics not exposed publicly |
-| `/portal/*` | web | login, keys, usage, limits, client snippets |
+| `/portal/*` | web | React app: keys, usage, limits, client snippets; login routes; JSON under `/portal/api/*` |
 
 Auth headers: `Authorization: Bearer …` and `x-api-key: …` (Anthropic SDK / Claude Code).
 
@@ -115,7 +135,7 @@ Auth headers: `Authorization: Bearer …` and `x-api-key: …` (Anthropic SDK / 
    provider; access restriction (affiliation/entitlement → group) is done with Keycloak mappers. The
    router additionally enforces `OIDC_REQUIRED_CLAIM` if set (defence in depth).
 3. **API keys**: `olr-` + 32 random bytes (base62); stored as SHA-256 hash + prefix; shown once;
-   bound to the Keycloak `sub`; label, optional expiry; class `interactive` or `batch`.
+   bound to the user (issuer + `sub`, see §10); label, optional expiry; class `interactive` or `batch`.
 4. **Keycloak access tokens** accepted for services (client-credentials): check `iss`, `aud`, `exp`.
 5. **Groups → policy** (models, quotas, limits, priority) from config.
    Groups for API-key users are refreshed at portal login and by a periodic sync job (service
@@ -184,12 +204,19 @@ aliases: {claude-sonnet-4-5: chat-model}
 
 ## 10. Data model (Postgres)
 
-- `users(sub, username, email, groups[], enabled, synced_at)`
-- `api_keys(id, user_sub, prefix, hash, label, class, trusted_forwarder, created, last_used, expires, revoked)`
-- `usage(ts, key_id, user_sub, forwarded_for, model, replica, protocol, status, input_tokens,
+- `users(id, issuer, sub, username, email, groups[], enabled, synced_at)` — unique on `(issuer, sub)`
+- `api_keys(id, user_id, prefix, hash, label, class, trusted_forwarder, created, last_used, expires, revoked)`
+- `sessions(id_hash, user_id, created, expires)` — portal sessions
+- `usage(ts, key_id, user_id, forwarded_for, model, replica, protocol, status, input_tokens,
   output_tokens, latency_ms, ttfb_ms)` — monthly partitions; retention configurable (default 90 days)
-- `usage_daily(day, user_sub, model, requests, input_tokens, output_tokens)` — portal and quotas
-- `quota_overrides(user_sub, field, value, reason, set_by, set_at)`
+- `usage_daily(day, user_id, model, requests, input_tokens, output_tokens)` — portal and quotas
+- `quota_overrides(user_id, field, value, reason, set_by, set_at)`
+
+User identity: the OIDC `sub` is unique only within one issuer, so `(issuer, sub)` identifies a
+login and the surrogate `id` is what other tables reference. `email` is an attribute: not unique
+and never used to match or merge users. One person with several identity providers is linked in
+Keycloak (account linking), so they arrive with one `sub`. Deleting a user removes their keys,
+sessions and usage.
 
 ## 11. Router behaviour (the hard parts)
 
@@ -200,23 +227,38 @@ aliases: {claude-sonnet-4-5: chat-model}
   absent and strip the extra chunk only if the client did not ask for it; Anthropic `message_delta.usage`.
 - Body size limit (e.g. 32 MB); model allow-list checked before forwarding; unknown fields forwarded.
 - Never log prompts/responses; structured logs with request ID only.
+- Per call: time to first token, total duration and output tokens per second are measured in the
+  proxy and stored with the usage record.
+- Overhead budget, verified by the load test: less than 5 ms added to the time to first token
+  (p95), and tokens per second within 2 % of a direct connection at 256 concurrent streams.
 
 ## 12. Portal
 
-Server-rendered pages (Jinja + htmx), no separate frontend build:
+Single-page app (Vite, React, TypeScript, Tailwind CSS, shadcn/ui), built to static files and
+embedded in the router binary. It talks to a session-authenticated JSON API under `/portal/api`.
+The backend does the OIDC login, so no token reaches the browser:
 - **Keys**: create (label, class, expiry), list (prefix, last used), revoke.
-- **My usage**: today / this month per model, chart of last 30 days, remaining quota and reset time.
+- **My usage**: today / this month per model with average time to first token and tokens per
+  second, chart of last 30 days, remaining quota and reset time.
 - **My requests**: last 200 requests (time, model, tokens, latency, status) — metadata only.
+- **Privacy**: delete my request records; remove revoked keys for good.
 - **Connect**: copy-paste snippets (OpenAI SDK, Anthropic SDK/Claude Code, opencode, curl).
 - **Admin** (group `admins`): users, per-user overrides, group totals, replica health.
 
 ## 13. Observability and privacy
 
-- Prometheus: requests, tokens, latency, queue time, in-flight per **model / replica / group**
-  (no per-user labels). Backend vLLM `/metrics` scraped alongside. Grafana dashboard in repo.
+- Prometheus: requests, tokens, latency, time to first token, tokens per second, queue time,
+  in-flight per **model / replica / group** (no per-user labels). Backend vLLM `/metrics` scraped
+  alongside. Grafana dashboard in repo.
 - Per-user detail only in Postgres, visible to the user and admins.
-- Optional later: OpenTelemetry spans (metadata only) for an external tracing backend.
+- OpenTelemetry: one span per call (model, replica, tokens, time to first token, tokens per
+  second; no content, and no user identifier unless a site enables it), exported over OTLP when an
+  endpoint is configured. An incoming `traceparent` is passed on to the backend.
 - Privacy notice template in docs; retention setting enforced by a nightly job.
+- Erasure (GDPR Art. 17): users delete their own per-request records in the portal at any time.
+  Daily totals stay for quota enforcement and accounting and expire after a separate, configurable
+  period. An operator can erase a user completely (keys, sessions, records, totals). Deleting
+  records does not reset quotas.
 
 ## 14. Packaging and deployment
 
@@ -224,11 +266,11 @@ Server-rendered pages (Jinja + htmx), no separate frontend build:
 
 | Service | Image | Purpose |
 |---|---|---|
-| `router` | built from `Dockerfile` (python:3.12-slim, FastAPI, uvicorn, httpx, Authlib) | the router + portal |
+| `router` | built from `Dockerfile` (multi-stage: Node builds the portal, Go builds one static binary; distroless runtime) | the router + portal |
 | `postgres` | postgres:17 | state |
 | `keycloak` | quay.io/keycloak/keycloak (dev mode) | realm `olr-dev` imported from `deploy/keycloak/olr-dev-realm.json`: clients, groups `staff/students/admins`, test users |
 | `keycloak` realm `upstream-idp` | same container | simulates a federated IdP; brokered into `olr-dev` to test the AAI flow and claim restriction |
-| `mock-llm` | small FastAPI app in `tests/mock_llm/` | OpenAI + Anthropic responses, streaming, tool calls, configurable delay, `usage` |
+| `mock-llm` | small Go program (`cmd/mock-llm`) | OpenAI + Anthropic responses, streaming, tool calls, configurable delay, `usage` |
 | `vllm` (optional profile) | vllm/vllm-openai | real backend on a GPU host; or point `pool` URLs at existing servers |
 
 - `docker compose up` gives a working system on `http://localhost:8080` (router) and
@@ -255,12 +297,15 @@ replica (systemd unit or container), listening on an internal interface, firewal
 | M5 | Hardening: security review, load test, metrics, runbook, privacy notice | independent review findings closed; 256 concurrent streams through router without errors; Grafana shows pools | 1–2 d |
 | M6 | Pilot on a production Keycloak + real GPU pools; then Kubernetes manifests | pilot users active for 2 weeks; switch to production IdP was config-only | — |
 
-Development total ≈ 5–6 working days to a pilot-ready release; production Keycloak client creation,
-IdP federation approval, DNS/TLS and firewall rules run in parallel and set the actual go-live date.
+The estimates in this table are superseded by [WEEK1.md](WEEK1.md): about 7 working days to a
+pilot-ready first release with a reduced scope, and about 6–7 more for the scope deferred there.
+Production Keycloak client creation, IdP federation approval, DNS/TLS and firewall rules run in
+parallel and set the actual go-live date.
 
 ## 16. Risks
 
 - Single maintainer → small codebase, tests first, runbook.
+- Two languages (Go, TypeScript) → standard library first in Go; portal kept to a few screens.
 - Client quirks (Anthropic beta headers, prompt-caching fields) → forward unknown fields; test each client.
 - Quota overshoot under concurrency → bounded by `max_concurrent`; strict mode reserves `max_tokens`.
 - Keycloak/claim naming differs per site → all claim names configurable; tested with the brokered dev realm.
@@ -273,5 +318,6 @@ IdP federation approval, DNS/TLS and firewall rules run in parallel and set the 
 2. Production hostname, TLS termination and where the Compose pilot runs.
 3. Default quotas and concurrency per group.
 4. Which models/pools at start (interactive vs batch split).
-5. Usage-log retention period (default 90 days) and privacy notice owner.
+5. Retention periods (per-request records, default 90 days; daily totals for accounting), privacy
+   notice owner, and who answers erasure requests.
 6. When to move from Compose to Kubernetes.
