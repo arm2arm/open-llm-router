@@ -4,8 +4,9 @@ Small open-source LLM router for locally hosted models: OpenAI- and Anthropic-co
 Keycloak SSO (any realm, incl. brokered federated IdPs), per-user API keys, group-based model access,
 per-user token quotas and usage view, load-aware balancing across model replicas.
 
-Status: **in development** — so far the router starts, checks its configuration and answers
-health probes; it does not serve the API yet. Requirements in [docs/PLAN.md](docs/PLAN.md),
+Status: **in development** — OpenAI and Anthropic APIs now forward to replica pools with
+incremental streaming, cancellation, weighted balancing, health checks and failover.
+Model aliases and `/v1/models` work. Authentication, usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
 Stack: Go backend (one static binary), React portal, PostgreSQL, Keycloak.
@@ -22,7 +23,8 @@ From the repository root:
 ```sh
 docker compose up --build -d   # or: make up (also waits for Postgres)
 curl --fail localhost:8080/healthz
-make smoke                   # probe the router and both mock backends
+make smoke                   # readiness, model listing and backend probes
+make sdk                     # official OpenAI + Anthropic SDKs (needs uv)
 ```
 
 The stack works with built-in local defaults. Optionally copy [.env.example](.env.example) to
@@ -34,16 +36,16 @@ empty volume, so changing them later also requires updating the database or recr
 
 | Service | Host endpoint | Purpose |
 |---|---|---|
-| `router` | `http://localhost:8080` | `/healthz` and `/readyz`; API forwarding follows in #5 |
+| `router` | `http://localhost:8080` | OpenAI + Anthropic APIs, `/v1/models`, health probes |
 | `postgres` | `localhost:5432` | database `olr`, user `olr`, public dev password `olr-dev-only` |
 | `mock-llm-a` | `http://localhost:8001` | `chat-model`, 20 ms per token |
 | `mock-llm-b` | `http://localhost:8002` | `chat-model`, 40 ms per token |
 
 The pool URLs in `config.example.yaml` use service names and container ports. The differing
-delays match its 2:1 weights, ready for balancing in #6. To try a stream directly against a mock:
+delays match its 2:1 weights, used by weighted least-outstanding balancing. To try a stream through the router:
 
 ```sh
-curl -N http://localhost:8001/v1/chat/completions \
+curl -N http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"chat-model","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
@@ -68,14 +70,12 @@ OLR_TEST_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=di
 
 CI runs on pushes and pull requests. It uses the same `make lint`, `make vuln` and `make test`
 commands with a Postgres 17 service, while a parallel job builds both runtime images, starts
-Compose and runs `make smoke`. Jobs have a five-minute timeout; Go modules and build outputs
+Compose and runs `make smoke` plus the official SDK checks against the router and both mocks. Jobs have a five-minute timeout; Go modules and build outputs
 are cached by `setup-go`.
 
-Without Docker:
-
-```sh
-OIDC_ISSUER=http://localhost:8081/realms/olr-dev bin/olr serve -config config.example.yaml
-```
+Without Docker, build both binaries, run two mock processes on ports 8001/8002, and copy the
+example config with pool URLs changed to `http://127.0.0.1:8001` and `http://127.0.0.1:8002`.
+Then run `OIDC_ISSUER=http://localhost:8081/realms/olr-dev bin/olr serve -config <local-config>`.
 
 The deterministic mock backend speaks the OpenAI and Anthropic protocols and can be run directly
 or as its own container:
@@ -107,11 +107,49 @@ request or response bodies.
 | `cmd/mock-llm`, `internal/mockllm` | deterministic OpenAI- and Anthropic-compatible test backend |
 | `internal/config` | config file: `${VAR}` references, strict decoding, validation |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
+| `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
+| `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: `proxy`, `pool`, `db`, `auth`, `usage`, `limits`, `portal`,
-`metrics`.
+Still to come under `internal/`: `db`, `auth`, `usage`, `limits`, `portal`, `metrics`.
+
+## API behavior
+
+The router serves `POST /v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
+`/v1/messages` and `/v1/messages/count_tokens`. Request bodies are limited to 32 MiB.
+Unknown fields and client protocol headers pass through. Client credentials and cookies are
+removed; replicas can use their own bearer token via `bearer_token_env` in the config.
+Backend URLs must be HTTP(S) origins without credentials, a path prefix or a query.
+
+An alias resolves to its configured model; `upstream_model` optionally changes the name sent
+to the backend. Only a rewritten request is serialized again, preserving unknown JSON values.
+Responses, including backend errors and SSE bytes, pass through unchanged. Redirects are
+returned to the caller. Unsupported model/protocol combinations give a protocol-shaped 404.
+
+Pools choose the healthy replica with the smallest `inflight / weight` and randomize ties.
+Slots last until completion or disconnect. Full or unhealthy pools return 503 with `Retry-After: 1`;
+there is no queue. `/readyz` needs a healthy replica for every configured model, regardless of
+whether its slots are currently full. Health probes run at startup and every 5 seconds with a
+2-second timeout: two failures remove a replica, one success restores it. A connection failure
+before response bytes triggers a 10-second cooldown and at most one retry on another replica.
+Once response bytes have started, a broken stream is cut off and never replayed.
+
+`timeout_s` bounds the wait for response headers; `idle_timeout_s` (default 30 seconds) bounds
+silence between chunks and blocked downstream writes. There is no overall generation timeout.
+Client disconnects cancel backend work. Streaming responses flush each read and carry
+`X-Accel-Buffering: no`, `Cache-Control: no-cache` and the router's `X-Request-Id`.
+
+For a quick alias check:
+
+```sh
+curl http://localhost:8080/v1/models
+curl -N http://localhost:8080/v1/messages \
+  -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' \
+  -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}],"max_tokens":16,"stream":true}'
+```
+
+The local stack uses deterministic mock answers. A web portal is planned in later issues.
 
 ## Citation
 

@@ -1,5 +1,5 @@
 # Local development stack. All published ports are restricted to loopback.
-# Keycloak is added in #14; API forwarding and balancing follow in #5 and #6.
+# Keycloak is added in #14. The router forwards both protocols to these replicas.
 name: olr
 
 services:

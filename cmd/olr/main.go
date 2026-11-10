@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
 )
 
@@ -96,9 +97,20 @@ func serve(args []string) error {
 		<-ctx.Done()
 		stop()
 	}()
+	forwarder := proxy.New(cfg)
+	defer forwarder.Close()
+	forwarder.Pools.Check(ctx)
+	// Health checks keep running during graceful shutdown until Run returns.
+	healthCtx, cancelHealth := context.WithCancel(context.Background())
+	healthDone := make(chan struct{})
+	go func() { defer close(healthDone); forwarder.Pools.Run(healthCtx) }()
+	defer func() { cancelHealth(); <-healthDone }()
+	srv := server.New(log)
+	srv.SetReadiness(forwarder.Pools.Ready)
+	forwarder.Register(srv.Handle)
 
 	log.Info("listening", "addr", ln.Addr().String(), "config", *configPath, "models", len(cfg.Models))
-	if err := server.New(log).Run(ctx, ln, *grace); err != nil {
+	if err := srv.Run(ctx, ln, *grace); err != nil {
 		return err
 	}
 	log.Info("stopped")
