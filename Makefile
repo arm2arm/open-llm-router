@@ -6,6 +6,7 @@ COMPOSE     := docker compose -f deploy/compose/docker-compose.yml
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
+	CGO_ENABLED=0 go build -trimpath -o bin/mock-llm ./cmd/mock-llm
 
 lint:
 	@unformatted="$$(gofmt -l .)"; \
