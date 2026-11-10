@@ -1,0 +1,7 @@
+# Only what the build needs enters the build context, so local files such as
+# .env can never end up in an image layer.
+*
+!go.mod
+!go.sum
+!cmd
+!internal

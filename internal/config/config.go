@@ -1,0 +1,348 @@
+// Package config loads and checks the router's YAML configuration.
+//
+// The file is read strictly: an unknown key, a reference to an environment
+// variable that is not set, or a value that fails validation stops the load,
+// and the error lists every problem found. A setting the router does not
+// implement is therefore rejected rather than silently ignored.
+package config
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"maps"
+	"net/url"
+	"os"
+	"slices"
+	"strings"
+
+	"go.yaml.in/yaml/v4"
+)
+
+// Protocols a model can be served with.
+const (
+	ProtocolOpenAI    = "openai"
+	ProtocolAnthropic = "anthropic"
+)
+
+// Environment variables that carry secrets. Secrets have no key in the config
+// file, so they cannot end up in a file that is committed or shared.
+const (
+	EnvDatabaseURL      = "OLR_DATABASE_URL"
+	EnvOIDCClientSecret = "OIDC_PORTAL_CLIENT_SECRET"
+)
+
+// Config is the content of the config file plus the secrets from the
+// environment.
+type Config struct {
+	OIDC    *OIDC             `yaml:"oidc"` // nil: no portal login
+	Models  map[string]Model  `yaml:"models"`
+	Groups  map[string]Group  `yaml:"groups"`
+	Aliases map[string]string `yaml:"aliases"` // client model name -> model
+
+	DatabaseURL      string `yaml:"-"`
+	OIDCClientSecret string `yaml:"-"`
+}
+
+// OIDC describes the identity provider used for portal login.
+type OIDC struct {
+	Issuer         string `yaml:"issuer"`
+	PortalClientID string `yaml:"portal_client_id"`
+	GroupsClaim    string `yaml:"groups_claim"`   // default "groups"
+	UsernameClaim  string `yaml:"username_claim"` // default "preferred_username"
+}
+
+// Model is one model name served to clients and the replicas behind it.
+type Model struct {
+	Protocols []string  `yaml:"protocols"`
+	TimeoutS  int       `yaml:"timeout_s"`
+	Pool      []Replica `yaml:"pool"`
+}
+
+// Replica is one backend server of a model.
+type Replica struct {
+	URL         string  `yaml:"url"`
+	Weight      float64 `yaml:"weight"` // relative throughput
+	MaxInflight int     `yaml:"max_inflight"`
+}
+
+// Group is the policy for the members of one identity-provider group. A limit
+// that is nil is not enforced.
+type Group struct {
+	Models         []string `yaml:"models"` // model names, or "*" for all
+	TokensPerDay   *int64   `yaml:"tokens_per_day"`
+	TokensPerMonth *int64   `yaml:"tokens_per_month"`
+	RPM            *int     `yaml:"rpm"`
+	MaxConcurrent  *int     `yaml:"max_concurrent"`
+}
+
+// Problems lists everything found wrong with a config file in one pass.
+type Problems []string
+
+// Error puts each problem on its own indented line, to be printed after a
+// "config file x:" prefix.
+func (p Problems) Error() string {
+	return "\n  " + strings.Join(p, "\n  ")
+}
+
+// Load reads the config file at path, takes ${VAR} references and the secrets
+// from the process environment, and returns the checked configuration.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := Parse(data, os.LookupEnv)
+	if err != nil {
+		return nil, fmt.Errorf("config file %s:%w", path, err)
+	}
+	cfg.DatabaseURL = os.Getenv(EnvDatabaseURL)
+	cfg.OIDCClientSecret = os.Getenv(EnvOIDCClientSecret)
+	return cfg, nil
+}
+
+// Parse checks and decodes the YAML in data. lookup resolves ${VAR}
+// references; it has the signature of os.LookupEnv. The error, if any, is of
+// type Problems.
+func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, Problems{"the file is empty"}
+	}
+	var doc yaml.Node
+	if err := yaml.Load(data, &doc); err != nil {
+		return nil, yamlProblems(err, data)
+	}
+	var problems Problems
+	expandNode(&doc, lookup, &problems)
+	if len(problems) > 0 {
+		return nil, problems
+	}
+
+	var cfg Config
+	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
+		return nil, yamlProblems(err, data)
+	}
+	if cfg.OIDC != nil {
+		if cfg.OIDC.GroupsClaim == "" {
+			cfg.OIDC.GroupsClaim = "groups"
+		}
+		if cfg.OIDC.UsernameClaim == "" {
+			cfg.OIDC.UsernameClaim = "preferred_username"
+		}
+	}
+	if problems = cfg.validate(); len(problems) > 0 {
+		return nil, problems
+	}
+	return &cfg, nil
+}
+
+// yamlProblems turns an error of the yaml package into Problems, one
+// "line N: ..." entry per error.
+func yamlProblems(err error, data []byte) error {
+	var list []*yaml.LoadError
+	var many *yaml.LoadErrors
+	var one *yaml.LoadError
+	switch {
+	case errors.As(err, &many):
+		list = many.Errors
+	case errors.As(err, &one):
+		list = []*yaml.LoadError{one}
+	default:
+		return Problems{err.Error()}
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	var problems Problems
+	for _, e := range list {
+		msg := e.Message
+		if e.ContextMsg != "" {
+			msg += " (" + e.ContextMsg + ")"
+		}
+		if e.Mark.Line == 0 {
+			problems = append(problems, msg)
+			continue
+		}
+		// An unquoted ${NAME} inside {...} or [...] is not valid YAML, and
+		// the parser's message does not point at the braces.
+		syntax := e.Stage == yaml.ScannerStage || e.Stage == yaml.ParserStage
+		if syntax && e.Mark.Line <= len(lines) && bytes.Contains(lines[e.Mark.Line-1], []byte("${")) {
+			msg += `; inside {...} or [...] a reference must be quoted: "${NAME}"`
+		}
+		problems = append(problems, fmt.Sprintf("line %d: %s", e.Mark.Line, msg))
+	}
+	return problems
+}
+
+// expandNode replaces ${VAR} references in every scalar below n, keys
+// included. It works on the parsed document rather than on the file's text,
+// so comments are left alone and a value cannot change the file's structure.
+func expandNode(n *yaml.Node, lookup func(string) (string, bool), problems *Problems) {
+	for _, child := range n.Content {
+		expandNode(child, lookup, problems)
+	}
+	if n.Kind != yaml.ScalarNode || !strings.Contains(n.Value, "${") {
+		return
+	}
+	value, errs := expand(n.Value, lookup)
+	for _, e := range errs {
+		*problems = append(*problems, fmt.Sprintf("line %d: %s", n.Line, e))
+	}
+	n.Value = value
+
+	// The parser has already typed an unquoted "${N}" as a string. Clearing
+	// the tag lets the decoder type the expanded text, so that
+	// "max_inflight: ${N}" can become a number. Quoted values stay strings.
+	const quotedOrBlock = yaml.SingleQuotedStyle | yaml.DoubleQuotedStyle | yaml.LiteralStyle | yaml.FoldedStyle
+	if n.Style&(quotedOrBlock|yaml.TaggedStyle) == 0 {
+		n.Tag = ""
+	}
+}
+
+// expand replaces each ${NAME} in s with the value lookup returns for NAME.
+func expand(s string, lookup func(string) (string, bool)) (string, []string) {
+	var out strings.Builder
+	var errs []string
+	for {
+		start := strings.Index(s, "${")
+		if start < 0 {
+			out.WriteString(s)
+			return out.String(), errs
+		}
+		out.WriteString(s[:start])
+		length := strings.IndexByte(s[start:], '}')
+		if length < 0 {
+			return out.String(), append(errs, fmt.Sprintf("%q: \"${\" without a closing \"}\"", s[start:]))
+		}
+		ref := s[start : start+length+1]
+		name := ref[2 : len(ref)-1]
+		switch value, ok := lookup(name); {
+		case !isVarName(name):
+			errs = append(errs, fmt.Sprintf("%s: only the form ${NAME} is supported", ref))
+		case !ok:
+			errs = append(errs, fmt.Sprintf("environment variable %s is not set", name))
+		default:
+			out.WriteString(value)
+		}
+		s = s[start+length+1:]
+	}
+}
+
+func isVarName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, c := range s {
+		letter := c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+		if !letter && (i == 0 || c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Config) validate() Problems {
+	var p Problems
+	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+
+	if c.OIDC != nil {
+		if !isHTTPURL(c.OIDC.Issuer) {
+			add("oidc.issuer: must be an http or https URL, got %q", c.OIDC.Issuer)
+		}
+		if c.OIDC.PortalClientID == "" {
+			add("oidc.portal_client_id: must be set")
+		}
+	}
+
+	if len(c.Models) == 0 {
+		add("models: at least one model is required")
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Models)) {
+		m, at := c.Models[name], "models."+name
+		if name == "" || name == "*" {
+			add("models: %q cannot be used as a model name", name)
+		}
+		if len(m.Protocols) == 0 {
+			add("%s.protocols: list %q, %q or both", at, ProtocolOpenAI, ProtocolAnthropic)
+		}
+		for _, proto := range m.Protocols {
+			if proto != ProtocolOpenAI && proto != ProtocolAnthropic {
+				add("%s.protocols: unknown protocol %q (known: %q, %q)", at, proto, ProtocolOpenAI, ProtocolAnthropic)
+			}
+		}
+		if m.TimeoutS <= 0 {
+			add("%s.timeout_s: must be greater than 0", at)
+		}
+		if len(m.Pool) == 0 {
+			add("%s.pool: at least one replica is required", at)
+		}
+		seen := make(map[string]bool)
+		for i, r := range m.Pool {
+			at := fmt.Sprintf("%s.pool[%d]", at, i)
+			switch {
+			case !isHTTPURL(r.URL):
+				add("%s.url: must be an http or https URL, got %q", at, r.URL)
+			case seen[r.URL]:
+				add("%s.url: %s is listed twice in this pool", at, r.URL)
+			}
+			seen[r.URL] = true
+			if r.Weight <= 0 {
+				add("%s.weight: must be greater than 0", at)
+			}
+			if r.MaxInflight <= 0 {
+				add("%s.max_inflight: must be greater than 0", at)
+			}
+		}
+	}
+
+	for _, alias := range slices.Sorted(maps.Keys(c.Aliases)) {
+		target := c.Aliases[alias]
+		if _, isModel := c.Models[alias]; isModel || alias == "" || alias == "*" {
+			add("aliases: %q cannot be used as an alias (it is empty, \"*\" or the name of a model)", alias)
+		}
+		if _, ok := c.Models[target]; !ok {
+			add("aliases.%s: %q is not a configured model", alias, target)
+		}
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(c.Groups)) {
+		g, at := c.Groups[name], "groups."+name
+		if len(g.Models) == 0 {
+			add("%s.models: list at least one model, or \"*\" for all", at)
+		}
+		for _, model := range g.Models {
+			if _, ok := c.Models[model]; !ok && model != "*" {
+				add("%s.models: %q is not a configured model", at, model)
+			}
+		}
+		// A limit of 0 would read as "no limit" to some and "no access" to
+		// others, so it is refused: leave the key out for no limit.
+		limits := []struct {
+			key string
+			set bool
+			val int64
+		}{
+			{"tokens_per_day", g.TokensPerDay != nil, deref(g.TokensPerDay)},
+			{"tokens_per_month", g.TokensPerMonth != nil, deref(g.TokensPerMonth)},
+			{"rpm", g.RPM != nil, int64(deref(g.RPM))},
+			{"max_concurrent", g.MaxConcurrent != nil, int64(deref(g.MaxConcurrent))},
+		}
+		for _, l := range limits {
+			if l.set && l.val <= 0 {
+				add("%s.%s: must be greater than 0; leave it out for no limit", at, l.key)
+			}
+		}
+	}
+	return p
+}
+
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
+}
+
+func isHTTPURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
