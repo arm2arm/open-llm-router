@@ -1,175 +1,277 @@
-# open-llm-router — Plan
+# open-llm-router — Plan v0.2
 
-Status: **plan, not implemented** (2026-11-06). Owner: A. Khalatyan (AIP). Discussion: Monday 2026-11-09.
+Status: **plan, not implemented**. v0.1: 2026-11-06. v0.2: 2026-11-10.
+Owner: A. Khalatyan. License: MIT.
+
+Site-specific values (hostnames, realms, GPU layout, quotas) are **not** kept in this public repository.
+They live in a private deployment file that sets the same configuration keys as `config.example.yaml`.
+
+## 0. Changes since v0.1
+
+- Whole stack runs **locally with Docker Compose**: router, Postgres, **local Keycloak** with an imported
+  test realm, mock LLM backend. Nothing external is needed for development or CI.
+- Keycloak is **configuration, not code**: issuer URL, client IDs, claim names and group mapping are
+  settings, so the same image works against the local dev Keycloak or any production Keycloak.
+- Federated login (e.g. an eduGAIN/community AAI) is handled by **Keycloak identity brokering**;
+  the router keeps trusting only Keycloak. The dev stack simulates this with a second "upstream" realm.
+- Per-user **token quotas** (daily/monthly) and **concurrency limits** besides rpm/tpm.
+- **Portal shows each user their own usage**, recent requests (metadata only) and remaining quota.
+- **Load-aware balancing** across heterogeneous replicas (weighted least-outstanding requests),
+  replacing round-robin; per-backend in-flight caps; optional session affinity.
+- **Priority classes** (interactive vs batch) mapped to vLLM's request `priority`.
+- **Trusted forwarders** (e.g. Open WebUI) can attribute usage to their end users via headers.
+- Packaging: **Docker image first**; Kubernetes manifests/Helm later from the same image and env vars.
+- Removed site-internal hostnames from this document.
 
 ## 1. Goal
 
-A small, maintainable, open-source router in front of AIP's **local** LLMs that
+A small, maintainable router in front of **locally hosted** LLMs that
 
-- speaks both **OpenAI** and **Anthropic** protocols to clients,
-- authenticates users with **AIP Keycloak** (SSO) and per-user **API keys**,
-- routes each call by `model` to one or more vLLM backends,
-- records who used which model and how many tokens.
+- speaks **OpenAI** and **Anthropic** protocols to clients (passthrough, no translation),
+- authenticates users via **Keycloak** (OIDC) and per-user **API keys**,
+- lets users **self-serve**: log in, create/revoke keys, see their usage and limits,
+- enforces **per-user quotas, rate and concurrency limits** by group,
+- **balances load** over many replicas of the same model, including mixed GPU types,
+- records **usage metadata** per user (never prompts or responses).
 
 ### Non-goals (v1)
 
-- No external providers (OpenAI/Anthropic cloud), no billing in money.
-- No protocol translation: vLLM ≥ 0.28 serves both APIs natively (see §3).
-- No prompt/response storage (privacy); only metadata and token counts.
-- No semantic cache, guardrails, MCP gateway.
+- External/cloud providers, billing in money, protocol translation.
+- Prompt/response storage, semantic cache, guardrails, MCP gateway.
+- Full tracing UI (Langfuse/OpenTelemetry export is a later, optional add-on).
 
-## 2. Why build instead of Bifrost
+## 2. Why build instead of an existing gateway
 
-| | Own router | Bifrost (free) |
-|---|---|---|
-| Keycloak SSO | built in | Enterprise only → needs oauth2-proxy + separate portal |
-| Anthropic ↔ OpenAI | not needed (vLLM native) | translates (not needed here) |
-| Budgets, dashboard, logs UI | minimal (own) | rich |
-| Size / control | ~1–2k lines, fully ours | large Go codebase, vendor roadmap |
-| Maintenance | ours | upstream |
+| | open-llm-router | LiteLLM (free) | Bifrost (free) | New API (AGPLv3) |
+|---|---|---|---|---|
+| Self-service SSO login for all users | yes (Keycloak) | UI SSO free for ≤ 5 users | Enterprise only | yes (OAuth/OIDC) |
+| Per-user quotas + own usage view | yes | budgets yes; self-service needs SSO | budgets yes; no user login | yes |
+| OpenAI + Anthropic passthrough | yes (vLLM native) | translates | translates | Claude relay; untested with vLLM |
+| License | MIT | MIT core + enterprise dir | Apache-2.0 core + enterprise | AGPLv3 + attribution terms |
+| Size / control | ~2–3k lines, ours | large | large | large |
 
-Bifrost v2.4.0 keeps running at `bifrost.kube.aip.de` until the router is accepted; then decide whether to retire it.
+Fallback if schedule slips: New API can provide a pilot within about a day, accepting AGPLv3 and an
+unverified Keycloak/Anthropic path.
 
-## 3. Verified facts (2026-11-05/06)
+## 3. Facts and assumptions
 
-- AIP vLLM (`aip-best`) runs **vLLM 0.28.0**. Native `/v1/messages` works: plain text,
-  **tool_use** (`get_time` → `{"tz":"Europe/Berlin"}`, `stop_reason: tool_use`), and **SSE streaming**
-  (`message_start … content_block_delta … message_stop`). Responses may contain `thinking` blocks.
-- OpenAI `/v1/chat/completions` and `/v1/models` work on the same server.
-- Keycloak at `keycloak.kube.aip.de` (realm `master` found; **AIP user realm still to confirm**).
+Verified:
+- vLLM ≥ 0.28 serves OpenAI `/v1/chat/completions`, `/v1/models` and Anthropic `/v1/messages`
+  (text, `tool_use`, SSE streaming; responses may contain `thinking` blocks). Tested on 0.28.
+- vLLM has a priority scheduler (`--scheduling-policy priority`; per-request `priority` field).
+- Open WebUI can forward user identity headers (`ENABLE_FORWARD_USER_INFO_HEADERS=true` →
+  `X-OpenWebUI-User-Id`, `-Email`, `-Name`).
+- Measured on one GPU server: independent replicas give more total throughput than one
+  tensor-parallel instance (2 × 1-GPU ≈ 3,600 tok/s vs TP2 ≈ 2,960 tok/s at 64 users, dense 27B BF16);
+  per-replica speed differs up to ~3× between GPU types. Round-robin would overload slow replicas.
+
+To verify early (M1):
+- `/v1/messages` on the vLLM version actually deployed; SGLang backends may lack it → per-model
+  `protocols` setting.
+- Claude Code / opencode / agent streaming quirks (beta headers, prompt-caching fields).
 
 ## 4. Architecture
 
 ```
-                 ┌──────────── Keycloak (AIP realm) ─────────────┐
- browser ──OIDC──┤                                               │
-                 ▼                                               │ JWKS
-           /portal (login, create/revoke keys, usage, snippets)  │
-                                                                 ▼
- client ──Bearer <api-key | Keycloak access token>──>  ROUTER  (FastAPI, async)
-   OpenAI SDK, Anthropic SDK,                            │  auth → authorize(model) → pick backend
-   Claude Code, opencode, curl                           │  stream passthrough, cancel on disconnect
-                                                         │  usage record (tokens, latency, status)
-                                                         ▼
-                                     vLLM backends (per model, 1..n replicas)
-                                                         │
-                                     Postgres: keys, usage │ Prometheus /metrics
+                 ┌──────────── Keycloak realm ─────────────┐   (dev: local container;
+ browser ──OIDC──┤  optional broker → upstream IdP / AAI   │    prod: any Keycloak)
+                 ▼                                         │ JWKS
+        /portal (login, keys, my usage, my limits)         │
+                                                           ▼
+ client ── Bearer <api-key | Keycloak token> ──>  ROUTER (FastAPI, async, stateless)
+  OpenAI SDK, Anthropic SDK, Claude Code,           │ authn → authz(model) → quota/limits
+  opencode, agents, Open WebUI (trusted forwarder)  │ → pick replica (weighted least-outstanding)
+                                                    │ → stream passthrough, cancel on disconnect
+                                                    │ → usage record
+                                                    ▼
+                          model pools: 1..n vLLM replicas each (interactive / batch)
+        Postgres: users, keys, usage, quotas     Prometheus /metrics (aggregate labels only)
 ```
 
-Single stateless container (horizontally scalable); state in Postgres.
+Router is a single container image; state in Postgres. v1 runs one router instance; for >1
+instance, per-user concurrency counters move to Redis (or Postgres advisory locks).
 
 ## 5. API surface
 
 | Path | Protocol | Notes |
 |---|---|---|
-| `POST /v1/chat/completions` | OpenAI | stream + non-stream |
-| `POST /v1/completions` | OpenAI | |
+| `POST /v1/chat/completions`, `/v1/completions` | OpenAI | stream + non-stream |
 | `POST /v1/embeddings` | OpenAI | if an embedding model is configured |
 | `GET  /v1/models` | OpenAI | only models the caller may use |
-| `POST /v1/messages` | Anthropic | stream + non-stream, tools, thinking |
-| `POST /v1/messages/count_tokens` | Anthropic | forwarded |
-| `GET  /healthz`, `/readyz`, `/metrics` | ops | metrics internal only |
-| `/portal/*` | web | Keycloak login, key management |
+| `POST /v1/messages`, `/v1/messages/count_tokens` | Anthropic | stream, tools, thinking |
+| `GET  /v1/me/usage` | JSON | caller's quota, used, reset times (for agents/scripts) |
+| `GET  /healthz`, `/readyz`; `/metrics` | ops | metrics not exposed publicly |
+| `/portal/*` | web | login, keys, usage, limits, client snippets |
 
-Auth headers accepted: `Authorization: Bearer …` (both SDKs) and `x-api-key: …` (Anthropic SDK/Claude Code).
+Auth headers: `Authorization: Bearer …` and `x-api-key: …` (Anthropic SDK / Claude Code).
 
-Client config examples (portal shows them):
+## 6. Identity and authorization
 
-```bash
-export OPENAI_BASE_URL=https://llm.aip.de/v1        OPENAI_API_KEY=aip-…
-export ANTHROPIC_BASE_URL=https://llm.aip.de        ANTHROPIC_API_KEY=aip-…   # Claude Code
-```
+1. **Keycloak is pluggable.** Settings: `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID/SECRET`,
+   `OIDC_AUDIENCE`, `OIDC_GROUPS_CLAIM` (default `groups`), `OIDC_USERNAME_CLAIM`, optional
+   `OIDC_REQUIRED_CLAIM`/value (e.g. an affiliation or entitlement). Discovery via
+   `.well-known/openid-configuration`; JWKS cached and refreshed on unknown `kid`.
+2. **Federated login** (community AAI, institutional IdP) is configured in Keycloak as an identity
+   provider; access restriction (affiliation/entitlement → group) is done with Keycloak mappers. The
+   router additionally enforces `OIDC_REQUIRED_CLAIM` if set (defence in depth).
+3. **API keys**: `olr-` + 32 random bytes (base62); stored as SHA-256 hash + prefix; shown once;
+   bound to the Keycloak `sub`; label, optional expiry; class `interactive` or `batch`.
+4. **Keycloak access tokens** accepted for services (client-credentials): check `iss`, `aud`, `exp`.
+5. **Groups → policy** (models, quotas, limits, priority) from config.
+   Groups for API-key users are refreshed at portal login and by a periodic sync job (service
+   account with `view-users`); disabled/removed users get their keys disabled.
+6. **Trusted forwarders**: a key flagged `trusted_forwarder` may set `X-OLR-End-User` (or a mapped
+   header such as `X-OpenWebUI-User-Email`). The router resolves it to a known user; quotas and
+   usage apply to that user; unknown users fall back to the forwarder's own policy or are rejected
+   (configurable). Headers from non-trusted keys are ignored.
 
-## 6. Authentication & authorization
+Keycloak clients per realm: `olr-portal` (confidential, auth code + PKCE, groups mapper),
+`olr-api` (audience for service tokens), `olr-sync` (service account, read-only users/groups).
 
-1. **API keys** (`aip-` + 32 random bytes, base62). Stored as SHA-256 hash + prefix; shown once.
-   Bound to a Keycloak user (`sub`, `preferred_username`), optional expiry, label.
-2. **Keycloak access tokens** (for services / client-credentials): verified offline against realm JWKS
-   (cached), check `iss`, `aud=llm-router`, `exp`.
-3. **Authorization** by Keycloak **groups** → model allow-list and rate limits (config file, §7).
-   For API keys, groups are refreshed at portal login and by the nightly sync.
-4. **Revocation:** user revokes in portal; nightly job disables keys of users disabled/removed in Keycloak
-   (read-only service account `view-users`).
+## 7. Quotas and limits
 
-Keycloak clients:
+- Per group, overridable per user: `tokens_per_day`, `tokens_per_month`, `rpm`, `tpm`,
+  `max_concurrent` (separately for interactive/batch keys), allowed models.
+- Enforcement order: auth → model allowed → concurrency slot → rpm/tpm bucket → quota remaining.
+  Rejections: `429` with `Retry-After` and a JSON body naming the limit and reset time
+  (OpenAI and Anthropic error shapes respectively).
+- Accounting after completion from backend `usage` (stream: final chunk). Overshoot is bounded by
+  `max_concurrent × max_tokens`; optional pre-reservation of `max_tokens` for strict groups.
+- Windows: day/month in a configurable timezone; counters in Postgres (`UPDATE … RETURNING`).
 
-| Client | Type | Purpose |
-|---|---|---|
-| `llm-portal` | confidential, auth-code + PKCE | portal login; mapper `groups` in ID/access token |
-| `llm-router` | bearer-only / audience | audience for service tokens |
-| `llm-router-sync` | confidential, service account | nightly user/group sync (realm-management: view-users) |
+## 8. Routing and load balancing
 
-## 7. Configuration (`config.yaml`, in Git; secrets via env/K8s Secret)
+- `models.<name>.pool` lists replicas with `weight` (relative throughput) and `max_inflight`.
+- Selection: among healthy replicas below `max_inflight`, minimise `inflight / weight`;
+  ties broken randomly. If all are full: queue up to `queue_timeout_s`, then `429`/`503`.
+- Health: active `GET /health` every few seconds + passive (connect errors/5xx → cool-down).
+  No retry after the first streamed byte; before that, one retry on a different replica.
+- Optional **session affinity**: hash of `X-Session-Id` (or forwarder chat ID) prefers the same replica
+  for prefix-cache reuse, unless it is overloaded.
+- **Priority**: key class / group maps to vLLM `priority` (backends started with
+  `--scheduling-policy priority`); batch pools can be separate model aliases.
+- `aliases` map client default names (e.g. Claude Code model IDs) to local models.
+
+## 9. Configuration (`config.example.yaml` in Git; site file private)
 
 ```yaml
+oidc:
+  issuer: ${OIDC_ISSUER}            # dev: http://keycloak:8080/realms/olr-dev
+  portal_client_id: olr-portal
+  audience: olr-api
+  groups_claim: groups
+  required_claim: null             # e.g. {name: affiliation, contains: "member@example.org"}
 models:
-  aip-best:
-    backends: ["http://vllm-a:8000", "http://vllm-b:8000"]   # round-robin, health-checked
+  chat-model:
     protocols: [openai, anthropic]
-    timeout_s: 900          # reasoning models can think for minutes
-    max_concurrency: 64     # per router instance, protects the GPU
+    timeout_s: 900
+    pool:
+      - {url: http://backend-a:8000, weight: 2.0, max_inflight: 64}
+      - {url: http://backend-b:8000, weight: 1.0, max_inflight: 32}
+  chat-model-batch:
+    protocols: [openai, anthropic]
+    priority: 10
+    pool: [{url: http://backend-c:8000, weight: 1.0, max_inflight: 64}]
 groups:
-  aip-staff:   {models: ["*"],        rpm: 60,  tpm: 200000}
-  students:    {models: ["aip-best"], rpm: 20,  tpm: 50000}
-  admins:      {models: ["*"],        rpm: 600, admin: true}
-aliases:
-  claude-sonnet-4-5: aip-best   # optional: lets Claude Code default model names resolve locally
+  staff:    {models: ["*"], tokens_per_day: 2000000, rpm: 60,  max_concurrent: {interactive: 4, batch: 8}}
+  students: {models: [chat-model], tokens_per_day: 300000, rpm: 20, max_concurrent: {interactive: 2, batch: 2}}
+  admins:   {models: ["*"], admin: true}
+forwarders:
+  header_map: {X-OpenWebUI-User-Email: email}
+  unknown_user: reject            # or: forwarder_policy
+aliases: {claude-sonnet-4-5: chat-model}
 ```
 
-## 8. Data model (Postgres)
+## 10. Data model (Postgres)
 
-- `api_keys(id, user_sub, username, prefix, hash, label, created, last_used, expires, revoked)`
 - `users(sub, username, email, groups[], enabled, synced_at)`
-- `usage(ts, key_id|null, user_sub, model, backend, protocol, status, input_tokens, output_tokens, latency_ms, ttfb_ms)`
-  — partitioned by month; daily aggregates for the portal.
+- `api_keys(id, user_sub, prefix, hash, label, class, trusted_forwarder, created, last_used, expires, revoked)`
+- `usage(ts, key_id, user_sub, forwarded_for, model, replica, protocol, status, input_tokens,
+  output_tokens, latency_ms, ttfb_ms)` — monthly partitions; retention configurable (default 90 days)
+- `usage_daily(day, user_sub, model, requests, input_tokens, output_tokens)` — portal and quotas
+- `quota_overrides(user_sub, field, value, reason, set_by, set_at)`
 
-## 9. Router behaviour details (the hard parts)
+## 11. Router behaviour (the hard parts)
 
-- **Streaming passthrough** byte-for-byte (SSE), no buffering; ingress buffering off.
-- **Cancel upstream on client disconnect** so vLLM stops generating (saves GPU).
-- **Timeouts**: connect 5 s, read up to `timeout_s`; ingress/proxy timeouts raised to match.
-- **Token accounting**: non-stream from `usage`; stream from final chunk
-  (OpenAI: request `stream_options.include_usage=true` injected if absent; Anthropic: `message_delta.usage`).
-- **Backend selection**: round-robin over healthy replicas; passive health (5xx/connect errors) +
-  active `/health` probe; no retry after first byte was streamed.
-- **Limits**: per-user rpm/tpm (token bucket in Postgres or in-memory per instance for v1), per-model concurrency.
-- **Body size limit** (e.g. 32 MB) and model-name allow-list before forwarding.
-- **Privacy**: never log prompts/responses; log only metadata.
+- Byte-for-byte SSE passthrough, no buffering; proxy buffering disabled at ingress.
+- Cancel the upstream request on client disconnect (stops GPU work).
+- Timeouts: connect 5 s, read up to `timeout_s`; ingress timeouts matched.
+- Usage from non-stream `usage`; streams: inject `stream_options.include_usage=true` (OpenAI) if
+  absent and strip the extra chunk only if the client did not ask for it; Anthropic `message_delta.usage`.
+- Body size limit (e.g. 32 MB); model allow-list checked before forwarding; unknown fields forwarded.
+- Never log prompts/responses; structured logs with request ID only.
 
-## 10. Deployment
+## 12. Portal
 
-- Image: `python:3.12-slim`, FastAPI + uvicorn + httpx (HTTP/2 off to vLLM), Authlib/python-jose.
-- Kubernetes on `kube.aip.de`: Deployment (2 replicas), Service, Ingress `llm.aip.de` (TLS), Postgres
-  (existing cluster service or small StatefulSet), Secret for Keycloak client secrets + DB DSN.
-- Helm chart in `deploy/helm/`. CI: lint, tests, image build, (later) deploy.
+Server-rendered pages (Jinja + htmx), no separate frontend build:
+- **Keys**: create (label, class, expiry), list (prefix, last used), revoke.
+- **My usage**: today / this month per model, chart of last 30 days, remaining quota and reset time.
+- **My requests**: last 200 requests (time, model, tokens, latency, status) — metadata only.
+- **Connect**: copy-paste snippets (OpenAI SDK, Anthropic SDK/Claude Code, opencode, curl).
+- **Admin** (group `admins`): users, per-user overrides, group totals, replica health.
 
-## 11. Milestones & acceptance tests
+## 13. Observability and privacy
 
-| # | Milestone | Done when |
+- Prometheus: requests, tokens, latency, queue time, in-flight per **model / replica / group**
+  (no per-user labels). Backend vLLM `/metrics` scraped alongside. Grafana dashboard in repo.
+- Per-user detail only in Postgres, visible to the user and admins.
+- Optional later: OpenTelemetry spans (metadata only) for an external tracing backend.
+- Privacy notice template in docs; retention setting enforced by a nightly job.
+
+## 14. Packaging and deployment
+
+**Development / pilot: Docker Compose** (`deploy/compose/`):
+
+| Service | Image | Purpose |
 |---|---|---|
-| M0 | Repo, spec (this file), Keycloak realm + clients agreed | clients exist in AIP realm |
-| M1 | Passthrough router, static key, both protocols | OpenAI + Anthropic SDK tests: text, stream, tools pass against aip-best; client disconnect cancels vLLM request |
-| M2 | Keycloak JWT + API keys + groups | invalid/expired/revoked → 401; forbidden model → 403; `/v1/models` filtered |
-| M3 | Portal (login, create/revoke key, usage, snippets) | user logs in via AIP SSO, creates key, uses it from Claude Code + opencode |
-| M4 | Usage, limits, metrics | token counts match vLLM usage (±0); 429 on rpm/tpm; Prometheus scrape OK |
-| M5 | Helm + kube deploy, docs, runbook | `llm.aip.de` live; load test (e.g. 50 concurrent streams) without errors; rollback documented |
-| M6 | Pilot with a small group, then decide on Bifrost retirement | 2 weeks pilot feedback |
+| `router` | built from `Dockerfile` (python:3.12-slim, FastAPI, uvicorn, httpx, Authlib) | the router + portal |
+| `postgres` | postgres:17 | state |
+| `keycloak` | quay.io/keycloak/keycloak (dev mode) | realm `olr-dev` imported from `deploy/keycloak/olr-dev-realm.json`: clients, groups `staff/students/admins`, test users |
+| `keycloak` realm `upstream-idp` | same container | simulates a federated IdP; brokered into `olr-dev` to test the AAI flow and claim restriction |
+| `mock-llm` | small FastAPI app in `tests/mock_llm/` | OpenAI + Anthropic responses, streaming, tool calls, configurable delay, `usage` |
+| `vllm` (optional profile) | vllm/vllm-openai | real backend on a GPU host; or point `pool` URLs at existing servers |
 
-Rough effort: M1–M4 ≈ 1 week, M5–M6 + hardening ≈ 1 week.
+- `docker compose up` gives a working system on `http://localhost:8080` (router) and
+  `http://localhost:8081` (Keycloak) with test users; `make test` runs unit + integration tests against it.
+- **Switching Keycloak** = changing env (`OIDC_ISSUER`, client ID/secret) — no code or image change.
+- Container data paths are configurable (host bind mounts), e.g. image/cache storage on a dedicated disk.
 
-## 12. Risks
+**Later: Kubernetes** — the same image and env vars; manifests/Helm chart in `deploy/k8s/`
+(Deployment, Service, Ingress with buffering off and long timeouts, Secret, external Postgres).
+Added after the Compose pilot is accepted (M6).
 
-- Streaming edge cases with specific clients (Claude Code, opencode) → test each in M1/M3.
-- Claude Code may send Anthropic-only features (prompt caching headers, beta flags) → forward, ignore unknown; test.
-- Keycloak realm/group naming unknown → M0.
-- Single maintainer → keep code small, tests first, documented runbook.
+**Model backends** (outside this repo's scope, documented as an example): one vLLM instance per
+replica (systemd unit or container), listening on an internal interface, firewalled to the router.
 
-## 13. Open questions (Monday)
+## 15. Milestones and acceptance tests
 
-1. Which Keycloak **realm** do AIP users log in with; who creates the clients?
-2. Hostname (`llm.aip.de`?) and ingress/TLS on kube.aip.de; namespace and who operates it.
-3. Postgres: existing service or new?
-4. Which groups get which models and limits?
-5. Which models besides `aip-best` (embeddings, smaller/faster models)?
-6. Keep Bifrost in parallel during the pilot? (recommended: yes)
-7. Implementation language: Python/FastAPI (recommended, fits team) or Go.
+| # | Milestone | Done when | Est. |
+|---|---|---|---|
+| M0 | Compose dev stack: router skeleton, Postgres, Keycloak realm import, mock-llm, CI | `docker compose up` + `make test` green on a clean machine | 0.5 d |
+| M1 | Passthrough both protocols, pools, weighted least-outstanding, health, cancel | OpenAI + Anthropic SDK: text, stream, tools pass vs mock-llm and one real vLLM; disconnect cancels upstream; slow replica receives proportionally fewer requests | 1 d |
+| M2 | Auth: API keys, Keycloak tokens, groups, forwarders | invalid/expired/revoked → 401; forbidden model → 403; `/v1/models` filtered; forwarded user attributed; untrusted header ignored | 0.5 d |
+| M3 | Quotas, rpm/tpm, concurrency, usage records, `/v1/me/usage` | token counts equal backend `usage`; 429 with reset time at each limit; concurrent overshoot within bound | 0.5 d |
+| M4 | Portal (keys, my usage, my requests, snippets, admin) + brokered login | test user logs in through `upstream-idp` → `olr-dev`, creates key, uses it from Claude Code, opencode, curl; user without required claim is refused | 1 d |
+| M5 | Hardening: security review, load test, metrics, runbook, privacy notice | independent review findings closed; 256 concurrent streams through router without errors; Grafana shows pools | 1–2 d |
+| M6 | Pilot on a production Keycloak + real GPU pools; then Kubernetes manifests | pilot users active for 2 weeks; switch to production IdP was config-only | — |
+
+Development total ≈ 5–6 working days to a pilot-ready release; production Keycloak client creation,
+IdP federation approval, DNS/TLS and firewall rules run in parallel and set the actual go-live date.
+
+## 16. Risks
+
+- Single maintainer → small codebase, tests first, runbook.
+- Client quirks (Anthropic beta headers, prompt-caching fields) → forward unknown fields; test each client.
+- Quota overshoot under concurrency → bounded by `max_concurrent`; strict mode reserves `max_tokens`.
+- Keycloak/claim naming differs per site → all claim names configurable; tested with the brokered dev realm.
+- Security of a self-built auth layer → independent review (M5), key hashing, constant-time compare,
+  no secrets in logs, dependency pinning.
+
+## 17. Open questions
+
+1. Production Keycloak realm and who creates clients and the IdP federation.
+2. Production hostname, TLS termination and where the Compose pilot runs.
+3. Default quotas and concurrency per group.
+4. Which models/pools at start (interactive vs batch split).
+5. Usage-log retention period (default 90 days) and privacy notice owner.
+6. When to move from Compose to Kubernetes.
