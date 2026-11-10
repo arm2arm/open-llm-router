@@ -65,7 +65,8 @@ type Model struct {
 // Replica is one backend server of a model.
 type Replica struct {
 	URL            string  `yaml:"url"`
-	Weight         float64 `yaml:"weight"` // relative throughput
+	HealthPath     string  `yaml:"health_path"` // default /health; Ollama uses /
+	Weight         float64 `yaml:"weight"`      // relative throughput
 	MaxInflight    int     `yaml:"max_inflight"`
 	BearerTokenEnv string  `yaml:"bearer_token_env"`
 	BearerToken    string  `yaml:"-"` // resolved from BearerTokenEnv, never written to YAML
@@ -313,6 +314,12 @@ func (c *Config) validate() Problems {
 				add("%s.url: %s is listed twice in this pool", at, r.URL)
 			}
 			seen[r.URL] = true
+			if r.HealthPath != "" {
+				u, err := url.ParseRequestURI(r.HealthPath)
+				if err != nil || !strings.HasPrefix(r.HealthPath, "/") || strings.HasPrefix(r.HealthPath, "//") || strings.ContainsAny(r.HealthPath, "?#") || u.IsAbs() {
+					add("%s.health_path: must be an absolute URL path without a query or fragment", at)
+				}
+			}
 			if r.Weight <= 0 || math.IsNaN(r.Weight) || math.IsInf(r.Weight, 0) {
 				add("%s.weight: must be greater than 0", at)
 			}

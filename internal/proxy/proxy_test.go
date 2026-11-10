@@ -168,6 +168,34 @@ func TestPassthroughHeadersAliasesAndListing(t *testing.T) {
 	}
 }
 
+func TestAnthropicClientFieldsThroughAlias(t *testing.T) {
+	mock := mockllm.New(mockllm.Options{})
+	backend := httptest.NewServer(mock)
+	defer backend.Close()
+	_, router := setup(t, backend.URL)
+	const body = `{"model":"alias","max_tokens":2048,"messages":[{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}],"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral"}}],"thinking":{"type":"enabled","budget_tokens":1024}}`
+	headers := http.Header{"Anthropic-Version": {"2023-06-01"}, "Anthropic-Beta": {"prompt-caching-2024-07-31", "interleaved-thinking-2025-05-14"}}
+	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
+		resp, _ := send(t, router.URL, path, body, headers)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status %d", path, resp.StatusCode)
+		}
+		last := mock.Stats().Last
+		var want, got map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(body), &want)
+		_ = json.Unmarshal(last.Body, &got)
+		want["model"] = json.RawMessage(`"chat-model"`)
+		wantJSON, _ := json.Marshal(want)
+		gotJSON, _ := json.Marshal(got)
+		if !bytes.Equal(wantJSON, gotJSON) {
+			t.Fatalf("Anthropic fields changed: %s", last.Body)
+		}
+		if strings.Join(last.Header.Values("Anthropic-Beta"), ",") != strings.Join(headers.Values("Anthropic-Beta"), ",") || last.Header.Get("Anthropic-Version") != "2023-06-01" {
+			t.Fatal("Anthropic headers changed", last.Header)
+		}
+	}
+}
+
 func TestUpstreamModelAndProtocolErrors(t *testing.T) {
 	mock := mockllm.New(mockllm.Options{Models: []string{"served-name"}})
 	backend := httptest.NewServer(mock)

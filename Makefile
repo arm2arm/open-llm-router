@@ -4,7 +4,7 @@ GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 COMPOSE     := docker compose
 SDK_RUN     ?= uv run
 
-.PHONY: build lint vuln test up smoke sdk down
+.PHONY: build lint vuln test test-clients up smoke sdk sdk-real bench-real down
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
@@ -23,6 +23,9 @@ vuln:
 test:
 	go test -race -count=1 ./...
 
+test-clients:
+	python3 -m unittest discover -s tests/clients -p 'test_*.py'
+
 up:
 	$(COMPOSE) up --build --detach --wait --wait-timeout 60
 
@@ -38,14 +41,36 @@ smoke:
 # The official SDK scripts run through the router and directly against each mock.
 # Locally uv supplies their pinned dependencies; CI provides a Python venv.
 sdk:
-	@for service in router mock-llm-a mock-llm-b; do \
+	@stats_a="$$($(COMPOSE) port mock-llm-a 8000)" || exit $$?; \
+	stats_b="$$($(COMPOSE) port mock-llm-b 8000)" || exit $$?; \
+	for service in router mock-llm-a mock-llm-b; do \
 		port=8000; if [ "$$service" = router ]; then port=8080; fi; \
 		address="$$($(COMPOSE) port $$service $$port)" || exit $$?; \
-		OLR_BASE_URL="http://$$address" OLR_EMBEDDING_MODEL=chat-model \
+		stats="http://$$address/_mock/stats"; \
+		if [ "$$service" = router ]; then stats="http://$$stats_a/_mock/stats,http://$$stats_b/_mock/stats"; fi; \
+		OLR_BASE_URL="http://$$address" OLR_EMBEDDING_MODEL=chat-model OLR_TEST_MOCK=1 \
+			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
 			$(SDK_RUN) tests/clients/check_openai.py || exit $$?; \
-		OLR_BASE_URL="http://$$address" OLR_CHECK_THINKING=1 \
+		OLR_BASE_URL="http://$$address" OLR_CHECK_THINKING=1 OLR_TEST_MOCK=1 \
+			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
 			$(SDK_RUN) tests/clients/check_anthropic.py || exit $$?; \
 	done
+
+# Existing host-side router configured with config.real.example.yaml; no Compose dependency.
+# Set OLR_REQUIRE_CANCEL_EVIDENCE=1 for the vLLM go/no-go run.
+sdk-real:
+	@test -n "$$OLR_BASE_URL" && test -n "$$OLR_DIRECT_BASE_URL" && test -n "$$OLR_UPSTREAM_MODEL" || \
+		{ echo 'Set OLR_BASE_URL, OLR_DIRECT_BASE_URL and OLR_UPSTREAM_MODEL (docs/CLIENTS.md)'; exit 1; }
+	@status=0; \
+	for script in check_openai.py check_anthropic.py; do \
+		OLR_BASE_URL="$$OLR_DIRECT_BASE_URL" OLR_MODEL="$$OLR_UPSTREAM_MODEL" \
+			OLR_API_KEY="$${OLR_DIRECT_API_KEY:-olr-not-checked}" OLR_CHECK_EXTENDED=1 \
+			$(SDK_RUN) tests/clients/$$script || status=1; \
+		OLR_CHECK_EXTENDED=1 $(SDK_RUN) tests/clients/$$script || status=1; \
+	done; exit $$status
+
+bench-real:
+	$(SDK_RUN) tests/clients/compare_stream.py
 
 down:
 	$(COMPOSE) down

@@ -156,3 +156,18 @@ func TestHealthLoopStops(t *testing.T) {
 		t.Fatal("health loop leaked")
 	}
 }
+
+func TestCustomHealthPath(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+	cfg := &config.Config{Models: map[string]config.Model{"ollama": {Pool: []config.Replica{{URL: backend.URL, HealthPath: "/", Weight: 1, MaxInflight: 1}}}}}
+	m := New(cfg, http.DefaultTransport)
+	m.Check(t.Context())
+	if !m.Ready() {
+		t.Fatal("backend with a custom health path did not become ready")
+	}
+}

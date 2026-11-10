@@ -11,6 +11,10 @@ Environment:
     OLR_API_KEY         API key (default: a placeholder; the mock ignores it)
     OLR_MODEL           model (default chat-model)
     OLR_CHECK_THINKING  set to 1 to also ask for a thinking block
+    OLR_CHECK_EXTENDED  set to 1 for beta/cache fields, long output and cancellation
+    OLR_DISABLE_THINKING set to 1 for thinking.type=disabled (except thinking check)
+
+See docs/CLIENTS.md for backend cancellation evidence and long-output settings.
 
 The checks hold for any correct backend, mock or real: they look at the shape
 of the answers, not at their text. Exit status 1 if a check fails.
@@ -20,6 +24,7 @@ import os
 import sys
 
 from anthropic import Anthropic
+from client_checks import CancellationProbe, LONG_PROMPT, long_limits, mock_headers
 
 BASE_URL = os.environ.get("OLR_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
 MODEL = os.environ.get("OLR_MODEL", "chat-model")
@@ -30,6 +35,8 @@ client = Anthropic(
     max_retries=0,
     timeout=120,
 )
+
+MESSAGE_OPTIONS = {"thinking": {"type": "disabled"}} if os.environ.get("OLR_DISABLE_THINKING") == "1" else {}
 
 QUESTION = [{"role": "user", "content": "Describe the weather in Potsdam in one sentence."}]
 WEATHER_TOOL = {
@@ -49,7 +56,7 @@ def blocks(message, kind):
 
 
 def text():
-    m = client.messages.create(model=MODEL, max_tokens=32, messages=QUESTION)
+    m = client.messages.create(model=MODEL, max_tokens=128, messages=QUESTION, **MESSAGE_OPTIONS)
     assert m.role == "assistant" and m.type == "message"
     assert blocks(m, "text") and blocks(m, "text")[0].text, "no text"
     assert m.stop_reason in ("end_turn", "max_tokens"), m.stop_reason
@@ -59,7 +66,7 @@ def text():
 
 def stream():
     pieces = []
-    with client.messages.stream(model=MODEL, max_tokens=32, messages=QUESTION) as s:
+    with client.messages.stream(model=MODEL, max_tokens=128, messages=QUESTION, **MESSAGE_OPTIONS) as s:
         for piece in s.text_stream:
             pieces.append(piece)
         final = s.get_final_message()
@@ -70,7 +77,7 @@ def stream():
 
 
 def stream_events():
-    events = [e.type for e in client.messages.create(model=MODEL, max_tokens=8, messages=QUESTION, stream=True)]
+    events = [e.type for e in client.messages.create(model=MODEL, max_tokens=128, messages=QUESTION, stream=True, **MESSAGE_OPTIONS)]
     assert events[0] == "message_start", events
     assert events[-1] == "message_stop", events
     for expected in ("content_block_start", "content_block_delta", "content_block_stop", "message_delta"):
@@ -80,7 +87,7 @@ def stream_events():
 
 def tool_use():
     m = client.messages.create(
-        model=MODEL, max_tokens=128, messages=QUESTION, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER,
+        model=MODEL, max_tokens=128, messages=QUESTION, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER, **MESSAGE_OPTIONS,
     )
     calls = blocks(m, "tool_use")
     assert calls, "no tool_use block"
@@ -90,7 +97,7 @@ def tool_use():
 
     # Second round: hand the tool's result back and get text.
     m2 = client.messages.create(
-        model=MODEL, max_tokens=32, tools=[WEATHER_TOOL], tool_choice={"type": "none"},
+        model=MODEL, max_tokens=128, tools=[WEATHER_TOOL], tool_choice={"type": "none"}, **MESSAGE_OPTIONS,
         messages=QUESTION + [
             {"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in m.content]},
             {"role": "user", "content": [
@@ -104,7 +111,7 @@ def tool_use():
 
 def tool_use_stream():
     with client.messages.stream(
-        model=MODEL, max_tokens=128, messages=QUESTION, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER,
+        model=MODEL, max_tokens=128, messages=QUESTION, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER, **MESSAGE_OPTIONS,
     ) as s:
         final = s.get_final_message()
     calls = blocks(final, "tool_use")
@@ -120,7 +127,7 @@ def count_tokens():
 
 
 def thinking():
-    if not os.environ.get("OLR_CHECK_THINKING"):
+    if os.environ.get("OLR_CHECK_THINKING") != "1":
         return None
     with client.messages.stream(
         model=MODEL, max_tokens=2048, messages=QUESTION, thinking={"type": "enabled", "budget_tokens": 1024},
@@ -131,8 +138,61 @@ def thinking():
     return "thinking block, then text"
 
 
+def beta_and_caching():
+    if os.environ.get("OLR_CHECK_EXTENDED") != "1":
+        return None
+    # Acceptance is the requirement; cache hits depend on backend support.
+    m = client.messages.create(
+        model=MODEL, max_tokens=128, messages=QUESTION, **MESSAGE_OPTIONS,
+        system=[{"type": "text", "text": "Answer weather questions briefly. " * 256,
+                 "cache_control": {"type": "ephemeral"}}],
+        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+    )
+    assert blocks(m, "text"), "no text with beta header and cache_control"
+    return "beta header and cache_control accepted (cache hit not required)"
+
+
+def long_stream():
+    if os.environ.get("OLR_CHECK_EXTENDED") != "1":
+        return None
+    minimum, maximum = long_limits()
+    pieces = 0
+    with client.messages.stream(
+        model=MODEL, max_tokens=maximum, messages=[{"role": "user", "content": LONG_PROMPT}],
+        extra_headers=mock_headers(maximum), **MESSAGE_OPTIONS,
+    ) as stream:
+        for piece in stream.text_stream:
+            pieces += bool(piece)
+        final = stream.get_final_message()
+    assert pieces >= 2, "no incremental text"
+    assert final.stop_reason in ("end_turn", "max_tokens"), final.stop_reason
+    assert final.usage.output_tokens >= minimum, f"long output too short: {final.usage}"
+    return f"{pieces} chunks, {final.usage.output_tokens} output tokens"
+
+
+def cancel_stream():
+    if os.environ.get("OLR_CHECK_EXTENDED") != "1":
+        return None
+    probe = CancellationProbe()
+    pieces = 0
+    with client.messages.stream(
+        model=MODEL, max_tokens=4096, messages=[{"role": "user", "content": LONG_PROMPT}],
+        extra_headers=mock_headers(4096), **MESSAGE_OPTIONS,
+    ) as stream:
+        for event in stream:
+            assert event.type not in ("message_stop", "message_delta"), "generation finished before cancellation"
+            if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                pieces += bool(event.delta.text)
+            if pieces >= 3:
+                break
+        else:
+            raise AssertionError("stream ended before cancellation")
+    return probe.verify()
+
+
 def main():
-    checks = [text, stream, stream_events, tool_use, tool_use_stream, count_tokens, thinking]
+    checks = [text, stream, stream_events, tool_use, tool_use_stream, count_tokens, thinking,
+              beta_and_caching, long_stream, cancel_stream]
     failed = 0
     print(f"anthropic SDK against {BASE_URL} (model {MODEL})")
     for check in checks:

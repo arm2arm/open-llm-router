@@ -85,6 +85,19 @@ func TestParseWithoutOIDC(t *testing.T) {
 	}
 }
 
+func TestHealthPath(t *testing.T) {
+	for _, path := range []string{"/", "/health", "/health/ready", "", "health", "https://other/health", "//other/health", "/health?x=1", "/health#fragment", "/%zz"} {
+		t.Run(path, func(t *testing.T) {
+			data := change(t, "url: http://backend-a:8000", "url: http://backend-a:8000, health_path: '"+path+"'")
+			_, err := Parse([]byte(data), lookupIn(validEnv))
+			valid := path == "" || path == "/" || path == "/health" || path == "/health/ready"
+			if (err == nil) != valid {
+				t.Fatalf("path %q: %v", path, err)
+			}
+		})
+	}
+}
+
 func TestParseRejects(t *testing.T) {
 	tests := []struct {
 		name string

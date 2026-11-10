@@ -11,6 +11,10 @@ Environment:
     OLR_API_KEY           API key (default: a placeholder; the mock ignores it)
     OLR_MODEL             chat model (default chat-model)
     OLR_EMBEDDING_MODEL   embedding model; the embeddings check is skipped without it
+    OLR_CHECK_EXTENDED    set to 1 for long output and mid-stream cancel checks
+    OLR_DISABLE_THINKING  set to 1 for Ollama reasoning_effort=none
+
+See docs/CLIENTS.md for backend cancellation evidence and long-output settings.
 
 The checks hold for any correct backend, mock or real: they look at the shape
 of the answers, not at their text. Exit status 1 if a check fails.
@@ -21,6 +25,7 @@ import os
 import sys
 
 from openai import OpenAI
+from client_checks import CancellationProbe, LONG_PROMPT, long_limits, mock_headers
 
 BASE_URL = os.environ.get("OLR_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
 MODEL = os.environ.get("OLR_MODEL", "chat-model")
@@ -32,6 +37,9 @@ client = OpenAI(
     max_retries=0,
     timeout=120,
 )
+
+# Explicit opt-in: other engines may use model-specific reasoning controls.
+CHAT_OPTIONS = {"reasoning_effort": "none"} if os.environ.get("OLR_DISABLE_THINKING") == "1" else {}
 
 QUESTION = [{"role": "user", "content": "Describe the weather in Potsdam in one sentence."}]
 WEATHER_TOOL = {
@@ -50,7 +58,7 @@ CALL_WEATHER = {"type": "function", "function": {"name": "get_weather"}}
 
 
 def chat_text():
-    r = client.chat.completions.create(model=MODEL, messages=QUESTION, max_tokens=32)
+    r = client.chat.completions.create(model=MODEL, messages=QUESTION, max_tokens=128, **CHAT_OPTIONS)
     choice = r.choices[0]
     assert choice.message.role == "assistant"
     assert choice.message.content, "empty content"
@@ -62,7 +70,7 @@ def chat_text():
 
 def chat_stream():
     stream = client.chat.completions.create(
-        model=MODEL, messages=QUESTION, max_tokens=32, stream=True,
+        model=MODEL, messages=QUESTION, max_tokens=128, stream=True, **CHAT_OPTIONS,
         stream_options={"include_usage": True},
     )
     pieces, finish, usage = [], None, None
@@ -80,7 +88,7 @@ def chat_stream():
 
 
 def chat_stream_without_usage():
-    stream = client.chat.completions.create(model=MODEL, messages=QUESTION, max_tokens=8, stream=True)
+    stream = client.chat.completions.create(model=MODEL, messages=QUESTION, max_tokens=8, stream=True, **CHAT_OPTIONS)
     chunks = list(stream)
     assert chunks, "no chunks"
     assert all(chunk.choices for chunk in chunks), "a chunk without choices although usage was not asked for"
@@ -89,7 +97,7 @@ def chat_stream_without_usage():
 
 def tool_call():
     r = client.chat.completions.create(
-        model=MODEL, messages=QUESTION, max_tokens=128, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER,
+        model=MODEL, messages=QUESTION, max_tokens=128, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER, **CHAT_OPTIONS,
     )
     message = r.choices[0].message
     assert message.tool_calls, "no tool call"
@@ -99,7 +107,7 @@ def tool_call():
 
     # Second round: hand the tool's result back and get text.
     r = client.chat.completions.create(
-        model=MODEL, max_tokens=32, tools=[WEATHER_TOOL], tool_choice="none",
+        model=MODEL, max_tokens=128, tools=[WEATHER_TOOL], tool_choice="none", **CHAT_OPTIONS,
         messages=QUESTION + [
             message.model_dump(exclude_none=True),
             {"role": "tool", "tool_call_id": call.id, "content": "12 degrees, light rain"},
@@ -112,7 +120,7 @@ def tool_call():
 def tool_call_stream():
     stream = client.chat.completions.create(
         model=MODEL, messages=QUESTION, max_tokens=128, tools=[WEATHER_TOOL], tool_choice=CALL_WEATHER,
-        stream=True,
+        stream=True, **CHAT_OPTIONS,
     )
     name, arguments, finish = "", "", None
     for chunk in stream:
@@ -128,7 +136,7 @@ def tool_call_stream():
 
 
 def completion():
-    r = client.completions.create(model=MODEL, prompt="Once upon a time", max_tokens=8)
+    r = client.completions.create(model=MODEL, prompt="Once upon a time", max_tokens=128)
     assert r.choices[0].text, "empty text"
     assert r.usage.completion_tokens > 0, r.usage
     return f"{r.usage.completion_tokens} output tokens"
@@ -150,9 +158,50 @@ def models():
     return ", ".join(ids)
 
 
+def long_stream():
+    if os.environ.get("OLR_CHECK_EXTENDED") != "1":
+        return None
+    minimum, maximum = long_limits()
+    usage, pieces, finish = None, 0, None
+    with client.chat.completions.create(
+        model=MODEL, messages=[{"role": "user", "content": LONG_PROMPT}],
+        max_tokens=maximum, stream=True, stream_options={"include_usage": True},
+        extra_headers=mock_headers(maximum), **CHAT_OPTIONS,
+    ) as stream:
+        for chunk in stream:
+            usage = chunk.usage or usage
+            for choice in chunk.choices:
+                pieces += bool(choice.delta.content)
+                finish = choice.finish_reason or finish
+    assert pieces >= 2, "no incremental text"
+    assert finish in ("stop", "length"), finish
+    assert usage and usage.completion_tokens >= minimum, f"long output too short: {usage}"
+    return f"{pieces} chunks, {usage.completion_tokens} output tokens"
+
+
+def cancel_stream():
+    if os.environ.get("OLR_CHECK_EXTENDED") != "1":
+        return None
+    probe = CancellationProbe()
+    pieces = 0
+    with client.chat.completions.create(
+        model=MODEL, messages=[{"role": "user", "content": LONG_PROMPT}],
+        max_tokens=4096, stream=True, extra_headers=mock_headers(4096), **CHAT_OPTIONS,
+    ) as stream:
+        for chunk in stream:
+            for choice in chunk.choices:
+                assert choice.finish_reason is None, "generation finished before cancellation"
+                pieces += bool(choice.delta.content)
+            if pieces >= 3:
+                break
+        else:
+            raise AssertionError("stream ended before cancellation")
+    return probe.verify()
+
+
 def main():
     checks = [chat_text, chat_stream, chat_stream_without_usage, tool_call, tool_call_stream,
-              completion, embeddings, models]
+              completion, embeddings, models, long_stream, cancel_stream]
     failed = 0
     print(f"openai SDK against {BASE_URL} (model {MODEL})")
     for check in checks:

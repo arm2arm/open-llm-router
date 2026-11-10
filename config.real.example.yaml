@@ -1,0 +1,22 @@
+# A host-side router pointing at one real, idle backend replica for issue #8.
+# The endpoint and served model are supplied only through the environment.
+# Run: bin/olr serve -listen 127.0.0.1:8080 -config config.real.example.yaml
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    upstream_model: ${OLR_UPSTREAM_MODEL}
+    timeout_s: 900
+    idle_timeout_s: 60
+    pool:
+      - url: ${OLR_DIRECT_BASE_URL}
+        health_path: ${OLR_HEALTH_PATH} # /health for vLLM/SGLang, / for Ollama
+        weight: 1
+        max_inflight: 4
+        # Export OLR_DIRECT_API_KEY; use a nonempty placeholder without backend auth.
+        bearer_token_env: OLR_DIRECT_API_KEY
+
+# Explicit client defaults; set all Claude Code model overrides to these aliases.
+aliases:
+  claude-sonnet-4-5: chat-model
+  claude-haiku-4-5: chat-model
+  claude-opus-4-1: chat-model

@@ -138,7 +138,11 @@ func (m *Manager) Check(ctx context.Context) {
 		for i := range p.replicas {
 			wg.Go(func() {
 				r := p.replicas[i].config
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(r.URL, "/")+"/health", nil)
+				path := r.HealthPath
+				if path == "" {
+					path = "/health"
+				}
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(r.URL, "/")+path, nil)
 				if r.BearerToken != "" {
 					req.Header.Set("Authorization", "Bearer "+r.BearerToken)
 				}

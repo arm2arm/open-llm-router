@@ -130,8 +130,9 @@ returned to the caller. Unsupported model/protocol combinations give a protocol-
 Pools choose the healthy replica with the smallest `inflight / weight` and randomize ties.
 Slots last until completion or disconnect. Full or unhealthy pools return 503 with `Retry-After: 1`;
 there is no queue. `/readyz` needs a healthy replica for every configured model, regardless of
-whether its slots are currently full. Health probes run at startup and every 5 seconds with a
-2-second timeout: two failures remove a replica, one success restores it. A connection failure
+whether its slots are currently full. Health probes use each replica's `health_path` (default
+`/health`; use `/` for Ollama), at startup and every 5 seconds with a 2-second timeout:
+two failures remove a replica, one success restores it. A connection failure
 before response bytes triggers a 10-second cooldown and at most one retry on another replica.
 Once response bytes have started, a broken stream is cut off and never replayed.
 
@@ -150,6 +151,11 @@ curl -N http://localhost:8080/v1/messages \
 ```
 
 The local stack uses deterministic mock answers. A web portal is planned in later issues.
+
+For real Ollama, vLLM or SGLang backends, see [docs/CLIENTS.md](docs/CLIENTS.md) and
+[config.real.example.yaml](config.real.example.yaml). The runbook includes the recorded laptop
+results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `make sdk-real`
+/ `make bench-real`. The deployed vLLM/SGLang acceptance run remains pending.
 
 ## Citation
 
