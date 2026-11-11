@@ -40,6 +40,7 @@ type usageOptions struct {
 	clock      func() time.Time
 	configure  func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
 	forwarders *config.Forwarders
+	tokens     func(*pgxpool.Pool) func(*auth.Authenticator)
 }
 
 func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOptions) *usageRouter {
@@ -59,6 +60,9 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	authenticator, err := auth.New(t.Context(), f.pool)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(options) > 0 && options[0].tokens != nil {
+		options[0].tokens(f.pool)(authenticator)
 	}
 	if len(options) > 0 && options[0].forwarders != nil {
 		authenticator.Forwarders = *options[0].forwarders

@@ -15,9 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/apitoken"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/groupsync"
 	"github.com/arm2arm/open-llm-router/internal/home"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
@@ -121,6 +123,16 @@ func serve(args []string) error {
 	}
 	defer authenticator.Close()
 	authenticator.Forwarders = cfg.Forwarders
+	if cfg.OIDC != nil && cfg.OIDC.Audience != "" {
+		tokenCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		verifier, err := apitoken.New(tokenCtx, cfg.OIDC, database)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("API tokens: %w", err)
+		}
+		defer verifier.Close()
+		authenticator.Tokens = verifier.Authenticate
+	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ln, err := net.Listen("tcp", *listen)
@@ -157,6 +169,22 @@ func serve(args []string) error {
 	}()
 	forwarder.Metrics = observability
 	defer forwarder.Close()
+	if cfg.OIDC != nil && cfg.OIDCSyncSecret != "" {
+		syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		syncer, err := groupsync.New(syncCtx, cfg.OIDC, cfg.OIDCSyncSecret, database, log)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("group sync: %w", err)
+		}
+		defer syncer.Close()
+		syncRun, stopSync := context.WithCancel(context.Background())
+		syncDone := make(chan struct{})
+		go func() {
+			defer close(syncDone)
+			syncer.Run(syncRun, time.Duration(cfg.OIDC.SyncIntervalS)*time.Second)
+		}()
+		defer func() { stopSync(); <-syncDone }()
+	}
 	retentionDone := make(chan struct{})
 	retentionCtx, cancelRetention := context.WithCancel(context.Background())
 	go func() {
