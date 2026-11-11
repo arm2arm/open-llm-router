@@ -7,7 +7,8 @@ per-user token quotas and usage view, load-aware balancing across model replicas
 Status: **in development** — OpenAI and Anthropic APIs now forward to replica pools with
 incremental streaming, cancellation, weighted balancing, health checks and failover.
 Model aliases and `/v1/models` work. The router initializes its Postgres schema at startup and
-checks the database in `/readyz`. Authentication, usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
+checks the database in `/readyz`. API keys authenticate every `/v1/*` request, with admin CLI
+commands for local users and keys. Group policy, usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
 Stack: Go backend (one static binary), React portal, PostgreSQL, Keycloak.
@@ -46,7 +47,10 @@ The pool URLs in `config.example.yaml` use service names and container ports. Th
 delays match its 2:1 weights, used by weighted least-outstanding balancing. To try a stream through the router:
 
 ```sh
+user_id=$(docker compose exec -T router olr admin user add -username pilot -groups staff)
+export OLR_API_KEY=$(docker compose exec -T router olr admin key create -user "$user_id" -label laptop)
 curl -N http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer $OLR_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"chat-model","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
@@ -66,7 +70,8 @@ Postgres integration tests in `tests/integration` skip when `OLR_TEST_DATABASE_U
 Each test creates and drops its own database, leaving the supplied database intact. The test
 role needs `CREATEDB` and permission to terminate its own connections (the Compose and CI
 roles have these permissions). Tests cover schema initialization/restarts, issuer-scoped
-identities, deletion rules, and database loss/recovery through the router binary.
+identities, deletion rules, database loss/recovery, and CLI-created keys through the router binary,
+including immediate cache invalidation across two router processes on revoke and user disable.
 With Compose running on the default database port, include them with:
 
 ```sh
@@ -119,13 +124,51 @@ request or response bodies.
 | `cmd/mock-llm`, `internal/mockllm` | deterministic OpenAI- and Anthropic-compatible test backend |
 | `internal/config` | config file: `${VAR}` references, strict decoding, validation |
 | `internal/db` | pgx connection pool and embedded, idempotent Postgres schema |
+| `internal/auth` | API key generation, authentication cache, invalidation and bootstrap administration |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: `auth`, `usage`, `limits`, `portal`, `metrics`.
+Still to come under `internal/`: group policy, `usage`, `limits`, `portal`, `metrics`.
+
+## API keys and bootstrap administration
+
+All `/v1/*` requests require `Authorization: Bearer <key>` or `x-api-key: <key>`.
+Matching credentials in both headers are accepted; conflicting or repeated headers are rejected.
+Missing, malformed, unknown, revoked or expired keys and disabled users receive a generic 401
+in the caller's OpenAI or Anthropic error format. `/healthz` and `/readyz` remain public.
+Database authentication failures return 503. Keycloak portal login and group policy follow in later issues.
+
+The bootstrap commands use `OLR_DATABASE_URL` and work without a running HTTP server. Under
+Compose, run them as `docker compose exec -T router olr admin ...`; on the host use `bin/olr admin ...`.
+`user add` creates an issuer-scoped `local` identity and prints its UUID. Save that UUID for
+subsequent operations; adding the same local username again is an error.
+
+```sh
+# After creating a user and key as shown above:
+docker compose exec -T router olr admin key list -user "$user_id"
+docker compose exec -T router olr admin key create -user "$user_id" -label short-job -lifetime 24h
+docker compose exec -T router olr admin key revoke -id <key-uuid-from-list>
+docker compose exec -T router olr admin user disable -id "$user_id"
+```
+
+Key creation prints the plaintext once on stdout. Keys contain 32 bytes from `crypto/rand`,
+encoded as 43 base62 characters after `olr-`. Only the SHA-256 hash and a 12-character display
+prefix are stored; listing returns metadata only. Request logs contain neither credentials nor
+hashes. Keys expire after `auth.default_key_lifetime_days` (default 90; range 1–36500), unless
+`key create -lifetime` supplies a positive Go duration. The CLI reads this setting from
+`-config` / `OLR_CONFIG`, or uses 90 days without a config file. No command issues indefinite keys.
+
+Successful authentication is cached for 60 seconds, bounded by the key's expiry. `last_used`
+changes at most once per minute per key, including across processes. Revoke and disable publish
+Postgres notifications and wait for all running router listeners to clear their caches before
+returning, so the next request is rejected. If acknowledgement fails, the CLI reports that the
+change committed and must be retried. Each router holds one dedicated Postgres listener connection;
+if it disconnects, cached credentials are discarded and requests use SQL lookups until it reconnects.
+Direct SQL edits are picked up within the cache TTL; use the admin commands for immediate invalidation.
+`make smoke` and `make sdk` create temporary test users and disable them when they finish.
 
 ## API behavior
 
@@ -159,8 +202,9 @@ Client disconnects cancel backend work. Streaming responses flush each read and 
 For a quick alias check:
 
 ```sh
-curl http://localhost:8080/v1/models
+curl http://localhost:8080/v1/models -H "Authorization: Bearer $OLR_API_KEY"
 curl -N http://localhost:8080/v1/messages \
+  -H "x-api-key: $OLR_API_KEY" \
   -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' \
   -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}],"max_tokens":16,"stream":true}'
 ```

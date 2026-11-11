@@ -28,9 +28,10 @@ const (
 
 // Server is the router's HTTP server.
 type Server struct {
-	log   *slog.Logger
-	mux   *http.ServeMux
-	ready func(context.Context) bool
+	log           *slog.Logger
+	mux           *http.ServeMux
+	ready         func(context.Context) bool
+	apiMiddleware func(http.Handler) http.Handler
 }
 
 // New returns a server that answers the health endpoints. Further routes are
@@ -55,6 +56,12 @@ func New(log *slog.Logger) *Server {
 // SetReadiness installs the readiness probe before serving requests.
 func (s *Server) SetReadiness(check func(context.Context) bool) { s.ready = check }
 
+// SetAPIMiddleware installs authentication before serving requests. It wraps the
+// mux so even unknown /v1 routes and mux redirects pass through authentication.
+func (s *Server) SetAPIMiddleware(middleware func(http.Handler) http.Handler) {
+	s.apiMiddleware = middleware
+}
+
 func status(text string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -74,6 +81,10 @@ func (s *Server) Handle(pattern string, handler http.Handler) {
 // ends. The log line holds metadata only: no headers, no query string, no
 // client address, and never a request or response body.
 func (s *Server) Handler() http.Handler {
+	var routes http.Handler = s.mux
+	if s.apiMiddleware != nil {
+		routes = s.apiMiddleware(routes)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		id := reqid.New()
@@ -114,7 +125,7 @@ func (s *Server) Handler() http.Handler {
 			}
 		}()
 
-		s.mux.ServeHTTP(rec, r.WithContext(reqid.NewContext(r.Context(), id)))
+		routes.ServeHTTP(rec, r.WithContext(reqid.NewContext(r.Context(), id)))
 	})
 }
 

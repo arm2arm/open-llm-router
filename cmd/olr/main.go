@@ -1,5 +1,5 @@
 // Command olr is the open-llm-router: one binary that serves the API and,
-// later, the portal and the admin commands.
+// the bootstrap admin commands.
 package main
 
 import (
@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
@@ -24,6 +25,7 @@ const usage = `usage: olr <command> [flags]
 
 commands:
   serve    run the router
+  admin    manage local users and API keys
 
 Run "olr <command> -h" for the flags of a command.
 `
@@ -37,6 +39,8 @@ func main() {
 	switch cmd, args := os.Args[1], os.Args[2:]; cmd {
 	case "serve":
 		err = serve(args)
+	case "admin":
+		err = admin(args, os.Stdout, os.Stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -99,6 +103,13 @@ func serve(args []string) error {
 		return err
 	}
 	defer database.Close()
+	authCtx, cancelAuth := context.WithTimeout(ctx, 10*time.Second)
+	authenticator, err := auth.New(authCtx, database)
+	cancelAuth()
+	if err != nil {
+		return err
+	}
+	defer authenticator.Close()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ln, err := net.Listen("tcp", *listen)
@@ -116,6 +127,7 @@ func serve(args []string) error {
 	go func() { defer close(healthDone); forwarder.Pools.Run(healthCtx) }()
 	defer func() { cancelHealth(); <-healthDone }()
 	srv := server.New(log)
+	srv.SetAPIMiddleware(authenticator.Middleware)
 	srv.SetReadiness(func(ctx context.Context) bool {
 		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
 	})

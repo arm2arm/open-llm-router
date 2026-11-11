@@ -11,7 +11,7 @@ services:
       - "127.0.0.1:${OLR_PORT:-8080}:8080"
     environment:
       OLR_DATABASE_URL: ${OLR_DATABASE_URL:-postgres://olr:olr-dev-only@postgres:5432/olr?sslmode=disable}
-      # Read by config.example.yaml; no OIDC calls until authentication is built.
+      # Read by config.example.yaml; portal OIDC follows in #14.
       OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8080/realms/olr-dev}
       OIDC_PORTAL_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-}
     depends_on:

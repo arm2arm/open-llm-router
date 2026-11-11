@@ -85,6 +85,28 @@ func TestParseWithoutOIDC(t *testing.T) {
 	}
 }
 
+func TestKeyLifetime(t *testing.T) {
+	for _, tc := range []struct {
+		yaml string
+		want int
+	}{
+		{"", 90},
+		{"auth: {default_key_lifetime_days: 7}\n", 7},
+		{"auth: {default_key_lifetime_days: 0}\n", 0},
+		{"auth: {default_key_lifetime_days: -1}\n", 0},
+		{"auth: {default_key_lifetime_days: 36501}\n", 0},
+	} {
+		cfg, err := Parse([]byte(tc.yaml+valid), lookupIn(validEnv))
+		if tc.want == 0 {
+			if err == nil || !strings.Contains(err.Error(), "auth.default_key_lifetime_days") {
+				t.Fatalf("invalid lifetime accepted: %v", err)
+			}
+		} else if err != nil || cfg.Auth.DefaultKeyLifetimeDays != tc.want {
+			t.Fatalf("key lifetime: cfg=%+v err=%v", cfg, err)
+		}
+	}
+}
+
 func TestHealthPath(t *testing.T) {
 	for _, path := range []string{"/", "/health", "/health/ready", "", "health", "https://other/health", "//other/health", "/health?x=1", "/health#fragment", "/%zz"} {
 		t.Run(path, func(t *testing.T) {

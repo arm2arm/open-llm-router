@@ -104,7 +104,7 @@ func TestRouterDatabaseLifecycle(t *testing.T) {
 
 // Start the actual binary on an OS-assigned port and read its startup log to
 // discover the address. Each process is stopped and reaped, even on failure.
-func startRouter(t *testing.T, binary, config, dsn string) (string, func()) {
+func startRouter(t *testing.T, binary, config, dsn string, logOutput ...io.Writer) (string, func()) {
 	t.Helper()
 	cmd := exec.Command(binary, "serve", "-config", config, "-listen", "127.0.0.1:0", "-shutdown-grace", "1s")
 	cmd.Env = append(os.Environ(), "OLR_DATABASE_URL="+dsn)
@@ -140,6 +140,9 @@ func startRouter(t *testing.T, binary, config, dsn string) (string, func()) {
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
+			for _, output := range logOutput {
+				fmt.Fprintln(output, scanner.Text())
+			}
 			var entry struct{ Msg, Addr string }
 			if json.Unmarshal(scanner.Bytes(), &entry) == nil && entry.Msg == "listening" {
 				addresses <- entry.Addr
