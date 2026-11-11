@@ -108,9 +108,10 @@ job has a five-minute timeout and the image/browser job ten minutes. Dependencie
 For a host-side router, run Postgres 17 locally (or `docker compose up -d postgres`) and export
 `OLR_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=disable'` with the
 appropriate credentials. The URL is required: startup fails before listening if connecting
-or applying the schema fails. The embedded [schema.sql](internal/db/schema.sql) runs atomically
-on each startup, preserving existing tables and data; no separate migration command is needed.
-Versioned migrations will be introduced with the first schema change after the pilot.
+or applying the schema fails. The numbered migrations in [internal/db/migrations](internal/db/migrations)
+are applied at startup in one transaction and recorded in `schema_migrations`; a router refuses
+a database with a newer schema version. `olr migrate` applies them without serving.
+To change the schema, add the next `NNNN_name.sql`; never edit an applied migration.
 
 Without Docker, build both binaries, run two mock processes on ports 8001/8002, and copy the
 example config with pool URLs changed to `http://127.0.0.1:8001` and `http://127.0.0.1:8002`.

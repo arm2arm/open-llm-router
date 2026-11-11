@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
+	"github.com/arm2arm/open-llm-router/internal/retention"
 	"github.com/arm2arm/open-llm-router/internal/server"
 	usagewriter "github.com/arm2arm/open-llm-router/internal/usage"
 )
@@ -31,6 +33,7 @@ const usage = `usage: olr <command> [flags]
 commands:
   serve    run the router
   admin    manage local users and API keys
+  migrate  apply database migrations and exit
 
 Run "olr <command> -h" for the flags of a command.
 `
@@ -46,6 +49,8 @@ func main() {
 		err = serve(args)
 	case "admin":
 		err = admin(args, os.Stdout, os.Stderr)
+	case "migrate":
+		err = migrateCommand(args, os.Stdout)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -151,6 +156,13 @@ func serve(args []string) error {
 	}()
 	forwarder.Metrics = observability
 	defer forwarder.Close()
+	retentionDone := make(chan struct{})
+	retentionCtx, cancelRetention := context.WithCancel(context.Background())
+	go func() {
+		defer close(retentionDone)
+		retention.Run(retentionCtx, database, cfg.Retention, cfg.Limits.Location, log)
+	}()
+	defer func() { cancelRetention(); <-retentionDone }()
 	forwarder.Pools.Check(ctx)
 	// Health checks keep running during graceful shutdown until Run returns.
 	healthCtx, cancelHealth := context.WithCancel(context.Background())
@@ -183,4 +195,32 @@ func serve(args []string) error {
 	}
 	log.Info("stopped")
 	return nil
+}
+
+// migrateCommand applies pending migrations, for deployments that migrate
+// before starting routers (a Kubernetes init container or job).
+func migrateCommand(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("olr migrate", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return errUsage
+	}
+	if fs.NArg() > 0 {
+		return errUsage
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	pool, err := db.Open(ctx, os.Getenv(config.EnvDatabaseURL))
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	version, err := db.Version(ctx, pool)
+	if err != nil {
+		return errors.New("read schema version failed")
+	}
+	_, err = fmt.Fprintf(out, "schema version %d\n", version)
+	return err
 }

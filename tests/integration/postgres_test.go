@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/retention"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -121,7 +123,10 @@ func TestSchemaAddsStreamFlagToExistingUsage(t *testing.T) {
 	database := newDatabase(t)
 	pool := openDatabase(t, database.dsn)
 	id := user(t, pool, "local", "legacy")
+	// A pilot database from before versioned migrations has no schema_migrations.
 	execSQL(t, pool, `ALTER TABLE usage DROP COLUMN is_stream`)
+	execSQL(t, pool, `DROP INDEX usage_ts_idx`)
+	execSQL(t, pool, `DROP TABLE schema_migrations`)
 	execSQL(t, pool, `INSERT INTO usage(user_id,model,replica,protocol,status,input_tokens,output_tokens,latency_ms,ttfb_ms)
 		VALUES ($1,'chat-model','http://backend','openai','200',3,7,100,30)`, id)
 	upgraded := openDatabase(t, database.dsn)
@@ -277,5 +282,55 @@ func TestDeletionRules(t *testing.T) {
 		if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{table}.Sanitize()).Scan(&count); err != nil || count != 1 {
 			t.Errorf("%s rows for unaffected user = %d, %v", table, count, err)
 		}
+	}
+}
+
+func TestMigrationsRecordVersionAndRefuseNewerSchema(t *testing.T) {
+	database := newDatabase(t)
+	pool := openDatabase(t, database.dsn)
+	version, err := db.Version(t.Context(), pool)
+	if err != nil || version != len(db.Migrations()) {
+		t.Fatal("schema version", version, err)
+	}
+	execSQL(t, pool, `INSERT INTO schema_migrations (version, name) VALUES ($1, 'from_the_future')`, version+1)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	newer, err := db.Open(ctx, database.dsn)
+	if newer != nil || err == nil || !strings.Contains(err.Error(), "newer than this router") {
+		if newer != nil {
+			newer.Close()
+		}
+		t.Fatal("a newer schema was accepted", err)
+	}
+}
+
+func TestRetentionPrunesOnlyExpiredRecords(t *testing.T) {
+	pool := openDatabase(t, newDatabase(t).dsn)
+	owner := user(t, pool, "local", "retention")
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	for _, age := range []time.Duration{0, 89 * 24 * time.Hour, 91 * 24 * time.Hour, 400 * 24 * time.Hour} {
+		execSQL(t, pool, `INSERT INTO usage (ts, user_id, model, replica, protocol, status, latency_ms) VALUES ($1, $2, 'm', 'r', 'openai', '200', 1)`, now.Add(-age), owner)
+	}
+	for _, day := range []string{"2026-11-11", "2025-10-08", "2025-10-07", "2025-10-06", "2024-01-01"} {
+		execSQL(t, pool, `INSERT INTO usage_daily (day, user_id, model, requests) VALUES ($1::date, $2, 'm', 1)`, day, owner)
+	}
+	periods := config.Retention{UsageDays: 90, UsageDailyDays: 400, RunAt: "03:00"}
+	result, err := retention.Prune(t.Context(), pool, periods, time.UTC, now)
+	if err != nil || result.Usage != 2 || result.UsageDaily != 2 {
+		t.Fatal(result, err)
+	}
+	var usageLeft, oldest int
+	var days []string
+	if err := pool.QueryRow(t.Context(), `SELECT count(*), min(extract(day FROM $1 - ts))::int FROM usage`, now).Scan(&usageLeft, &oldest); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT array_agg(to_char(day, 'YYYY-MM-DD') ORDER BY day) FROM usage_daily`).Scan(&days); err != nil {
+		t.Fatal(err)
+	}
+	if usageLeft != 2 || strings.Join(days, ",") != "2025-10-07,2025-10-08,2026-11-11" {
+		t.Fatal("kept", usageLeft, days)
+	}
+	if result, err := retention.Prune(t.Context(), pool, periods, time.UTC, now); err != nil || result != (retention.Result{}) {
+		t.Fatal("second run", result, err)
 	}
 }

@@ -784,8 +784,10 @@ function UsagePage() {
                   <p className="subtitle">
                     The router keeps metadata of each request (time, model,
                     tokens, timing), never prompts or responses. You can delete
-                    these records at any time. Daily totals stay for quotas and
-                    accounting.
+                    these records at any time; otherwise they are deleted after{' '}
+                    {data.retention.usage_days} days. Daily totals stay for
+                    quotas and accounting for {data.retention.usage_daily_days}{' '}
+                    days.
                   </p>
                 </div>
                 <Button

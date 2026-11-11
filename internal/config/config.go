@@ -40,13 +40,14 @@ const (
 // Config is the content of the config file plus the secrets from the
 // environment.
 type Config struct {
-	Auth    Auth              `yaml:"auth"`
-	Limits  Limits            `yaml:"limits"`
-	OIDC    *OIDC             `yaml:"oidc"` // nil: no portal login
-	Portal  Portal            `yaml:"-"`
-	Models  map[string]Model  `yaml:"models"`
-	Groups  map[string]Group  `yaml:"groups"`
-	Aliases map[string]string `yaml:"aliases"` // client model name -> model
+	Auth      Auth              `yaml:"auth"`
+	Limits    Limits            `yaml:"limits"`
+	Retention Retention         `yaml:"retention"`
+	OIDC      *OIDC             `yaml:"oidc"` // nil: no portal login
+	Portal    Portal            `yaml:"-"`
+	Models    map[string]Model  `yaml:"models"`
+	Groups    map[string]Group  `yaml:"groups"`
+	Aliases   map[string]string `yaml:"aliases"` // client model name -> model
 
 	DatabaseURL      string `yaml:"-"`
 	OIDCClientSecret string `yaml:"-"`
@@ -56,6 +57,22 @@ type Config struct {
 type Auth struct {
 	DefaultKeyLifetimeDays int `yaml:"default_key_lifetime_days"`
 }
+
+// Retention sets how long usage records are kept. A nightly job deletes older
+// rows at RunAt ("HH:MM" in limits.timezone) and once at startup.
+type Retention struct {
+	UsageDays      int    `yaml:"usage_days"`       // per-request records; default 90
+	UsageDailyDays int    `yaml:"usage_daily_days"` // daily totals; default 400
+	RunAt          string `yaml:"run_at"`           // default "03:00"
+}
+
+// Retention defaults.
+const (
+	DefaultUsageDays      = 90
+	DefaultUsageDailyDays = 400
+	// MinUsageDailyDays keeps the current and previous month for quotas.
+	MinUsageDailyDays = 62
+)
 
 // Limits sets the calendar used by quotas and daily accounting.
 type Limits struct {
@@ -148,7 +165,8 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, problems
 	}
 
-	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{Timezone: "UTC"}}
+	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{Timezone: "UTC"},
+		Retention: Retention{UsageDays: DefaultUsageDays, UsageDailyDays: DefaultUsageDailyDays, RunAt: "03:00"}}
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
 	}
@@ -328,6 +346,15 @@ func (c *Config) validate() Problems {
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
 	if c.Auth.DefaultKeyLifetimeDays <= 0 || c.Auth.DefaultKeyLifetimeDays > 36500 {
 		add("auth.default_key_lifetime_days: must be between 1 and 36500")
+	}
+	if c.Retention.UsageDays < 1 || c.Retention.UsageDays > 36500 {
+		add("retention.usage_days: must be between 1 and 36500")
+	}
+	if c.Retention.UsageDailyDays < MinUsageDailyDays || c.Retention.UsageDailyDays > 36500 {
+		add("retention.usage_daily_days: must be between %d (quotas need the current month) and 36500", MinUsageDailyDays)
+	}
+	if _, err := time.Parse("15:04", c.Retention.RunAt); err != nil || len(c.Retention.RunAt) != 5 {
+		add("retention.run_at: must be a time of day as HH:MM, such as 03:00")
 	}
 
 	if c.OIDC != nil {

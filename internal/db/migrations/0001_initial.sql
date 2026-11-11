@@ -1,5 +1,5 @@
--- Pilot schema. Applied in one transaction on every startup; introduce versioned
--- migrations when this schema first changes after the pilot.
+-- Pilot schema. It stays idempotent: databases created before versioned
+-- migrations have these tables but no schema_migrations row, and run it again.
 CREATE TABLE IF NOT EXISTS users (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     issuer text NOT NULL,

@@ -62,5 +62,6 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request, u user) {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"quota": quota, "today": today, "month": thisMonth})
+	respond(w, 200, map[string]any{"quota": quota, "today": today, "month": thisMonth,
+		"retention": map[string]int{"usage_days": h.cfg.Retention.UsageDays, "usage_daily_days": h.cfg.Retention.UsageDailyDays}})
 }

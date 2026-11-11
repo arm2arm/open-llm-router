@@ -78,6 +78,7 @@ export type ModelUsage = {
   average_tokens_per_second: number | null
 }
 export type Usage = {
+  retention: { usage_days: number; usage_daily_days: number }
   today: ModelUsage[]
   month: ModelUsage[]
   quota: {

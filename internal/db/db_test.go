@@ -16,3 +16,10 @@ func TestInvalidConnectionString(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationsAreNumberedWithoutGaps(t *testing.T) {
+	list := Migrations()
+	if len(list) < 2 || list[0].Version != 1 || list[0].Name != "initial" {
+		t.Fatalf("migrations: %+v", list)
+	}
+}

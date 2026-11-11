@@ -56,9 +56,10 @@ processed on `<hosting location>` and is not shared with third parties `<or: lis
 
 ## For operators
 
-- Per-request retention: `<90>` days; daily totals: `<400>` days. Expiry of old records by an
-  automatic job is tracked in [#29](https://github.com/arm2arm/open-llm-router/issues/29); until
-  it lands, delete old rows as described in the runbook.
+- Per-request retention is `retention.usage_days` (default 90) and daily totals
+  `retention.usage_daily_days` (default 400) in the config file; put the same values in this
+  notice. The router deletes older rows at startup and every night at `retention.run_at`, and
+  the portal's usage page states both periods.
 - Erasure on request: `olr admin user list -match <name or email>` finds the user,
   `olr admin user delete -id <uuid>` deletes the account, keys, sessions, per-request records
   (including calls forwarded for that user) and daily totals in one transaction. See
