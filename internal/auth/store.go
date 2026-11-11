@@ -64,7 +64,13 @@ func (a Admin) AddUser(ctx context.Context, username, email string, groups []str
 }
 
 func (a Admin) DisableUser(ctx context.Context, userID string) error {
-	return a.change(ctx, `UPDATE users SET enabled = false WHERE id = $1`, userID)
+	return a.SetEnabled(ctx, userID, false)
+}
+
+// SetEnabled disables or re-enables a user. Disabled users have no API or
+// portal access; their sessions end at once.
+func (a Admin) SetEnabled(ctx context.Context, userID string, enabled bool) error {
+	return a.change(ctx, `UPDATE users SET enabled = $2 WHERE id = $1`, userID, enabled)
 }
 
 // KeyInfo contains displayable metadata only. Hashes are deliberately excluded.

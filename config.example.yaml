@@ -61,7 +61,7 @@ models:
 groups:
   staff:    {models: ["*"], tokens_per_day: 2000000, rpm: 60, max_concurrent: 4, max_concurrent_batch: 8}
   students: {models: [chat-model], tokens_per_day: 300000, rpm: 20, tpm: 20000, max_concurrent: 2}
-  admins:   {models: ["*"]}
+  admins:   {models: ["*"], admin: true}  # admin: portal admin pages
 
 # Names that clients send by default, mapped to a model above.
 aliases: {claude-sonnet-4-5: chat-model}

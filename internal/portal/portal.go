@@ -18,6 +18,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/oauth2"
@@ -37,6 +38,8 @@ type Handler struct {
 	transport *http.Transport
 	logout    string
 	mux       *http.ServeMux
+	// Pools is shown on the admin pages; installed before serving.
+	Pools *pool.Manager
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
@@ -84,6 +87,15 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("DELETE /portal/api/keys/{id}", h.authenticated(h.revokeKey))
 	h.mux.HandleFunc("GET /portal/api/usage", h.authenticated(h.usage))
 	h.mux.HandleFunc("DELETE /portal/api/usage", h.authenticated(h.deleteUsage))
+	h.mux.HandleFunc("GET /portal/api/usage/daily", h.authenticated(h.daily))
+	h.mux.HandleFunc("GET /portal/api/requests", h.authenticated(h.requests))
+	h.mux.HandleFunc("GET /portal/api/admin/users", h.admin(h.adminUsers))
+	h.mux.HandleFunc("GET /portal/api/admin/users/{id}", h.admin(h.adminUser))
+	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/overrides/{field}", h.admin(h.setOverride))
+	h.mux.HandleFunc("DELETE /portal/api/admin/users/{id}/overrides/{field}", h.admin(h.setOverride))
+	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/enabled", h.admin(h.setEnabled))
+	h.mux.HandleFunc("GET /portal/api/admin/groups", h.admin(h.adminGroups))
+	h.mux.HandleFunc("GET /portal/api/admin/replicas", h.admin(h.adminReplicas))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {

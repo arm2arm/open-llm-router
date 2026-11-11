@@ -134,6 +134,22 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
     .toBe(true)
   await page.getByRole('button', { name: 'This month', exact: true }).click()
   await expect(page.getByTestId('usage-table')).toBeVisible()
+  await expect(page.getByRole('img', { name: /^Tokens per day/ })).toBeVisible()
+  await page.getByRole('link', { name: 'My requests', exact: true }).click()
+  await expect(
+    page
+      .getByTestId('requests-table')
+      .getByRole('row')
+      .filter({ hasText: 'chat-model' })
+      .first(),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Admin', exact: true }),
+  ).toHaveCount(0)
+  expect((await context.request.get('/portal/api/admin/users')).status()).toBe(
+    403,
+  )
+  await page.getByRole('link', { name: 'Usage', exact: true }).click()
   // Deleting the activity records leaves the daily totals and quota as they are.
   const totals = database()
   await page
@@ -166,9 +182,10 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
     .getByRole('button', { name: `Revoke ${label}`, exact: true })
     .click()
   await page.getByRole('button', { name: 'Revoke key', exact: true }).click()
+  // The modal hides the table from the accessibility tree; wait for the row.
   await expect(
-    page.getByRole('button', { name: `Revoke ${label}`, exact: true }),
-  ).toHaveCount(0)
+    page.getByRole('button', { name: `Remove ${label}`, exact: true }),
+  ).toBeVisible()
   const denied = await context.request.post('/v1/chat/completions', {
     headers: { Authorization: `Bearer ${key}` },
     data: { model: 'chat-model', messages: [] },
