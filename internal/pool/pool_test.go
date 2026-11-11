@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -170,4 +171,126 @@ func TestCustomHealthPath(t *testing.T) {
 	if !m.Ready() {
 		t.Fatal("backend with a custom health path did not become ready")
 	}
+}
+
+func fullPool(max int) *Pool {
+	return &Pool{replicas: []replica{
+		{config: config.Replica{URL: "http://a", Weight: 1, MaxInflight: max}, healthy: true},
+		{config: config.Replica{URL: "http://b", Weight: 1, MaxInflight: max}, healthy: true},
+	}}
+}
+
+func waitQueued(t *testing.T, p *Pool, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for p.Queued() != n {
+		if time.Now().After(deadline) {
+			t.Fatal("queue length", p.Queued())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestQueueAbsorbsShortOverloadAndTimesOut(t *testing.T) {
+	p := fullPool(1)
+	a, b := p.Acquire(nil), p.Acquire(nil)
+	if p.AcquireRequest(t.Context(), Request{}) != nil {
+		t.Fatal("a full pool admitted a call without waiting")
+	}
+	got := make(chan *Lease)
+	go func() { got <- p.AcquireRequest(t.Context(), Request{Wait: 2 * time.Second}) }()
+	waitQueued(t, p, 1)
+	a.Release()
+	lease := <-got
+	if lease == nil || lease.index != a.index {
+		t.Fatal("the freed replica did not go to the waiter", lease)
+	}
+	started := time.Now()
+	if p.AcquireRequest(t.Context(), Request{Wait: 50 * time.Millisecond}) != nil || time.Since(started) < 50*time.Millisecond {
+		t.Fatal("a long overload must end in nil after the wait")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { got <- p.AcquireRequest(ctx, Request{Wait: time.Minute}) }()
+	waitQueued(t, p, 1)
+	cancel()
+	if <-got != nil || p.Queued() != 0 {
+		t.Fatal("a cancelled waiter must leave the queue")
+	}
+	lease.Release()
+	b.Release()
+	for _, s := range p.Snapshot() {
+		if s.Inflight != 0 {
+			t.Fatal("leaked lease", s)
+		}
+	}
+}
+
+func TestInteractiveIsServedBeforeBatch(t *testing.T) {
+	p := fullPool(1)
+	held := []*Lease{p.Acquire(nil), p.Acquire(nil)}
+	var order []int
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	enqueue := func(priority int) {
+		wg.Go(func() {
+			l := p.AcquireRequest(t.Context(), Request{Priority: priority, Wait: 5 * time.Second})
+			mu.Lock()
+			order = append(order, priority)
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			l.Release()
+		})
+	}
+	// Batch callers arrive first; interactive ones still go ahead of them.
+	for i, priority := range []int{10, 10, 0, 0} {
+		enqueue(priority)
+		waitQueued(t, p, i+1)
+	}
+	// A caller that does not wait cannot overtake the queue either.
+	if p.AcquireRequest(t.Context(), Request{Priority: 10}) != nil {
+		t.Fatal("a new caller overtook the queue")
+	}
+	held[0].Release()
+	wg.Wait()
+	held[1].Release()
+	if len(order) != 4 || order[0] != 0 || order[1] != 0 || order[2] != 10 {
+		t.Fatalf("service order %v", order)
+	}
+}
+
+func TestSessionAffinity(t *testing.T) {
+	p := &Pool{}
+	for _, u := range []string{"http://a", "http://b", "http://c", "http://d"} {
+		p.replicas = append(p.replicas, replica{config: config.Replica{URL: u, Weight: 1, MaxInflight: 2}, healthy: true})
+	}
+	homes := map[int]int{}
+	for i := range 200 {
+		session := fmt.Sprintf("session-%d", i)
+		first := p.AcquireRequest(t.Context(), Request{Session: session})
+		second := p.AcquireRequest(t.Context(), Request{Session: session})
+		if first.index != second.index {
+			t.Fatal("one session landed on two replicas while its home had capacity")
+		}
+		homes[first.index]++
+		// The home is full now; the session spills to another replica.
+		third := p.AcquireRequest(t.Context(), Request{Session: session})
+		if third == nil || third.index == first.index {
+			t.Fatal("a full home replica must not take more")
+		}
+		first.Release()
+		second.Release()
+		third.Release()
+	}
+	for i := range 4 {
+		if homes[i] < 25 {
+			t.Fatalf("sessions are unevenly spread: %v", homes)
+		}
+	}
+	home := p.preferred("sticky")
+	p.replicas[home].healthy = false
+	l := p.AcquireRequest(t.Context(), Request{Session: "sticky"})
+	if l == nil || l.index == home {
+		t.Fatal("an unhealthy home was used")
+	}
+	l.Release()
 }
