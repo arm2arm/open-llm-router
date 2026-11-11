@@ -85,9 +85,11 @@ func (l *Lease) Failed() {
 
 // State contains operational metadata only, including no backend credentials.
 type State struct {
-	URL      string
-	Inflight int
-	Healthy  bool
+	URL         string  `json:"url"`
+	Inflight    int     `json:"in_flight"`
+	Healthy     bool    `json:"healthy"`
+	Weight      float64 `json:"weight"`
+	MaxInflight int     `json:"max_inflight"`
 }
 
 func (p *Pool) Snapshot() []State {
@@ -95,7 +97,8 @@ func (p *Pool) Snapshot() []State {
 	defer p.mu.Unlock()
 	out := make([]State, len(p.replicas))
 	for i, r := range p.replicas {
-		out[i] = State{r.config.URL, r.inflight, r.healthy && !time.Now().Before(r.coolUntil)}
+		out[i] = State{URL: r.config.URL, Inflight: r.inflight, Healthy: r.healthy && !time.Now().Before(r.coolUntil),
+			Weight: r.config.Weight, MaxInflight: r.config.MaxInflight}
 	}
 	return out
 }

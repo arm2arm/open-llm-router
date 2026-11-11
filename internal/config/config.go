@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -48,10 +49,28 @@ type Config struct {
 	Models    map[string]Model  `yaml:"models"`
 	Groups    map[string]Group  `yaml:"groups"`
 	Aliases   map[string]string `yaml:"aliases"` // client model name -> model
+	// Forwarders configures end-user attribution for trusted forwarder keys.
+	Forwarders Forwarders `yaml:"forwarders"`
 
 	DatabaseURL      string `yaml:"-"`
 	OIDCClientSecret string `yaml:"-"`
 }
+
+// Forwarders lets a key flagged trusted_forwarder (such as Open WebUI's) name
+// the end user a call is for. HeaderMap maps a request header to the user
+// attribute it carries: id, username or email. UnknownUser is "reject" or
+// "forwarder_policy" (serve the call as the forwarder itself).
+type Forwarders struct {
+	HeaderMap   map[string]string `yaml:"header_map"`
+	UnknownUser string            `yaml:"unknown_user"`
+}
+
+// Forwarder attributes and unknown-user policies.
+const (
+	EndUserHeader          = "X-OLR-End-User"
+	UnknownUserReject      = "reject"
+	UnknownForwarderPolicy = "forwarder_policy"
+)
 
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
@@ -120,7 +139,16 @@ type Group struct {
 	TokensPerDay   *int64   `yaml:"tokens_per_day"`
 	TokensPerMonth *int64   `yaml:"tokens_per_month"`
 	RPM            *int     `yaml:"rpm"`
-	MaxConcurrent  *int     `yaml:"max_concurrent"`
+	TPM            *int64   `yaml:"tpm"`            // tokens per minute, a token bucket
+	MaxConcurrent  *int     `yaml:"max_concurrent"` // interactive keys
+	// MaxConcurrentBatch limits batch keys, counted apart from interactive
+	// ones; omitted, batch keys get max_concurrent.
+	MaxConcurrentBatch *int `yaml:"max_concurrent_batch"`
+	// StrictQuota reserves max_tokens plus the request size before a call,
+	// so concurrent calls cannot exceed tokens_per_day or tokens_per_month.
+	StrictQuota bool `yaml:"strict_quota"`
+	// Admin grants the portal's admin pages to the group's members.
+	Admin bool `yaml:"admin"`
 }
 
 // Problems lists everything found wrong with a config file in one pass.
@@ -166,7 +194,8 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	}
 
 	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{Timezone: "UTC"},
-		Retention: Retention{UsageDays: DefaultUsageDays, UsageDailyDays: DefaultUsageDailyDays, RunAt: "03:00"}}
+		Forwarders: Forwarders{UnknownUser: UnknownUserReject},
+		Retention:  Retention{UsageDays: DefaultUsageDays, UsageDailyDays: DefaultUsageDailyDays, RunAt: "03:00"}}
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
 	}
@@ -227,6 +256,13 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if len(problems) > 0 {
 		return nil, problems
 	}
+	// Header names match without regard to case; X-OLR-End-User always works
+	// and names a username unless the map says otherwise.
+	headers := map[string]string{http.CanonicalHeaderKey(EndUserHeader): "username"}
+	for header, attribute := range cfg.Forwarders.HeaderMap {
+		headers[http.CanonicalHeaderKey(header)] = attribute
+	}
+	cfg.Forwarders.HeaderMap = headers
 	if problems = cfg.validate(); len(problems) > 0 {
 		return nil, problems
 	}
@@ -347,6 +383,17 @@ func (c *Config) validate() Problems {
 	if c.Auth.DefaultKeyLifetimeDays <= 0 || c.Auth.DefaultKeyLifetimeDays > 36500 {
 		add("auth.default_key_lifetime_days: must be between 1 and 36500")
 	}
+	if c.Forwarders.UnknownUser != UnknownUserReject && c.Forwarders.UnknownUser != UnknownForwarderPolicy {
+		add("forwarders.unknown_user: must be %q or %q", UnknownUserReject, UnknownForwarderPolicy)
+	}
+	for _, header := range slices.Sorted(maps.Keys(c.Forwarders.HeaderMap)) {
+		if attribute := c.Forwarders.HeaderMap[header]; attribute != "id" && attribute != "username" && attribute != "email" {
+			add("forwarders.header_map.%s: must be id, username or email", header)
+		}
+		if header == "" || strings.ContainsAny(header, " :\r\n") {
+			add("forwarders.header_map: %q is not a header name", header)
+		}
+	}
 	if c.Retention.UsageDays < 1 || c.Retention.UsageDays > 36500 {
 		add("retention.usage_days: must be between 1 and 36500")
 	}
@@ -452,7 +499,9 @@ func (c *Config) validate() Problems {
 			{"tokens_per_day", g.TokensPerDay != nil, deref(g.TokensPerDay)},
 			{"tokens_per_month", g.TokensPerMonth != nil, deref(g.TokensPerMonth)},
 			{"rpm", g.RPM != nil, int64(deref(g.RPM))},
+			{"tpm", g.TPM != nil, deref(g.TPM)},
 			{"max_concurrent", g.MaxConcurrent != nil, int64(deref(g.MaxConcurrent))},
+			{"max_concurrent_batch", g.MaxConcurrentBatch != nil, int64(deref(g.MaxConcurrentBatch))},
 		}
 		for _, l := range limits {
 			if l.set && l.val <= 0 {

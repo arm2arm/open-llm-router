@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -372,5 +374,146 @@ func TestLimitsCountTokensReleasesWithoutQuotaCharge(t *testing.T) {
 	var rows int
 	if err := f.pool.QueryRow(context.Background(), `SELECT count(*) FROM usage`).Scan(&rows); err != nil || rows != 0 {
 		t.Fatal(rows, err)
+	}
+}
+
+// An override changes one user's limit on every router at the next request.
+func TestOverridesApplyWithoutRestart(t *testing.T) {
+	f := startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 3}), usageOptions{group: &config.Group{Models: []string{"*"}, RPM: limitPtr(100)}})
+	admin := auth.Admin{Pool: f.pool}
+	other, err := admin.AddUser(t.Context(), "other", "", []string{"staff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey, err := admin.CreateKey(t.Context(), other, "other", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Warm both API-key caches first.
+	for _, key := range []string{f.key, otherKey} {
+		if resp := f.call(t, key, "POST", "/v1/chat/completions", limitedBody); resp.StatusCode != 200 {
+			t.Fatal("warm-up", resp.StatusCode)
+		}
+	}
+	if err := admin.SetOverride(t.Context(), f.owner, policy.FieldRPM, limitPtr(int64(1)), "abuse ticket 7", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.currentUsage(t); s.Limits.RPM == nil || *s.Limits.RPM != 1 {
+		t.Fatal("override not visible in /v1/me/usage")
+	}
+	requireLimit(t, f.call(t, f.key, "POST", "/v1/chat/completions", limitedBody), "rpm", false)
+	if resp := f.call(t, otherKey, "POST", "/v1/chat/completions", limitedBody); resp.StatusCode != 200 {
+		t.Fatal("override affected another user", resp.StatusCode)
+	}
+	list, err := admin.ListOverrides(t.Context(), f.owner)
+	if err != nil || len(list) != 1 || list[0].Field != "rpm" || *list[0].Value != 1 || list[0].Reason != "abuse ticket 7" || list[0].SetBy != "operator" {
+		t.Fatal("override list", list, err)
+	}
+	// Unlimited lifts the group's limit; clearing returns to it.
+	if err := admin.SetOverride(t.Context(), f.owner, policy.FieldRPM, nil, "", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.currentUsage(t); s.Limits.RPM != nil {
+		t.Fatal("unlimited override", *s.Limits.RPM)
+	}
+	if err := admin.ClearOverride(t.Context(), f.owner, policy.FieldRPM); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.currentUsage(t); s.Limits.RPM == nil || *s.Limits.RPM != 100 {
+		t.Fatal("cleared override")
+	}
+	if err := admin.SetOverride(t.Context(), f.owner, "groups", limitPtr(int64(1)), "", ""); err == nil {
+		t.Fatal("unknown field accepted")
+	}
+	if !errors.Is(admin.ClearOverride(t.Context(), f.owner, policy.FieldRPM), auth.ErrNotFound) {
+		t.Fatal("clearing a missing override must report not found")
+	}
+}
+
+// In strict mode concurrent calls cannot use more than the daily quota.
+func TestStrictQuotaUnderConcurrency(t *testing.T) {
+	const quota = 2000
+	f := startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 50, TokenDelay: 5 * time.Millisecond}), usageOptions{group: &config.Group{Models: []string{"*"}, TokensPerDay: limitPtr(int64(quota)), StrictQuota: true}})
+	body := `{"model":"chat-model","messages":[{"role":"user","content":"hi"}],"max_tokens":50,"stream":true}`
+	if resp := f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"chat-model","messages":[]}`); resp.StatusCode != 400 {
+		t.Fatal("strict mode without max_tokens", resp.StatusCode)
+	}
+	var ok, limited atomic.Int64
+	var wg sync.WaitGroup
+	for range 60 {
+		wg.Go(func() {
+			req, _ := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+"/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+f.key)
+			resp, err := f.router.Client().Do(req)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			switch resp.StatusCode {
+			case 200:
+				ok.Add(1)
+			case 429:
+				limited.Add(1)
+			default:
+				t.Error("status", resp.StatusCode)
+			}
+		})
+	}
+	wg.Wait()
+	waitFor(t, func() bool { return f.writer.Counters().Written == 61 }) // rejections are recorded too
+	var used int64
+	if err := f.pool.QueryRow(t.Context(), `SELECT COALESCE(sum(input_tokens + output_tokens), 0) FROM usage_daily WHERE user_id = $1`, f.owner).Scan(&used); err != nil {
+		t.Fatal(err)
+	}
+	if used > quota || ok.Load() == 0 || limited.Load() == 0 {
+		t.Fatalf("used %d of %d with %d calls admitted, %d limited", used, quota, ok.Load(), limited.Load())
+	}
+	if s := f.currentUsage(t); s.Reserved != 0 || s.InFlight != 0 {
+		t.Fatal("reservations leaked", s.Reserved, s.InFlight)
+	}
+}
+
+func TestBatchKeysHaveTheirOwnConcurrency(t *testing.T) {
+	gate := make(chan struct{})
+	slow := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			<-gate
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	})
+	f := startUsageRouter(t, slow, usageOptions{group: &config.Group{Models: []string{"*"}, MaxConcurrent: limitPtr(1), MaxConcurrentBatch: limitPtr(1)}})
+	defer close(gate)
+	batchKey, err := (auth.Admin{Pool: f.pool}).CreateKeyOfClass(t.Context(), f.owner, "batch", "batch", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan *http.Response, 2)
+	for _, key := range []string{f.key, batchKey} {
+		go func() {
+			req, _ := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+"/v1/chat/completions", strings.NewReader(`{"model":"chat-model"}`))
+			req.Header.Set("Authorization", "Bearer "+key)
+			resp, err := f.router.Client().Do(req)
+			if err == nil {
+				started <- resp
+			}
+		}()
+	}
+	waitFor(t, func() bool { s := f.currentUsage(t); return s.InFlight == 2 && s.Batch == 1 })
+	requireLimit(t, f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"chat-model"}`), "max_concurrent", false)
+	requireLimit(t, f.call(t, batchKey, "POST", "/v1/chat/completions", `{"model":"chat-model"}`), "max_concurrent_batch", false)
+}
+
+func TestTPMLimitThroughBothProtocols(t *testing.T) {
+	f := startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 30}), usageOptions{group: &config.Group{Models: []string{"*"}, TPM: limitPtr(int64(20))}})
+	if resp := f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"chat-model","messages":[]}`); resp.StatusCode != 200 {
+		t.Fatal("first call", resp.StatusCode)
+	}
+	requireLimit(t, f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"chat-model","messages":[]}`), "tpm", false)
+	requireLimit(t, f.call(t, f.key, "POST", "/v1/messages", `{"model":"chat-model","messages":[],"max_tokens":5}`), "tpm", true)
+	if s := f.currentUsage(t); s.Limits.TPM == nil || *s.Limits.TPM != 20 || s.Remaining.TPM == nil || *s.Remaining.TPM != 0 {
+		t.Fatal("tpm snapshot", s.Limits.TPM, s.Remaining.TPM)
 	}
 }

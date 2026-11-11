@@ -9,9 +9,12 @@ import "time"
 // TTFBMS is nil if no response body byte arrived. All durations start when the
 // proxy receives the request, before reading its body.
 type Record struct {
-	StartedAt    time.Time
-	KeyID        string
-	UserID       string
+	StartedAt time.Time
+	KeyID     string
+	UserID    string // the user the call is attributed to
+	// ForwardedBy is the key owner when a trusted forwarder made the call
+	// for UserID; empty otherwise.
+	ForwardedBy  string
 	Model        string
 	Replica      string
 	Protocol     string

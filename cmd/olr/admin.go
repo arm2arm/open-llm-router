@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/retention"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -23,13 +26,19 @@ const adminUsage = `usage:
   olr admin user disable -id USER_UUID
   olr admin user delete -id USER_UUID
   olr admin user list [-match TEXT]
-  olr admin key create -user USER_UUID [-label LABEL] [-lifetime 2160h] [-config FILE]
+  olr admin key create -user USER_UUID [-label LABEL] [-class interactive|batch] [-trusted-forwarder] [-lifetime 2160h] [-config FILE]
   olr admin key list -user USER_UUID
   olr admin key revoke -id KEY_UUID
   olr admin retention run [-config FILE]
+  olr admin override set -user USER_UUID -field FIELD -value N|unlimited [-reason TEXT] [-by NAME]
+  olr admin override clear -user USER_UUID -field FIELD
+  olr admin override list -user USER_UUID
 
 OLR_DATABASE_URL is required. User add prints the new UUID. Key create prints
 the plaintext key once; save it securely. Key and user list print JSON.
+Override fields: tokens_per_day, tokens_per_month, rpm, tpm, max_concurrent,
+max_concurrent_batch, strict_quota (1 or 0). An override replaces the group
+value for one user and applies to the next request without a restart.
 Retention run deletes usage older than the retention periods in -config
 (defaults: 90 days of records, 400 days of daily totals) and prints counts.
 User delete erases the user with keys, sessions, usage records and daily
@@ -50,8 +59,9 @@ func admin(args []string, out, errout io.Writer) error {
 	command := args[0] + " " + args[1]
 	fs := flag.NewFlagSet("olr admin "+command, flag.ContinueOnError)
 	fs.SetOutput(errout)
-	var username, email, groups, userID, id, label, configPath, match string
+	var username, email, groups, userID, id, label, configPath, match, class, field, value, reason, by string
 	var lifetime time.Duration
+	var trusted bool
 	switch command {
 	case "user add":
 		fs.StringVar(&username, "username", "", "local username (required)")
@@ -64,10 +74,22 @@ func admin(args []string, out, errout io.Writer) error {
 	case "key create":
 		fs.StringVar(&userID, "user", "", "owner's UUID (required)")
 		fs.StringVar(&label, "label", "", "display label")
+		fs.StringVar(&class, "class", "interactive", "interactive or batch (separate concurrency limits)")
+		fs.BoolVar(&trusted, "trusted-forwarder", false, "the key may name end users (forwarders.header_map), e.g. for Open WebUI")
 		fs.DurationVar(&lifetime, "lifetime", 0, "key lifetime, e.g. 720h (default from config, or 2160h)")
 		fs.StringVar(&configPath, "config", os.Getenv("OLR_CONFIG"), "YAML config file (default: $OLR_CONFIG)")
 	case "key list":
 		fs.StringVar(&userID, "user", "", "owner's UUID (required)")
+	case "override set", "override clear", "override list":
+		fs.StringVar(&userID, "user", "", "user UUID (required)")
+		if command != "override list" {
+			fs.StringVar(&field, "field", "", "limit to override (required)")
+		}
+		if command == "override set" {
+			fs.StringVar(&value, "value", "", "a positive number, or unlimited (required)")
+			fs.StringVar(&reason, "reason", "", "why, for the audit trail")
+			fs.StringVar(&by, "by", "cli", "who sets it, for the audit trail")
+		}
 	case "retention run":
 		fs.StringVar(&configPath, "config", os.Getenv("OLR_CONFIG"), "YAML config file (default: $OLR_CONFIG)")
 	default:
@@ -86,6 +108,27 @@ func admin(args []string, out, errout io.Writer) error {
 	if command == "user add" && strings.TrimSpace(username) == "" {
 		return errors.New("-username is required")
 	}
+	var overrideValue *int64
+	if strings.HasPrefix(command, "override ") {
+		if !validUUID(userID) {
+			return errors.New("-user must be a user UUID")
+		}
+		if command != "override list" && !slices.Contains(policy.OverrideFields, field) {
+			return fmt.Errorf("-field must be one of %s", strings.Join(policy.OverrideFields, ", "))
+		}
+		if command == "override set" {
+			if value != "unlimited" {
+				n, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return errors.New("-value must be a number or unlimited")
+				}
+				overrideValue = &n
+			}
+			if !policy.ValidOverride(field, overrideValue) {
+				return errors.New("-value is not allowed for this field (positive; strict_quota takes 1 or 0)")
+			}
+		}
+	}
 	if command == "key create" || command == "key list" {
 		if !validUUID(userID) {
 			return errors.New("-user must be a user UUID")
@@ -97,6 +140,9 @@ func admin(args []string, out, errout io.Writer) error {
 		}
 	}
 	if command == "key create" {
+		if class != "interactive" && class != "batch" {
+			return errors.New("-class must be interactive or batch")
+		}
 		days := config.DefaultKeyLifetimeDays
 		if configPath != "" {
 			cfg, err := config.Load(configPath)
@@ -163,7 +209,11 @@ func admin(args []string, out, errout io.Writer) error {
 		}
 		return json.NewEncoder(out).Encode(users)
 	case "key create":
-		key, err := manager.CreateKey(ctx, userID, label, lifetime)
+		create := manager.CreateKeyOfClass
+		if trusted {
+			create = manager.CreateForwarderKey
+		}
+		key, err := create(ctx, userID, label, class, lifetime)
 		if err != nil {
 			return err
 		}
@@ -177,6 +227,16 @@ func admin(args []string, out, errout io.Writer) error {
 		return json.NewEncoder(out).Encode(keys)
 	case "key revoke":
 		return manager.RevokeKey(ctx, id)
+	case "override set":
+		return manager.SetOverride(ctx, userID, field, overrideValue, reason, by)
+	case "override clear":
+		return manager.ClearOverride(ctx, userID, field)
+	case "override list":
+		list, err := manager.ListOverrides(ctx, userID)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(list)
 	case "retention run":
 		result, err := retention.Prune(ctx, pool, periods, location, time.Now())
 		if err != nil {

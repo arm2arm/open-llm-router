@@ -125,7 +125,10 @@ func TestSchemaAddsStreamFlagToExistingUsage(t *testing.T) {
 	id := user(t, pool, "local", "legacy")
 	// A pilot database from before versioned migrations has no schema_migrations.
 	execSQL(t, pool, `ALTER TABLE usage DROP COLUMN is_stream`)
+	// Undo every migration after 0001_initial.
 	execSQL(t, pool, `DROP INDEX usage_ts_idx`)
+	execSQL(t, pool, `DROP TABLE quota_overrides`)
+	execSQL(t, pool, `ALTER TABLE api_keys DROP CONSTRAINT api_keys_class_check`)
 	execSQL(t, pool, `DROP TABLE schema_migrations`)
 	execSQL(t, pool, `INSERT INTO usage(user_id,model,replica,protocol,status,input_tokens,output_tokens,latency_ms,ttfb_ms)
 		VALUES ($1,'chat-model','http://backend','openai','200',3,7,100,30)`, id)

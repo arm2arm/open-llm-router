@@ -36,11 +36,15 @@ The UI can use `fetch(url, {method, headers: {'Content-Type': 'application/json'
 ```json
 {
   "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"]},
-  "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"max_concurrent":4}
+  "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"tpm":null,
+             "max_concurrent":4,"max_concurrent_batch":8,"strict_quota":false}
 }
 ```
 
-Limits resolve from the current stored groups; null means unlimited. An empty group list
+Limits resolve from the current stored groups, then the user's overrides (`olr admin
+override`); null means unlimited. `max_concurrent` applies to interactive keys and
+`max_concurrent_batch` to batch keys; with `strict_quota` every call reserves its
+`max_tokens` plus its request size until it ends. An empty group list
 is an empty JSON array and grants no models unless a matching configured group exists.
 
 ## API keys
@@ -48,7 +52,8 @@ is an empty JSON array and grants no models unless a matching configured group e
 - `GET /portal/api/keys`: `{"keys":[{"id":"uuid","prefix":"olr-...","label":"laptop",
   "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}]}`.
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
-- `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7}` (label: 1–100 bytes after trimming).
+- `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7,"class":"batch"}` (label: 1–100 bytes after trimming).
+  `class` is `interactive` (default) or `batch`; the list returns it for every key.
   `expires_in_days` is optional, an integer from 1 to 36500. Omission uses
   `auth.default_key_lifetime_days`. Returns 201 `{"key":"olr-..."}` exactly once.
   Refresh the key list for metadata after creating a key. Unknown fields are rejected.
@@ -79,6 +84,9 @@ is an empty JSON array and grants no models unless a matching configured group e
 }
 ```
 
+`quota.limits` has the fields of `/portal/api/me`; `remaining.tpm` is the token bucket's
+current level, `in_flight_batch` the calls of batch keys within `in_flight`, and
+`reserved_tokens` the strict-quota reservations of calls in flight.
 `quota` has the same contract as `/v1/me/usage`, including live in-memory charges. `today`
 and `month` are sorted per-model database aggregates, empty arrays without usage, and may
 lag live charges while the asynchronous writer drains. Requests include recorded failures.
@@ -93,6 +101,38 @@ user, including calls a trusted forwarder made for them, and returns `{"deleted"
 Daily totals (`usage_daily`) stay, so `quota` and the `today`/`month` token totals are
 unchanged; timing averages of the deleted records disappear. Other users' records are
 untouched. See [PRIVACY.md](PRIVACY.md).
+
+## Requests and daily totals
+
+- `GET /portal/api/requests`: `{"limit":200,"requests":[{"time":"RFC3339","model":"chat-model",
+  "protocol":"openai","status":"200","input_tokens":3,"output_tokens":7,"latency_ms":400,
+  "ttfb_ms":50,"stream":true,"key_prefix":"olr-…","forwarded":false}]}`, newest first, the
+  user's last 200 records (metadata only). `key_prefix` is null once the key is removed, and
+  for calls a trusted forwarder made for the user (`forwarded: true`).
+- `GET /portal/api/usage/daily`: `{"timezone":"UTC","days":[{"day":"2026-10-13","requests":0,
+  "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
+  oldest first, from the daily totals (unaffected by deleting activity).
+
+## Admin
+
+Members of a group with `admin: true` in the config get `"admin": true` in `/portal/api/me` and
+these routes; everyone else gets 403. Membership is read from the stored groups on each request.
+
+- `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
+  text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
+  month, and overrides by field.
+- `GET /portal/api/admin/users/{id}`: the user, effective `limits`, `overrides` with `reason`,
+  `set_by` and `set_at`, and key metadata.
+- `PUT /portal/api/admin/users/{id}/overrides/{field}` with `{"value":N,"reason":"…"}` (`null` for
+  unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`;
+  `DELETE …/overrides/{field}` with `{}` clears it. Both return 204 and take effect at the user's
+  next request on every router.
+- `PUT /portal/api/admin/users/{id}/enabled` with `{"enabled":false}` disables a user (sessions
+  and keys stop working at once) or re-enables them; admins cannot disable themselves.
+- `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
+  and tokens this month. A user in several groups counts in each.
+- `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
+  `max_inflight` and weight.
 
 ## Models and client URLs
 
