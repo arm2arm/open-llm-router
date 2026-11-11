@@ -52,10 +52,12 @@ is an empty JSON array and grants no models unless a matching configured group e
   `expires_in_days` is optional, an integer from 1 to 36500. Omission uses
   `auth.default_key_lifetime_days`. Returns 201 `{"key":"olr-..."}` exactly once.
   Refresh the key list for metadata after creating a key. Unknown fields are rejected.
-- `DELETE /portal/api/keys/{uuid}` with `{}`: revokes an owned key, returning 204 with no body.
-  Other users' and nonexistent keys return the same 404. Revocation clears API authentication
-  caches before success, so the next API-key request is rejected. Repeated owned revocation
-  is idempotent. Existing sessions do not authorize `/v1/*` requests.
+- `DELETE /portal/api/keys/{uuid}` with `{}`: revokes an owned active key, returning 204 with
+  no body. On a key that is already revoked or expired it removes the key for good (also 204);
+  usage records that referenced it remain without the key reference, and a further DELETE
+  returns 404. Other users' and nonexistent keys return the same 404. Revocation clears API
+  authentication caches before success, so the next API-key request is rejected. Existing
+  sessions do not authorize `/v1/*` requests.
 
 ## Usage
 
@@ -83,6 +85,14 @@ lag live charges while the asynchronous writer drains. Requests include recorded
 Calendar boundaries use `limits.timezone`. TTFB averages exclude missing measurements;
 throughput averages include only measured streams with positive output/duration. Missing
 averages are null. All queries are scoped to the session user.
+
+## Deleting activity
+
+`DELETE /portal/api/usage` with `{}` deletes every per-request record attributed to the session
+user, including calls a trusted forwarder made for them, and returns `{"deleted":<rows>}`.
+Daily totals (`usage_daily`) stay, so `quota` and the `today`/`month` token totals are
+unchanged; timing averages of the deleted records disappear. Other users' records are
+untouched. See [PRIVACY.md](PRIVACY.md).
 
 ## Models and client URLs
 

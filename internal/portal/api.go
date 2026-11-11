@@ -68,7 +68,7 @@ func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request, u user) {
 		fail(w, 404, "not_found_error", "key not found")
 		return
 	}
-	err := (&auth.Admin{Pool: h.pool}).RevokeOwnedKey(r.Context(), u.ID, r.PathValue("id"))
+	_, err := (&auth.Admin{Pool: h.pool}).RemoveOwnedKey(r.Context(), u.ID, r.PathValue("id"))
 	if errors.Is(err, auth.ErrNotFound) {
 		fail(w, 404, "not_found_error", "key not found")
 		return
@@ -101,4 +101,19 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 		}
 	}
 	respond(w, 200, map[string]any{"router_url": h.cfg.Portal.BaseURL, "base_url": h.cfg.Portal.BaseURL + "/v1", "models": models})
+}
+
+// deleteUsage erases the caller's per-request records. Daily totals stay, so
+// the current day's and month's quotas are unchanged.
+func (h *Handler) deleteUsage(w http.ResponseWriter, r *http.Request, u user) {
+	var body struct{}
+	if !h.jsonBody(w, r, &body) {
+		return
+	}
+	result, err := h.pool.Exec(r.Context(), `DELETE FROM usage WHERE forwarded_for=$1 OR (user_id=$1 AND forwarded_for IS NULL)`, u.ID)
+	if err != nil {
+		unavailable(w)
+		return
+	}
+	respond(w, 200, map[string]int64{"deleted": result.RowsAffected()})
 }

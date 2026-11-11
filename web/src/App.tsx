@@ -303,6 +303,10 @@ function Keys() {
     create.mutate()
   }
   const keys = query.data?.keys ?? []
+  const removing =
+    !!selected &&
+    (selected.revoked ||
+      (!!selected.expires && new Date(selected.expires) <= new Date()))
   const active = keys.filter(
     (key) =>
       !key.revoked && (!key.expires || new Date(key.expires) > new Date()),
@@ -405,8 +409,12 @@ function Keys() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          aria-label={`Revoke ${key.label}`}
-                          disabled={status !== 'Active'}
+                          aria-label={`${status === 'Active' ? 'Revoke' : 'Remove'} ${key.label}`}
+                          title={
+                            status === 'Active'
+                              ? 'Revoke key'
+                              : 'Remove key for good'
+                          }
                           onClick={() => {
                             revoke.reset()
                             setSelected(key)
@@ -427,7 +435,7 @@ function Keys() {
         <ShieldCheck size={18} className="shrink-0 mt-1" />
         <p>
           Full keys appear only once, when you create them. Revoking a key takes
-          effect immediately.
+          effect immediately; a revoked key can then be removed for good.
           <br />
           <NavLink
             to="/connect"
@@ -528,10 +536,13 @@ function Keys() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke this key?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {removing ? 'Remove this key for good?' : 'Revoke this key?'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Apps using “{selected?.label}” will lose access immediately. This
-              cannot be undone.
+              {removing
+                ? `“${selected?.label}” no longer works. Removing it deletes it from your list; your usage records stay, without a reference to the key.`
+                : `Apps using “${selected?.label}” will lose access immediately. This cannot be undone.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ErrorMessage error={revoke.error} />
@@ -546,7 +557,13 @@ function Keys() {
                 if (selected) revoke.mutate(selected.id)
               }}
             >
-              {revoke.isPending ? 'Revoking…' : 'Revoke key'}
+              {revoke.isPending
+                ? removing
+                  ? 'Removing…'
+                  : 'Revoking…'
+                : removing
+                  ? 'Remove key'
+                  : 'Revoke key'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -602,6 +619,19 @@ function UsagePage() {
     refetchInterval: 30_000,
   })
   const [period, setPeriod] = useState<'today' | 'month'>('today')
+  const [confirmErase, setConfirmErase] = useState(false)
+  const [erased, setErased] = useState<number | null>(null)
+  const cache = useQueryClient()
+  const erase = useMutation({
+    mutationFn: () =>
+      api<{ deleted: number }>('usage', 'DELETE').then((r) => r.deleted),
+    onSuccess: async (deleted) => {
+      setConfirmErase(false)
+      setErased(deleted)
+      await cache.invalidateQueries({ queryKey: ['usage'] })
+      await cache.invalidateQueries({ queryKey: ['requests'] })
+    },
+  })
   const data = query.data
   return (
     <>
@@ -747,9 +777,71 @@ function UsagePage() {
                 measured for streaming responses. Refreshes every 30 seconds.
               </p>
             </div>
+            <section className="panel p-6" aria-label="Your privacy">
+              <div className="flex flex-wrap justify-between items-center gap-4">
+                <div>
+                  <h2 className="panel-title">Your activity records</h2>
+                  <p className="subtitle">
+                    The router keeps metadata of each request (time, model,
+                    tokens, timing), never prompts or responses. You can delete
+                    these records at any time. Daily totals stay for quotas and
+                    accounting.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    erase.reset()
+                    setErased(null)
+                    setConfirmErase(true)
+                  }}
+                >
+                  <Trash2 size={15} />
+                  Delete my activity
+                </Button>
+              </div>
+              {erased !== null && (
+                <p role="status" className="text-sm mt-3">
+                  Deleted {number(erased)} request{erased === 1 ? '' : 's'}.
+                </p>
+              )}
+            </section>
           </>
         )
       )}
+      <AlertDialog
+        open={confirmErase}
+        onOpenChange={(next) => {
+          if (!next && !erase.isPending) setConfirmErase(false)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete all your activity records?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Every per-request record of yours is deleted. Today’s and this
+              month’s quota stay as they are. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ErrorMessage error={erase.error} />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={erase.isPending}>
+              Keep records
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={erase.isPending}
+              onClick={(e) => {
+                e.preventDefault()
+                erase.mutate()
+              }}
+            >
+              {erase.isPending ? 'Deleting…' : 'Delete records'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

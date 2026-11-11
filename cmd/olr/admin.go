@@ -20,12 +20,16 @@ import (
 const adminUsage = `usage:
   olr admin user add -username NAME [-email EMAIL] [-groups staff,admins]
   olr admin user disable -id USER_UUID
+  olr admin user delete -id USER_UUID
+  olr admin user list [-match TEXT]
   olr admin key create -user USER_UUID [-label LABEL] [-lifetime 2160h] [-config FILE]
   olr admin key list -user USER_UUID
   olr admin key revoke -id KEY_UUID
 
 OLR_DATABASE_URL is required. User add prints the new UUID. Key create prints
-the plaintext key once; save it securely. Key list prints metadata as JSON.
+the plaintext key once; save it securely. Key and user list print JSON.
+User delete erases the user with keys, sessions, usage records and daily
+totals (GDPR erasure); it cannot be undone.
 Default key lifetime: auth.default_key_lifetime_days in -config/$OLR_CONFIG,
 or 90 days without a config file. Revokes and disables invalidate router caches.
 `
@@ -42,14 +46,16 @@ func admin(args []string, out, errout io.Writer) error {
 	command := args[0] + " " + args[1]
 	fs := flag.NewFlagSet("olr admin "+command, flag.ContinueOnError)
 	fs.SetOutput(errout)
-	var username, email, groups, userID, id, label, configPath string
+	var username, email, groups, userID, id, label, configPath, match string
 	var lifetime time.Duration
 	switch command {
 	case "user add":
 		fs.StringVar(&username, "username", "", "local username (required)")
 		fs.StringVar(&email, "email", "", "email attribute")
 		fs.StringVar(&groups, "groups", "", "comma-separated group names")
-	case "user disable", "key revoke":
+	case "user list":
+		fs.StringVar(&match, "match", "", "part of a username or email, ignoring case")
+	case "user disable", "user delete", "key revoke":
 		fs.StringVar(&id, "id", "", "record UUID (required)")
 	case "key create":
 		fs.StringVar(&userID, "user", "", "owner's UUID (required)")
@@ -79,7 +85,7 @@ func admin(args []string, out, errout io.Writer) error {
 			return errors.New("-user must be a user UUID")
 		}
 	}
-	if command == "key revoke" || command == "user disable" {
+	if command == "key revoke" || command == "user disable" || command == "user delete" {
 		if !validUUID(id) {
 			return errors.New("-id must be a record UUID")
 		}
@@ -130,6 +136,14 @@ func admin(args []string, out, errout io.Writer) error {
 		return err
 	case "user disable":
 		return manager.DisableUser(ctx, id)
+	case "user delete":
+		return manager.DeleteUser(ctx, id)
+	case "user list":
+		users, err := manager.ListUsers(ctx, match)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(users)
 	case "key create":
 		key, err := manager.CreateKey(ctx, userID, label, lifetime)
 		if err != nil {

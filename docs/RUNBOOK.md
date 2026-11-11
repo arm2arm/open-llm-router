@@ -1,5 +1,21 @@
 # Operations runbook
 
+## Erase a user on request
+
+Find the user, then delete them. Deletion removes the account with its keys, sessions,
+per-request records (including calls a trusted forwarder made for the user) and daily totals
+in one transaction, clears the API-key caches of every router before returning, and cannot
+be undone:
+
+```sh
+docker compose exec -T router olr admin user list -match alice
+docker compose exec -T router olr admin user delete -id <uuid>
+```
+
+A user who signs in again afterwards gets a new, empty account. To block access instead, use
+`olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the
+database; see [PRIVACY.md](PRIVACY.md).
+
 ## Streaming load test
 
 `cmd/olr-loadtest` compares identical synthetic streaming workloads directly against

@@ -134,6 +134,20 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
     .toBe(true)
   await page.getByRole('button', { name: 'This month', exact: true }).click()
   await expect(page.getByTestId('usage-table')).toBeVisible()
+  // Deleting the activity records leaves the daily totals and quota as they are.
+  const totals = database()
+  await page
+    .getByRole('button', { name: 'Delete my activity', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Keep records', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Delete my activity', exact: true })
+    .click()
+  await page
+    .getByRole('button', { name: 'Delete records', exact: true })
+    .click()
+  await expect(page.getByText(/^Deleted \d+ requests?\.$/)).toBeVisible()
+  expect(database()).toEqual(totals)
 
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expect(page.locator('html')).toHaveClass('dark')
@@ -154,12 +168,17 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   await page.getByRole('button', { name: 'Revoke key', exact: true }).click()
   await expect(
     page.getByRole('button', { name: `Revoke ${label}`, exact: true }),
-  ).toBeDisabled()
+  ).toHaveCount(0)
   const denied = await context.request.post('/v1/chat/completions', {
     headers: { Authorization: `Bearer ${key}` },
     data: { model: 'chat-model', messages: [] },
   })
   expect(denied.status()).toBe(401)
+  await page
+    .getByRole('button', { name: `Remove ${label}`, exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Remove key', exact: true }).click()
+  await expect(page.getByText(label, { exact: true })).toHaveCount(0)
   expect(violations).toEqual([])
   expect(errors).toEqual([])
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
