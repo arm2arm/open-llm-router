@@ -8,16 +8,23 @@ import (
 type poolCollector struct {
 	pools            *pool.Manager
 	inflight, health *prometheus.Desc
+	queued           *prometheus.Desc
 }
 
 func newPoolCollector(pools *pool.Manager) *poolCollector {
 	return &poolCollector{pools: pools,
 		inflight: prometheus.NewDesc("olr_replica_in_flight", "Calls currently holding a replica lease.", []string{"model", "replica"}, nil),
-		health:   prometheus.NewDesc("olr_replica_healthy", "Replica passes health checks and is outside cooldown (1 or 0).", []string{"model", "replica"}, nil)}
+		health:   prometheus.NewDesc("olr_replica_healthy", "Replica passes health checks and is outside cooldown (1 or 0).", []string{"model", "replica"}, nil),
+		queued:   prometheus.NewDesc("olr_queue_waiting", "Calls waiting for a free replica of the model.", []string{"model"}, nil)}
 }
-func (c *poolCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.inflight; ch <- c.health }
+func (c *poolCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.inflight
+	ch <- c.health
+	ch <- c.queued
+}
 func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
 	for name, p := range c.pools.Pools {
+		ch <- prometheus.MustNewConstMetric(c.queued, prometheus.GaugeValue, float64(p.Queued()), name)
 		for _, r := range p.Snapshot() {
 			health := 0.0
 			if r.Healthy {

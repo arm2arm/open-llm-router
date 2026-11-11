@@ -1,12 +1,39 @@
 # open-llm-router — Plan v0.3
 
-Status: **plan, not implemented**. v0.1: 2026-11-06. v0.2: 2026-11-10. v0.3: 2026-11-10.
+Status: **implemented** (first release, 2026-11-11), apart from the production pilot and
+multiple router instances. v0.1: 2026-11-06. v0.2: 2026-11-10. v0.3: 2026-11-10. v0.4: 2026-11-11.
 Owner: A. Khalatyan. License: MIT.
 
 Site-specific values (hostnames, realms, GPU layout, quotas) are **not** kept in this public repository.
 They live in a private deployment file that sets the same configuration keys as `config.example.yaml`.
 
 ## 0. Changes
+
+### Decisions of the first release that deviate from this plan (v0.4)
+
+- **Concurrency per key class:** `max_concurrent` limits interactive keys and
+  `max_concurrent_batch` batch keys (default: `max_concurrent`), instead of
+  `max_concurrent: {interactive, batch}` (§9).
+- **Priority:** a model's `priority: {interactive, batch}` plus the group's `priority` is sent as
+  the vLLM `priority` and orders the router's queue; separate batch aliases are optional (§8, §9).
+- **Full pool:** after `queue_timeout_s` a call gets 503 with `Retry-After`, not 429 (§8).
+- **Strict quota:** per group `strict_quota: true` reserves `max_tokens` plus the request size in
+  bytes (an upper bound of its input tokens) and requires `max_tokens` (§7).
+- **Overrides** apply to the numeric limits and `strict_quota`, not to model access (§7, §10).
+- **Admin** is a group flag, `admin: true` (§9, §12).
+- **Required claim:** `required_claim: {name, value}` or `OIDC_REQUIRED_CLAIM=name=value`; a string
+  claim must equal the value, an array must contain it (§6.1).
+- **Forwarders:** `header_map` maps a header to a user attribute (`id`, `username` or `email`);
+  `X-OLR-End-User` carries a username. An email shared by several users is unknown; a disabled
+  user is always refused. `usage.user_id` keeps the key owner and `usage.forwarded_for` the end
+  user; daily totals, quotas and the portal follow the end user (§6.6, §10).
+- **Access tokens** create the router user `(issuer, sub)` on first use, with the token's groups.
+  **Group sync** never re-enables a user; on Keycloak 26.8+ its client needs the `kc-admin-api`
+  scope (§6.4, §6.5).
+- **Usage table:** numbered SQL migrations instead of a migration tool; no monthly partitions —
+  the retention job deletes by an index on time in batches (§10).
+- **One router instance:** counters, the queue and session affinity are in memory (§4).
+
 
 ### Since v0.2 (v0.3)
 

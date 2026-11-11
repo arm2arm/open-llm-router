@@ -21,6 +21,7 @@ type Policy struct {
 	MaxConcurrentBatch *int // batch keys
 	StrictQuota        bool
 	Admin              bool // a member of a group with admin: true
+	Priority           int  // added to the key class's priority; lowest across groups
 }
 
 // Resolve ignores memberships absent from groups. Membership names match
@@ -49,6 +50,7 @@ func Resolve(groups map[string]config.Group, memberships []string) Policy {
 			p.MaxConcurrent = clone(g.MaxConcurrent)
 			p.MaxConcurrentBatch = clone(batch)
 			p.StrictQuota = g.StrictQuota
+			p.Priority = g.Priority
 			matched = true
 			continue
 		}
@@ -59,6 +61,7 @@ func Resolve(groups map[string]config.Group, memberships []string) Policy {
 		p.MaxConcurrent = mostPermissive(p.MaxConcurrent, g.MaxConcurrent)
 		p.MaxConcurrentBatch = mostPermissive(p.MaxConcurrentBatch, batch)
 		p.StrictQuota = p.StrictQuota && g.StrictQuota
+		p.Priority = min(p.Priority, g.Priority)
 	}
 	return p
 }
