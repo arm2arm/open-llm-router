@@ -727,3 +727,40 @@ func TestPortalRequestsDailyChartAndAdmin(t *testing.T) {
 		t.Fatalf("replicas: %s", data)
 	}
 }
+
+func TestPortalRequiredClaim(t *testing.T) {
+	f := startPortal(t)
+	f.cfg.OIDC.RequiredClaim = &config.RequiredClaim{Name: "affiliation", Value: "member@example.org"}
+	attempt := func(subject string, alter func(map[string]any)) int {
+		b := f.browser(t)
+		q, _ := b.challenge(t)
+		code := f.provider.authorize(t, q, subject, []string{"staff"}, alter)
+		resp, _ := b.call(t, "GET", "/portal/callback?"+url.Values{"state": {q.Get("state")}, "code": {code}}.Encode(), "", "")
+		return resp.StatusCode
+	}
+	for name, tc := range map[string]struct {
+		claim any
+		want  int
+	}{
+		"string":        {"member@example.org", 303},
+		"array":         {[]string{"staff@example.org", "member@example.org"}, 303},
+		"other value":   {"staff@example.org", 403},
+		"array without": {[]string{"staff@example.org"}, 403},
+		"case differs":  {"Member@example.org", 403},
+		"not a string":  {map[string]string{"v": "member@example.org"}, 403},
+		"missing (nil)": {nil, 403},
+	} {
+		alter := func(c map[string]any) {
+			if tc.claim != nil {
+				c["affiliation"] = tc.claim
+			}
+		}
+		if got := attempt("claim-"+strings.ReplaceAll(name, " ", "-"), alter); got != tc.want {
+			t.Errorf("%s: status %d, want %d", name, got, tc.want)
+		}
+	}
+	var refused int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM users WHERE sub IN ('claim-other-value','claim-missing-(nil)')`).Scan(&refused); err != nil || refused != 0 {
+		t.Fatal("a refused login created a user", refused, err)
+	}
+}

@@ -4,7 +4,7 @@ GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 COMPOSE     := docker compose
 SDK_RUN     ?= uv run
 
-.PHONY: build lint vuln test test-clients up smoke sdk sdk-limits portal-check sdk-real bench-real down
+.PHONY: build lint vuln test test-clients up smoke sdk sdk-limits portal-check brokered-check sdk-real bench-real down
 
 build: web
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
@@ -82,6 +82,11 @@ portal-check:
 		OIDC_ISSUER="http://localhost:$${issuer_address##*:}/realms/olr-dev" \
 		KEYCLOAK_ADMIN_USER="$$admin_user" KEYCLOAK_ADMIN_PASSWORD="$$admin_password" \
 		python3 tests/clients/check_portal.py
+
+# Brokered login through the upstream-idp realm and the router's required-claim check.
+brokered-check:
+	@router_address="$$($(COMPOSE) port router 8080)" || exit $$?; \
+	cd tests/clients && OLR_BASE_URL="http://localhost:$${router_address##*:}" python3 check_brokered.py
 
 # Existing host-side router configured with config.real.example.yaml; no Compose dependency.
 # Set OLR_REQUIRE_CANCEL_EVIDENCE=1 for the vLLM go/no-go run.
