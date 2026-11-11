@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
 )
@@ -82,12 +83,6 @@ func serve(args []string) error {
 		return err
 	}
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	ln, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return err
-	}
-
 	// The first SIGTERM or Ctrl-C starts a graceful shutdown. Handling of the
 	// signal is then switched off again, so that a second one ends the
 	// process at once.
@@ -97,6 +92,21 @@ func serve(args []string) error {
 		<-ctx.Done()
 		stop()
 	}()
+	startupCtx, cancelStartup := context.WithTimeout(ctx, 10*time.Second)
+	database, err := db.Open(startupCtx, cfg.DatabaseURL)
+	cancelStartup()
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
 	forwarder := proxy.New(cfg)
 	defer forwarder.Close()
 	forwarder.Pools.Check(ctx)
@@ -106,7 +116,9 @@ func serve(args []string) error {
 	go func() { defer close(healthDone); forwarder.Pools.Run(healthCtx) }()
 	defer func() { cancelHealth(); <-healthDone }()
 	srv := server.New(log)
-	srv.SetReadiness(forwarder.Pools.Ready)
+	srv.SetReadiness(func(ctx context.Context) bool {
+		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
+	})
 	forwarder.Register(srv.Handle)
 
 	log.Info("listening", "addr", ln.Addr().String(), "config", *configPath, "models", len(cfg.Models))

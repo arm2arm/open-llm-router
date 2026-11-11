@@ -52,6 +52,8 @@ Build the host binary and export these variables in both the router and client s
 
 ```sh
 make build
+docker compose up -d postgres
+export OLR_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=disable'
 export OLR_DIRECT_BASE_URL=http://127.0.0.1:11434  # origin only, without /v1
 export OLR_UPSTREAM_MODEL=your-served-model
 export OLR_DIRECT_API_KEY=ollama                  # nonempty placeholder without backend auth

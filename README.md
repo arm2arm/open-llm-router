@@ -6,7 +6,8 @@ per-user token quotas and usage view, load-aware balancing across model replicas
 
 Status: **in development** — OpenAI and Anthropic APIs now forward to replica pools with
 incremental streaming, cancellation, weighted balancing, health checks and failover.
-Model aliases and `/v1/models` work. Authentication, usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
+Model aliases and `/v1/models` work. The router initializes its Postgres schema at startup and
+checks the database in `/readyz`. Authentication, usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
 Stack: Go backend (one static binary), React portal, PostgreSQL, Keycloak.
@@ -62,6 +63,10 @@ make down
 Unit tests live next to their code. HTTP streaming and disconnect tests use
 `httptest.NewServer` and real sockets, without requiring a running Compose stack.
 Postgres integration tests in `tests/integration` skip when `OLR_TEST_DATABASE_URL` is unset.
+Each test creates and drops its own database, leaving the supplied database intact. The test
+role needs `CREATEDB` and permission to terminate its own connections (the Compose and CI
+roles have these permissions). Tests cover schema initialization/restarts, issuer-scoped
+identities, deletion rules, and database loss/recovery through the router binary.
 With Compose running on the default database port, include them with:
 
 ```sh
@@ -72,6 +77,13 @@ CI runs on pushes and pull requests. It uses the same `make lint`, `make vuln` a
 commands with a Postgres 17 service, while a parallel job builds both runtime images, starts
 Compose and runs `make smoke` plus the official SDK checks against the router and both mocks. Jobs have a five-minute timeout; Go modules and build outputs
 are cached by `setup-go`.
+
+For a host-side router, run Postgres 17 locally (or `docker compose up -d postgres`) and export
+`OLR_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=disable'` with the
+appropriate credentials. The URL is required: startup fails before listening if connecting
+or applying the schema fails. The embedded [schema.sql](internal/db/schema.sql) runs atomically
+on each startup, preserving existing tables and data; no separate migration command is needed.
+Versioned migrations will be introduced with the first schema change after the pilot.
 
 Without Docker, build both binaries, run two mock processes on ports 8001/8002, and copy the
 example config with pool URLs changed to `http://127.0.0.1:8001` and `http://127.0.0.1:8002`.
@@ -106,13 +118,14 @@ request or response bodies.
 | `cmd/olr` | the binary; `olr serve` runs the router |
 | `cmd/mock-llm`, `internal/mockllm` | deterministic OpenAI- and Anthropic-compatible test backend |
 | `internal/config` | config file: `${VAR}` references, strict decoding, validation |
+| `internal/db` | pgx connection pool and embedded, idempotent Postgres schema |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: `db`, `auth`, `usage`, `limits`, `portal`, `metrics`.
+Still to come under `internal/`: `auth`, `usage`, `limits`, `portal`, `metrics`.
 
 ## API behavior
 
@@ -129,8 +142,10 @@ returned to the caller. Unsupported model/protocol combinations give a protocol-
 
 Pools choose the healthy replica with the smallest `inflight / weight` and randomize ties.
 Slots last until completion or disconnect. Full or unhealthy pools return 503 with `Retry-After: 1`;
-there is no queue. `/readyz` needs a healthy replica for every configured model, regardless of
-whether its slots are currently full. Health probes use each replica's `health_path` (default
+there is no queue. `/readyz` needs a healthy replica for every configured model and a successful
+database ping, regardless of whether replica slots are currently full. The database check is
+bounded to 2 seconds and returns 503 on failure; `/healthz` remains a process liveness check.
+Health probes use each replica's `health_path` (default
 `/health`; use `/` for Ollama), at startup and every 5 seconds with a 2-second timeout:
 two failures remove a replica, one success restores it. A connection failure
 before response bytes triggers a 10-second cooldown and at most one retry on another replica.

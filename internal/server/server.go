@@ -21,22 +21,27 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	// idleTimeout closes keep-alive connections that carry no request.
 	idleTimeout = 2 * time.Minute
+	// Bound readiness checks even if the database is unreachable or its pool
+	// has no free connections. Request cancellation also stops the check.
+	readinessTimeout = 2 * time.Second
 )
 
 // Server is the router's HTTP server.
 type Server struct {
 	log   *slog.Logger
 	mux   *http.ServeMux
-	ready func() bool
+	ready func(context.Context) bool
 }
 
 // New returns a server that answers the health endpoints. Further routes are
 // added with Handle.
 func New(log *slog.Logger) *Server {
-	s := &Server{log: log, mux: http.NewServeMux(), ready: func() bool { return true }}
+	s := &Server{log: log, mux: http.NewServeMux(), ready: func(context.Context) bool { return true }}
 	s.mux.HandleFunc("GET /healthz", status("ok"))
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if !s.ready() {
+		ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+		defer cancel()
+		if !s.ready(ctx) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			status("unavailable")(w, r)
@@ -48,7 +53,7 @@ func New(log *slog.Logger) *Server {
 }
 
 // SetReadiness installs the readiness probe before serving requests.
-func (s *Server) SetReadiness(check func() bool) { s.ready = check }
+func (s *Server) SetReadiness(check func(context.Context) bool) { s.ready = check }
 
 func status(text string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {

@@ -41,7 +41,7 @@ func configured(t *testing.T, cfg *config.Config) (*Handler, *httptest.Server) {
 	h := New(cfg)
 	h.Pools.Check(t.Context())
 	s := server.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s.SetReadiness(h.Pools.Ready)
+	s.SetReadiness(func(context.Context) bool { return h.Pools.Ready() })
 	h.Register(s.Handle)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(func() { ts.Close(); h.Close() })
