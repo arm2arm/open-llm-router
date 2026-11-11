@@ -3,6 +3,7 @@ package integration_test
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -480,4 +481,122 @@ func TestPortalPendingLoginsAreCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.browser(t).login(t, "after-cap", []string{"staff"})
+}
+
+func TestPortalPrivacyDeletion(t *testing.T) {
+	f := startPortal(t)
+	a, b := f.browser(t), f.browser(t)
+	alice, bob := a.login(t, "alice", []string{"staff"}), b.login(t, "bob", []string{"staff"})
+	resp, data := a.call(t, "POST", "/portal/api/keys", `{"label":"laptop"}`, f.cfg.Portal.BaseURL)
+	var created struct{ Key string }
+	if json.Unmarshal(data, &created) != nil || resp.StatusCode != 201 {
+		t.Fatal("key was not issued")
+	}
+	for range 2 {
+		req, _ := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+"/v1/chat/completions", strings.NewReader(`{"model":"chat-model","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer "+created.Key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatal("inference failed", err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	f.writer.Record(usage.Record{UserID: bob, Model: "chat-model", Protocol: "openai", Status: "200", StartedAt: time.Now(), InputTokens: 1, OutputTokens: 1})
+	waitFor(t, func() bool { return f.writer.Counters().Written == 3 })
+	// A call that bob's forwarder key made for alice is alice's record.
+	execSQL(t, f.pool, `INSERT INTO usage (user_id, forwarded_for, model, replica, protocol, status, latency_ms) VALUES ($1, $2, 'chat-model', 'r', 'openai', '200', 1)`, bob, alice)
+	quota := func(br *portalBrowser) int {
+		_, data := br.call(t, "GET", "/portal/api/usage", "", "")
+		var result struct {
+			Quota struct {
+				Used struct {
+					Today int `json:"tokens_today"`
+				}
+			}
+		}
+		if json.Unmarshal(data, &result) != nil {
+			t.Fatal("invalid usage")
+		}
+		return result.Quota.Used.Today
+	}
+	before := quota(a)
+	if before == 0 {
+		t.Fatal("no usage charged")
+	}
+	for _, origin := range []string{"https://evil.example", ""} {
+		if resp, _ := a.call(t, "DELETE", "/portal/api/usage", `{}`, origin); resp.StatusCode != 403 {
+			t.Fatal("cross-origin deletion accepted", resp.StatusCode)
+		}
+	}
+	resp, data = a.call(t, "DELETE", "/portal/api/usage", `{}`, f.cfg.Portal.BaseURL)
+	if resp.StatusCode != 200 || string(data) != "{\"deleted\":3}\n" {
+		t.Fatalf("delete activity: %d %s", resp.StatusCode, data)
+	}
+	count := func(sql string, args ...any) int {
+		var n int
+		if err := f.pool.QueryRow(t.Context(), sql, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count(`SELECT count(*) FROM usage WHERE forwarded_for=$1 OR (user_id=$1 AND forwarded_for IS NULL)`, alice); n != 0 {
+		t.Fatal("alice's records remain", n)
+	}
+	if n := count(`SELECT count(*) FROM usage WHERE user_id=$1 AND forwarded_for IS NULL`, bob); n != 1 {
+		t.Fatal("bob's records were touched", n)
+	}
+	if quota(a) != before || count(`SELECT count(*) FROM usage_daily WHERE user_id=$1`, alice) != 1 {
+		t.Fatal("deleting activity changed the quota")
+	}
+
+	// Revoke, then remove the key for good; its usage rows lose the reference.
+	_, data = a.call(t, "GET", "/portal/api/keys", "", "")
+	var listed struct{ Keys []auth.KeyInfo }
+	if json.Unmarshal(data, &listed) != nil || len(listed.Keys) != 1 {
+		t.Fatal("key list")
+	}
+	id := listed.Keys[0].ID
+	f.writer.Record(usage.Record{UserID: alice, KeyID: id, Model: "chat-model", Protocol: "openai", Status: "200", StartedAt: time.Now()})
+	waitFor(t, func() bool { return f.writer.Counters().Written == 4 })
+	if resp, _ := b.call(t, "DELETE", "/portal/api/keys/"+id, `{}`, f.cfg.Portal.BaseURL); resp.StatusCode != 404 {
+		t.Fatal("another user removed the key")
+	}
+	if resp, _ := a.call(t, "DELETE", "/portal/api/keys/"+id, `{}`, f.cfg.Portal.BaseURL); resp.StatusCode != 204 || count(`SELECT count(*) FROM api_keys WHERE id=$1 AND revoked`, id) != 1 {
+		t.Fatal("first delete must revoke")
+	}
+	if resp, _ := a.call(t, "DELETE", "/portal/api/keys/"+id, `{}`, f.cfg.Portal.BaseURL); resp.StatusCode != 204 {
+		t.Fatal("second delete failed")
+	}
+	_, data = a.call(t, "GET", "/portal/api/keys", "", "")
+	if strings.Contains(string(data), id) || count(`SELECT count(*) FROM api_keys WHERE id=$1`, id) != 0 || count(`SELECT count(*) FROM usage WHERE key_id=$1`, id) != 0 || count(`SELECT count(*) FROM usage WHERE user_id=$1 AND key_id IS NULL`, alice) != 1 {
+		t.Fatal("removed key still referenced")
+	}
+	if resp, _ := a.call(t, "DELETE", "/portal/api/keys/"+id, `{}`, f.cfg.Portal.BaseURL); resp.StatusCode != 404 {
+		t.Fatal("removed key still found")
+	}
+
+	// Operator erasure leaves no row that references the user.
+	execSQL(t, f.pool, `INSERT INTO usage (user_id, forwarded_for, model, replica, protocol, status, latency_ms) VALUES ($1, $2, 'chat-model', 'r', 'openai', '200', 1)`, bob, alice)
+	if err := (auth.Admin{Pool: f.pool}).DeleteUser(t.Context(), alice); err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SELECT count(*) FROM users WHERE id=$1`, `SELECT count(*) FROM api_keys WHERE user_id=$1`,
+		`SELECT count(*) FROM sessions WHERE user_id=$1`, `SELECT count(*) FROM usage WHERE user_id=$1 OR forwarded_for=$1`,
+		`SELECT count(*) FROM usage_daily WHERE user_id=$1`,
+	} {
+		if n := count(sql, alice); n != 0 {
+			t.Fatal("erased user still referenced:", sql, n)
+		}
+	}
+	if resp, _ := a.call(t, "GET", "/portal/api/me", "", ""); resp.StatusCode != 401 {
+		t.Fatal("erased user's session survived")
+	}
+	if resp, _ := b.call(t, "GET", "/portal/api/me", "", ""); resp.StatusCode != 200 || count(`SELECT count(*) FROM usage WHERE user_id=$1`, bob) != 1 {
+		t.Fatal("erasure affected another user")
+	}
+	if errors.Is((auth.Admin{Pool: f.pool}).DeleteUser(t.Context(), alice), auth.ErrNotFound) == false {
+		t.Fatal("deleting a missing user must report not found")
+	}
 }

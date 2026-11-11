@@ -83,6 +83,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("POST /portal/api/keys", h.authenticated(h.createKey))
 	h.mux.HandleFunc("DELETE /portal/api/keys/{id}", h.authenticated(h.revokeKey))
 	h.mux.HandleFunc("GET /portal/api/usage", h.authenticated(h.usage))
+	h.mux.HandleFunc("DELETE /portal/api/usage", h.authenticated(h.deleteUsage))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {

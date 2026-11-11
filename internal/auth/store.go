@@ -124,9 +124,72 @@ func (a Admin) RevokeKey(ctx context.Context, keyID string) error {
 	return a.change(ctx, `UPDATE api_keys SET revoked = true WHERE id = $1`, keyID)
 }
 
-// RevokeOwnedKey scopes the mutation itself, including cache invalidation.
-func (a Admin) RevokeOwnedKey(ctx context.Context, userID, keyID string) error {
-	return a.change(ctx, `UPDATE api_keys SET revoked=true WHERE id=$1 AND user_id=$2`, keyID, userID)
+// RemoveOwnedKey revokes an active key. A key that is already revoked or has
+// expired is deleted for good; usage rows that referenced it keep their data
+// without the key reference. It reports whether the key was deleted.
+func (a Admin) RemoveOwnedKey(ctx context.Context, userID, keyID string) (deleted bool, err error) {
+	err = a.changeWith(ctx, func(tx pgx.Tx) error {
+		result, err := tx.Exec(ctx, `DELETE FROM api_keys WHERE id=$1 AND user_id=$2
+			AND (revoked OR expires <= clock_timestamp())`, keyID, userID)
+		if err != nil {
+			return errors.New("delete API key failed")
+		}
+		if result.RowsAffected() == 1 {
+			deleted = true
+			return nil
+		}
+		result, err = tx.Exec(ctx, `UPDATE api_keys SET revoked=true WHERE id=$1 AND user_id=$2`, keyID, userID)
+		if err != nil {
+			return errors.New("revoke API key failed")
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	return deleted, err
+}
+
+// DeleteUser erases a user with their keys, sessions, per-request records
+// (including calls forwarded for them) and daily totals, in one transaction.
+func (a Admin) DeleteUser(ctx context.Context, userID string) error {
+	return a.change(ctx, `DELETE FROM users WHERE id = $1`, userID)
+}
+
+// UserInfo is what operators need to find a user; it holds no credentials.
+type UserInfo struct {
+	ID       string    `json:"id"`
+	Issuer   string    `json:"issuer"`
+	Subject  string    `json:"sub"`
+	Username string    `json:"username"`
+	Email    string    `json:"email"`
+	Groups   []string  `json:"groups"`
+	Enabled  bool      `json:"enabled"`
+	SyncedAt time.Time `json:"synced_at"`
+}
+
+// ListUsers returns users whose username or email contains match, ignoring
+// case; an empty match lists everyone.
+func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) {
+	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at FROM users
+		WHERE $1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0
+		ORDER BY username, issuer, sub`, match)
+	if err != nil {
+		return nil, errors.New("list users failed")
+	}
+	defer rows.Close()
+	users := []UserInfo{}
+	for rows.Next() {
+		var u UserInfo
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt); err != nil {
+			return nil, errors.New("read user failed")
+		}
+		users = append(users, u)
+	}
+	if rows.Err() != nil {
+		return nil, errors.New("list users failed")
+	}
+	return users, nil
 }
 
 // SyncIdentity refreshes claims without re-enabling disabled accounts or linking
