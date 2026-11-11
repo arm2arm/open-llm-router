@@ -54,11 +54,15 @@ export type Limits = {
   tokens_per_day: number | null
   tokens_per_month: number | null
   rpm: number | null
+  tpm: number | null
   max_concurrent: number | null
+  max_concurrent_batch: number | null
+  strict_quota: boolean
 }
 export type Me = {
-  user: { username: string; email: string; groups: string[] }
+  user: { id: string; username: string; email: string; groups: string[] }
   limits: Limits
+  admin: boolean
 }
 export type Key = {
   id: string
@@ -68,6 +72,7 @@ export type Key = {
   last_used: string | null
   expires: string | null
   revoked: boolean
+  class: 'interactive' | 'batch'
 }
 export type ModelUsage = {
   model: string
@@ -84,18 +89,85 @@ export type Usage = {
   quota: {
     timezone: string
     limits: Limits
-    used: { tokens_today: number; tokens_this_month: number; rpm: number }
+    used: {
+      tokens_today: number
+      tokens_this_month: number
+      rpm: number | null
+    }
     remaining: {
       tokens_today: number | null
       tokens_this_month: number | null
       rpm: number | null
+      tpm: number | null
     }
-    reset_at: { day: string; month: string; rpm: string }
+    reset_at: { day: string; month: string; rpm: string | null }
     in_flight: number
+    in_flight_batch: number
+    reserved_tokens: number
   }
 }
 export type Models = {
   router_url: string
   base_url: string
   models: { id: string; canonical_model: string; protocols: string[] }[]
+}
+export type RequestRecord = {
+  time: string
+  model: string
+  protocol: string
+  status: string
+  input_tokens: number
+  output_tokens: number
+  latency_ms: number
+  ttfb_ms: number | null
+  stream: boolean
+  key_prefix: string | null
+  forwarded: boolean
+}
+export type DailyTotal = {
+  day: string
+  requests: number
+  input_tokens: number
+  output_tokens: number
+}
+export type AdminUser = {
+  id: string
+  issuer: string
+  username: string
+  email: string
+  groups: string[]
+  enabled: boolean
+  active_keys: number
+  tokens_today: number
+  tokens_this_month: number
+  overrides: Record<string, number | null>
+}
+export type Override = {
+  field: string
+  value: number | null
+  reason: string
+  set_by: string
+  set_at: string
+}
+export type AdminUserDetail = {
+  user: { id: string; username: string; email: string; groups: string[] }
+  enabled: boolean
+  limits: Limits
+  overrides: Override[]
+  keys: Key[]
+}
+export type GroupTotals = {
+  group: string
+  members: number
+  requests_today: number
+  tokens_today: number
+  tokens_this_month: number
+  admin: boolean
+}
+export type Replica = {
+  url: string
+  in_flight: number
+  healthy: boolean
+  weight: number
+  max_inflight: number
 }

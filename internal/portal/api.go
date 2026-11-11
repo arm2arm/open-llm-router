@@ -14,12 +14,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (h *Handler) access(u user) policy.Policy { return policy.Resolve(h.cfg.Groups, u.Groups) }
-func effective(p policy.Policy) limits.EffectiveLimits {
-	return limits.EffectiveLimits{TokensPerDay: p.TokensPerDay, TokensPerMonth: p.TokensPerMonth, RPM: p.RPM, MaxConcurrent: p.MaxConcurrent}
+func (h *Handler) access(u user) policy.Policy {
+	return policy.Resolve(h.cfg.Groups, u.Groups).WithOverrides(u.Overrides)
 }
+func effective(p policy.Policy) limits.EffectiveLimits { return limits.Effective(p) }
 func (h *Handler) me(w http.ResponseWriter, r *http.Request, u user) {
-	respond(w, 200, map[string]any{"user": u, "limits": effective(h.access(u))})
+	access := h.access(u)
+	respond(w, 200, map[string]any{"user": u, "limits": effective(access), "admin": access.Admin})
 }
 
 func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
@@ -34,6 +35,7 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 	var body struct {
 		Label         string `json:"label"`
 		ExpiresInDays *int   `json:"expires_in_days"`
+		Class         string `json:"class"`
 	}
 	if !h.jsonBody(w, r, &body) {
 		return
@@ -51,7 +53,14 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 			return
 		}
 	}
-	key, err := (&auth.Admin{Pool: h.pool}).CreateKey(r.Context(), u.ID, body.Label, time.Duration(days)*24*time.Hour)
+	if body.Class == "" {
+		body.Class = "interactive"
+	}
+	if body.Class != "interactive" && body.Class != "batch" {
+		fail(w, 400, "invalid_request_error", "class must be interactive or batch")
+		return
+	}
+	key, err := (&auth.Admin{Pool: h.pool}).CreateKeyOfClass(r.Context(), u.ID, body.Label, body.Class, time.Duration(days)*24*time.Hour)
 	if err != nil {
 		unavailable(w)
 		return

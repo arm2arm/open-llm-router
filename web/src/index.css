@@ -362,10 +362,11 @@ progress::-moz-progress-bar {
   }
   .sidebar nav {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
   }
   .nav-link {
-    flex: 1;
+    flex: 1 1 40%;
     justify-content: center;
     padding: 10px;
   }
@@ -393,4 +394,41 @@ progress::-moz-progress-bar {
   td {
     padding: 15px;
   }
+}
+
+/* 30-day chart: one series in the primary color, recessive axis and labels. */
+.daily-chart {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.daily-chart .chart-bar {
+  fill: var(--primary);
+}
+.daily-chart .chart-bar.active {
+  stroke: var(--foreground);
+  stroke-width: 1.5;
+}
+.daily-chart g:focus {
+  outline: none;
+}
+.daily-chart .chart-axis {
+  stroke: var(--border);
+}
+.daily-chart .chart-label {
+  fill: var(--muted-foreground);
+  font-size: 11px;
+}
+@media (forced-colors: active) {
+  .daily-chart .chart-bar {
+    fill: CanvasText;
+  }
+}
+
+/* Consecutive panels and a panel after a hint keep the page rhythm. */
+.panel:not(.stat) + .panel:not(.stat),
+.hint + .panel {
+  margin-top: 24px;
 }
