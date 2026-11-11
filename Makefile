@@ -31,27 +31,35 @@ up:
 
 # Resolve actual published ports so .env overrides work here too.
 smoke:
-	@for probe in "router 8080 /healthz" "router 8080 /readyz" "router 8080 /v1/models" "mock-llm-a 8000 /health" "mock-llm-b 8000 /health"; do \
+	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username smoke-$$(date +%s)-$$$$)" || exit $$?; \
+	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
+	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label smoke)" || exit $$?; \
+	for probe in "router 8080 /healthz" "router 8080 /readyz" "router 8080 /v1/models" "mock-llm-a 8000 /health" "mock-llm-b 8000 /health"; do \
 		set -- $$probe; \
 		address="$$($(COMPOSE) port $$1 $$2)" || exit $$?; \
 		curl --fail --silent --show-error --retry 20 --retry-all-errors \
+			-H "Authorization: Bearer $$key" \
 			--retry-delay 1 --retry-max-time 30 --max-time 2 "http://$$address$$3" || exit $$?; \
 	done
 
 # The official SDK scripts run through the router and directly against each mock.
 # Locally uv supplies their pinned dependencies; CI provides a Python venv.
 sdk:
-	@stats_a="$$($(COMPOSE) port mock-llm-a 8000)" || exit $$?; \
+	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username sdk-$$(date +%s)-$$$$)" || exit $$?; \
+	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
+	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label sdk)" || exit $$?; \
+	stats_a="$$($(COMPOSE) port mock-llm-a 8000)" || exit $$?; \
 	stats_b="$$($(COMPOSE) port mock-llm-b 8000)" || exit $$?; \
 	for service in router mock-llm-a mock-llm-b; do \
 		port=8000; if [ "$$service" = router ]; then port=8080; fi; \
 		address="$$($(COMPOSE) port $$service $$port)" || exit $$?; \
 		stats="http://$$address/_mock/stats"; \
-		if [ "$$service" = router ]; then stats="http://$$stats_a/_mock/stats,http://$$stats_b/_mock/stats"; fi; \
-		OLR_BASE_URL="http://$$address" OLR_EMBEDDING_MODEL=chat-model OLR_TEST_MOCK=1 \
+		api_key=olr-not-checked; \
+		if [ "$$service" = router ]; then stats="http://$$stats_a/_mock/stats,http://$$stats_b/_mock/stats"; api_key="$$key"; fi; \
+		OLR_BASE_URL="http://$$address" OLR_API_KEY="$$api_key" OLR_EMBEDDING_MODEL=chat-model OLR_TEST_MOCK=1 \
 			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
 			$(SDK_RUN) tests/clients/check_openai.py || exit $$?; \
-		OLR_BASE_URL="http://$$address" OLR_CHECK_THINKING=1 OLR_TEST_MOCK=1 \
+		OLR_BASE_URL="http://$$address" OLR_API_KEY="$$api_key" OLR_CHECK_THINKING=1 OLR_TEST_MOCK=1 \
 			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
 			$(SDK_RUN) tests/clients/check_anthropic.py || exit $$?; \
 	done

@@ -8,6 +8,10 @@
 # - Secrets are not set here. They are read from the environment only:
 #   OLR_DATABASE_URL and OIDC_PORTAL_CLIENT_SECRET.
 
+# Every /v1/* route requires an API key. Admin-created keys expire by default.
+auth:
+  default_key_lifetime_days: 90
+
 # Portal login. Leave the section out to run without a portal (API keys only).
 oidc:
   issuer: ${OIDC_ISSUER}            # dev: http://keycloak:8080/realms/olr-dev

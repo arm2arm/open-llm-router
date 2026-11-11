@@ -60,14 +60,17 @@ export OLR_DIRECT_API_KEY=ollama                  # nonempty placeholder without
 export OLR_HEALTH_PATH=/                         # /health for vLLM and SGLang
 export OLR_BASE_URL=http://127.0.0.1:18080
 export OLR_MODEL=chat-model
-export OLR_API_KEY=olr-local-test
+user_id=$(bin/olr admin user add -username real-backend-test -groups staff)
+export OLR_API_KEY=$(bin/olr admin key create -user "$user_id" -label real-backend-test)
 bin/olr serve -listen 127.0.0.1:18080 -config config.real.example.yaml
 ```
 
 For vLLM or SGLang, change the origin/model/key and use `OLR_HEALTH_PATH=/health` if that
 backend exposes it. `health_path` defaults to `/health` on ordinary pool replicas. Ollama
 returns 404 there, so it needs `/`. Backend authentication uses `bearer_token_env`; client
-credentials are replaced by the backend credential. Router authentication is not implemented yet.
+credentials are replaced by the backend credential. The router requires its own API key on
+every `/v1/*` route. Keep `OLR_API_KEY` separate from the backend's `OLR_DIRECT_API_KEY`.
+For an existing bootstrap user, reuse its UUID instead of running `user add` again.
 
 The example advertises both protocols. If a deployed backend lacks `/v1/messages`, configure
 `protocols: [openai]` in a private copy and use the OpenAI checks alone; it is not an Anthropic pass.

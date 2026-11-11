@@ -22,8 +22,9 @@ import (
 
 // Protocols a model can be served with.
 const (
-	ProtocolOpenAI    = "openai"
-	ProtocolAnthropic = "anthropic"
+	ProtocolOpenAI         = "openai"
+	ProtocolAnthropic      = "anthropic"
+	DefaultKeyLifetimeDays = 90
 )
 
 // Environment variables that carry secrets. Secrets have no key in the config
@@ -36,6 +37,7 @@ const (
 // Config is the content of the config file plus the secrets from the
 // environment.
 type Config struct {
+	Auth    Auth              `yaml:"auth"`
 	OIDC    *OIDC             `yaml:"oidc"` // nil: no portal login
 	Models  map[string]Model  `yaml:"models"`
 	Groups  map[string]Group  `yaml:"groups"`
@@ -43,6 +45,11 @@ type Config struct {
 
 	DatabaseURL      string `yaml:"-"`
 	OIDCClientSecret string `yaml:"-"`
+}
+
+// Auth controls the lifetime of newly issued API keys.
+type Auth struct {
+	DefaultKeyLifetimeDays int `yaml:"default_key_lifetime_days"`
 }
 
 // OIDC describes the identity provider used for portal login.
@@ -124,7 +131,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, problems
 	}
 
-	var cfg Config
+	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}}
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
 	}
@@ -269,6 +276,9 @@ func isVarName(s string) bool {
 func (c *Config) validate() Problems {
 	var p Problems
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+	if c.Auth.DefaultKeyLifetimeDays <= 0 || c.Auth.DefaultKeyLifetimeDays > 36500 {
+		add("auth.default_key_lifetime_days: must be between 1 and 36500")
+	}
 
 	if c.OIDC != nil {
 		if !isHTTPURL(c.OIDC.Issuer) {
