@@ -18,6 +18,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
@@ -132,6 +133,22 @@ func serve(args []string) error {
 	forwarder := proxy.New(cfg)
 	forwarder.Usage = accounting
 	forwarder.Limits = limits.New(database, cfg.Limits.Location, time.Now)
+	observabilityOptions, err := metrics.Environment(os.Getenv)
+	if err != nil {
+		return err
+	}
+	observability, err := metrics.New(ctx, observabilityOptions, forwarder.Pools, accounting)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := observability.Shutdown(flushCtx); err != nil {
+			log.Error("trace shutdown flush incomplete")
+		}
+	}()
+	forwarder.Metrics = observability
 	defer forwarder.Close()
 	forwarder.Pools.Check(ctx)
 	// Health checks keep running during graceful shutdown until Run returns.
@@ -145,6 +162,7 @@ func serve(args []string) error {
 		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
 	})
 	forwarder.Register(srv.Handle)
+	srv.Handle("GET /metrics", observability.Handler())
 	if cfg.OIDC != nil {
 		portalCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		portalHandler, err := portal.New(portalCtx, cfg, database, forwarder.Limits)

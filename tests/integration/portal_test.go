@@ -216,11 +216,23 @@ func TestPortalUserIsolationRevocationAndLogout(t *testing.T) {
 			t.Fatal(path, resp.StatusCode)
 		}
 	}
+	for _, path := range []string{"/portal/api", "/portal/api/unknown"} {
+		resp, _ := a.call(t, "GET", path, "", "")
+		if resp.StatusCode != 401 {
+			t.Fatal("API fallback bypassed authentication")
+		}
+	}
 	alice, bob := a.login(t, "alice", []string{"staff"}), b.login(t, "bob", []string{"students"})
 	if alice == bob || alice == f.owner || bob == f.owner {
 		t.Fatal("users linked by email instead of issuer and subject")
 	}
-	resp, data := a.call(t, "POST", "/portal/api/keys", `{"label":"laptop"}`, f.cfg.Portal.BaseURL)
+	for _, expiry := range []string{"0", "-1", "36501", "1.5", `"7"`} {
+		resp, _ := a.call(t, "POST", "/portal/api/keys", `{"label":"invalid expiry","expires_in_days":`+expiry+`}`, f.cfg.Portal.BaseURL)
+		if resp.StatusCode != 400 {
+			t.Fatal("invalid expiry accepted")
+		}
+	}
+	resp, data := a.call(t, "POST", "/portal/api/keys", `{"label":"laptop","expires_in_days":7}`, f.cfg.Portal.BaseURL)
 	var created struct{ Key string }
 	if json.Unmarshal(data, &created) != nil || resp.StatusCode != 201 || !strings.HasPrefix(created.Key, "olr-") {
 		t.Fatal("key was not issued")
@@ -231,6 +243,9 @@ func TestPortalUserIsolationRevocationAndLogout(t *testing.T) {
 		t.Fatal("invalid key metadata")
 	}
 	id := listed.Keys[0].ID
+	if listed.Keys[0].Expires == nil || time.Until(*listed.Keys[0].Expires) < 7*24*time.Hour-time.Minute || time.Until(*listed.Keys[0].Expires) > 7*24*time.Hour+time.Minute {
+		t.Fatal("custom key expiry was not applied")
+	}
 	_, data = b.call(t, "GET", "/portal/api/keys", "", "")
 	if strings.Contains(string(data), id) {
 		t.Fatal("another user's key was listed")

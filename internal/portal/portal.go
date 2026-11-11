@@ -84,18 +84,14 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("DELETE /portal/api/keys/{id}", h.authenticated(h.revokeKey))
 	h.mux.HandleFunc("GET /portal/api/usage", h.authenticated(h.usage))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
-	h.mux.HandleFunc("GET /portal/{$}", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html><title>Open LLM Router</title><h1>Open LLM Router</h1><p><a href="/portal/login">Sign in</a></p><p>The account interface is coming soon.</p>`))
-	})
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/portal/api/") {
+		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {
 			h.authenticated(func(w http.ResponseWriter, _ *http.Request, _ user) {
 				fail(w, 404, "not_found_error", "route not found")
 			})(w, r)
 			return
 		}
-		fail(w, 404, "not_found_error", "route not found")
+		staticPortal(w, r)
 	})
 	h.mux.HandleFunc("GET /portal", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/portal/", http.StatusSeeOther) })
 	return h, nil
@@ -107,6 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	h.mux.ServeHTTP(w, r.WithContext(ctx))

@@ -234,7 +234,7 @@ func TestPanicBeforeResponse(t *testing.T) {
 		t.Fatalf("want a panic line and a request line, got: %s", logs)
 	}
 	id := rec.Header().Get("X-Request-Id")
-	if entries[0]["level"] != "ERROR" || entries[0]["panic"] != "kaboom" || entries[0]["request_id"] != id {
+	if entries[0]["level"] != "ERROR" || entries[0]["panic"] != "handler panic" || entries[0]["request_id"] != id || strings.Contains(logs.String(), "kaboom") {
 		t.Errorf("panic line = %v", entries[0])
 	}
 	if entries[1]["status"] != float64(500) || entries[1]["request_id"] != id {
@@ -264,7 +264,7 @@ func TestPanicMidStreamBreaksTheConnection(t *testing.T) {
 	if err == nil {
 		t.Errorf("the body %q ended without an error; the client cannot tell it is incomplete", body)
 	}
-	if !strings.Contains(logs.String(), `"panic":"kaboom"`) {
+	if !strings.Contains(logs.String(), `"panic":"handler panic"`) || strings.Contains(logs.String(), "kaboom") {
 		t.Errorf("the panic was not logged: %s", logs)
 	}
 }

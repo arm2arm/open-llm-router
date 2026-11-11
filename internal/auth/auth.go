@@ -16,6 +16,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/apierr"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/reqid"
 )
 
 const cacheTTL = time.Minute
@@ -190,6 +191,9 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				apierr.Write(w, protocol, 503, "api_error", "authentication is temporarily unavailable")
 			}
 			return
+		}
+		if details := reqid.DetailsFromContext(r.Context()); details != nil {
+			details.UserID, details.KeyPrefix = p.UserID, key[:12]
 		}
 		next.ServeHTTP(w, r.WithContext(NewContext(r.Context(), p)))
 	})
