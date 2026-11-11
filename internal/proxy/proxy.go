@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -135,16 +136,22 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			apierr.Write(w, protocol, 413, "request_too_large", "request body exceeds 32 MiB")
+		} else if errors.Is(err, os.ErrDeadlineExceeded) {
+			w.Header().Set("Connection", "close")
+			apierr.Write(w, protocol, 408, "invalid_request_error", "request body was not received in time")
 		} else {
 			apierr.Write(w, protocol, 400, "invalid_request_error", "request body is unreadable")
 		}
 		return
 	}
-	var meta struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
+	// The server bounds the body upload; a response may stream for much longer.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+	meta, err := parseRequest(body)
+	if errors.Is(err, errAmbiguousField) {
+		apierr.Write(w, protocol, 400, "invalid_request_error", "model and stream must each appear once, spelled in lower case")
+		return
 	}
-	if json.Unmarshal(body, &meta) != nil || meta.Model == "" {
+	if err != nil || meta.Model == "" {
 		apierr.Write(w, protocol, 400, "invalid_request_error", "a JSON object with a model and optional boolean stream is required")
 		return
 	}
@@ -278,6 +285,9 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	for key, values := range cleanHeaders(resp.Header) {
 		w.Header()[key] = values
 	}
+	// The router's origin also serves the portal: a backend must not be able
+	// to set or overwrite cookies there.
+	w.Header().Del("Set-Cookie")
 	w.Header().Set("X-Request-Id", reqid.FromContext(r.Context()))
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Cache-Control", "no-cache")

@@ -12,6 +12,8 @@ dependencies return 503. No OIDC token is stored or returned to the browser.
 
 - `GET /portal/login`: starts authorization code login with fresh state, nonce and PKCE S256.
   A ten-minute HttpOnly cookie binds the one-use server-side challenge to this browser.
+  At most 10,000 unfinished challenges exist at a time; beyond that the route answers 503
+  with `Retry-After: 60`.
 - `GET /portal/callback`: consumes the challenge, exchanges the code and validates the ID
   token's signature, issuer, audience, expiry and nonce. The user is upserted by `(issuer, sub)`;
   email is never an identity key. Username, email and groups refresh on each login. Disabled

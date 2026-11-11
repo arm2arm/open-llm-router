@@ -457,3 +457,27 @@ func TestPortalCustomClaimNames(t *testing.T) {
 		t.Fatal("configured claims were ignored")
 	}
 }
+
+// The login route is public; it must not let anyone fill the database.
+func TestPortalPendingLoginsAreCapped(t *testing.T) {
+	previous := portal.MaxPendingLogins
+	portal.MaxPendingLogins = 3
+	t.Cleanup(func() { portal.MaxPendingLogins = previous })
+	f := startPortal(t)
+	for range 3 {
+		f.browser(t).challenge(t)
+	}
+	resp, _ := f.browser(t).call(t, "GET", "/portal/login", "", "")
+	if resp.StatusCode != 503 || resp.Header.Get("Retry-After") == "" {
+		t.Fatal("login beyond the cap", resp.StatusCode)
+	}
+	var pending int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM portal_login_attempts`).Scan(&pending); err != nil || pending != 3 {
+		t.Fatal("pending logins", pending, err)
+	}
+	// Expired attempts free capacity again.
+	if _, err := f.pool.Exec(t.Context(), `UPDATE portal_login_attempts SET expires=clock_timestamp()-interval '1 second'`); err != nil {
+		t.Fatal(err)
+	}
+	f.browser(t).login(t, "after-cap", []string{"staff"})
+}
