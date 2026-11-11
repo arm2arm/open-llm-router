@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Base images are pinned by digest; Dependabot (.github/dependabot.yml) proposes updates.
 
-FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS portal-build
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS portal-build
 WORKDIR /src/web
 COPY web/package*.json ./
 COPY web/scripts/ scripts/
