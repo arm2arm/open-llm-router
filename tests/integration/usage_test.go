@@ -16,6 +16,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
@@ -33,7 +34,13 @@ type usageRouter struct {
 	stop   func()
 }
 
-func startUsageRouter(t *testing.T, handler http.Handler) *usageRouter {
+type usageOptions struct {
+	group    *config.Group
+	location *time.Location
+	clock    func() time.Time
+}
+
+func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOptions) *usageRouter {
 	t.Helper()
 	f := &usageRouter{pool: openDatabase(t, newDatabase(t).dsn), logs: &authLog{}}
 	backend := httptest.NewServer(handler)
@@ -52,7 +59,16 @@ func startUsageRouter(t *testing.T, handler http.Handler) *usageRouter {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewJSONHandler(f.logs, nil))
-	f.writer = usage.NewWriter(f.pool, log)
+	location, clock := time.UTC, time.Now
+	if len(options) > 0 {
+		if options[0].location != nil {
+			location = options[0].location
+		}
+		if options[0].clock != nil {
+			clock = options[0].clock
+		}
+	}
+	f.writer = usage.NewWriterInLocation(f.pool, log, location)
 	cfg := &config.Config{
 		Models: map[string]config.Model{"chat-model": {
 			Protocols: []string{"openai", "anthropic"}, TimeoutS: 3, IdleTimeoutS: 2,
@@ -61,8 +77,14 @@ func startUsageRouter(t *testing.T, handler http.Handler) *usageRouter {
 		Aliases: map[string]string{"alias": "chat-model"},
 		Groups:  map[string]config.Group{"staff": {Models: []string{"*"}}},
 	}
+	if len(options) > 0 && options[0].group != nil {
+		cfg.Groups["staff"] = *options[0].group
+	}
 	forwarder := proxy.New(cfg)
 	forwarder.Usage = f.writer
+	if len(options) > 0 {
+		forwarder.Limits = limits.New(f.pool, location, clock)
+	}
 	forwarder.Pools.Check(t.Context())
 	s := server.New(log)
 	s.SetAPIMiddleware(authenticator.Middleware)

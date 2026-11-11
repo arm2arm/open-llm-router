@@ -85,6 +85,32 @@ func TestParseWithoutOIDC(t *testing.T) {
 	}
 }
 
+func TestLimitsTimezone(t *testing.T) {
+	for _, zone := range []string{"", "UTC", "Europe/Berlin", "Mars/Unknown", "Local"} {
+		data := valid
+		if zone != "" {
+			data += "limits: {timezone: " + zone + "}\n"
+		}
+		cfg, err := Parse([]byte(data), lookupIn(validEnv))
+		if zone == "Mars/Unknown" || zone == "Local" {
+			if err == nil || !strings.Contains(err.Error(), "limits.timezone") {
+				t.Fatal(zone, err)
+			}
+		} else {
+			want := zone
+			if want == "" {
+				want = "UTC"
+			}
+			if err != nil || cfg.Limits.Timezone != want || cfg.Limits.Location.String() != want {
+				t.Fatal(zone, cfg, err)
+			}
+		}
+	}
+	if _, err := Parse([]byte(valid+"limits: {timezone: ''}\n"), lookupIn(validEnv)); err == nil {
+		t.Fatal("empty timezone accepted")
+	}
+}
+
 func TestKeyLifetime(t *testing.T) {
 	for _, tc := range []struct {
 		yaml string

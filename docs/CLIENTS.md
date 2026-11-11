@@ -6,6 +6,10 @@ implement missing backend APIs. Endpoint URLs and credentials belong in the envi
 
 ## Recorded run: 2026-11-11
 
+`make sdk-limits` runs a separate fresh limited user through the router and verifies
+that both official SDKs raise `RateLimitError` for HTTP 429, with `Retry-After` and the
+structured limit/reset fields. This check runs in CI after the successful-request SDK suite.
+
 Tested on the laptop with Ollama **0.40.16**, a local Qwen 27B MLX model, OpenAI Python
 **3.49.0**, Anthropic Python **2.8.0**, Claude Code **2.1.322**, and OpenCode **1.18.10**.
 The router used one replica and the aliases in `config.real.example.yaml`.

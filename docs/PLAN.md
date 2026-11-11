@@ -155,8 +155,10 @@ Keycloak clients per realm: `olr-portal` (confidential, auth code + PKCE, groups
 - Enforcement order: auth → model allowed → concurrency slot → rpm/tpm bucket → quota remaining.
   Rejections: `429` with `Retry-After` and a JSON body naming the limit and reset time
   (OpenAI and Anthropic error shapes respectively).
-- Accounting after completion from backend `usage` (stream: final chunk). Overshoot is bounded by
-  `max_concurrent × max_tokens`; optional pre-reservation of `max_tokens` for strict groups.
+- Accounting after completion from backend `usage` (stream: final chunk), counting input plus
+  output tokens. Already admitted calls can overshoot a quota. With finite concurrency and
+  bounded calls, the bound is their total input/output budget; `max_concurrent × max_tokens`
+  bounds only output. Optional pre-reservation for strict groups follows in #27.
 - Windows: day/month in a configurable timezone; counters in Postgres (`UPDATE … RETURNING`).
 
 ## 8. Routing and load balancing

@@ -19,6 +19,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/apierr"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
@@ -34,7 +35,8 @@ type Handler struct {
 	cfg       *config.Config
 	transport *http.Transport
 	Pools     *pool.Manager
-	Usage     usage.Recorder // installed before serving; nil disables persistence
+	Usage     usage.Recorder  // installed before serving; nil disables persistence
+	Limits    *limits.Manager // installed before serving
 	active    sync.WaitGroup
 }
 
@@ -67,6 +69,22 @@ func (h *Handler) Register(handle func(string, http.Handler)) {
 		handle("POST "+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h.forward(w, r, protocol) }))
 	}
 	handle("GET /v1/models", http.HandlerFunc(h.models))
+	handle("GET /v1/me/usage", http.HandlerFunc(h.myUsage))
+}
+
+func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
+	if h.Limits == nil {
+		limits.WriteError(w, config.ProtocolOpenAI, limits.ErrUnavailable)
+		return
+	}
+	principal, _ := auth.FromContext(r.Context())
+	snapshot, err := h.Limits.Snapshot(r.Context(), principal.UserID, h.callerPolicy(r))
+	if err != nil {
+		limits.WriteError(w, config.ProtocolOpenAI, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
 func (h *Handler) callerPolicy(r *http.Request) policy.Policy {
@@ -133,7 +151,8 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		return
 	}
 	account.record.Model = name
-	if !h.callerPolicy(r).AllowsModel(name) {
+	access := h.callerPolicy(r)
+	if !access.AllowsModel(name) {
 		apierr.Write(w, protocol, 403, "permission_error", "access to this model is forbidden")
 		return
 	}
@@ -162,6 +181,14 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			return
 		}
 		hideUsage = !asked
+	}
+	if h.Limits != nil {
+		principal, _ := auth.FromContext(r.Context())
+		account.lease, err = h.Limits.Acquire(r.Context(), principal.UserID, access)
+		if err != nil {
+			limits.WriteError(w, protocol, err)
+			return
+		}
 	}
 	var previous *pool.Lease
 	for attempt := 0; attempt < 2; attempt++ {

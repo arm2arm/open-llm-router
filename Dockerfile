@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # The Go version is pinned here and in go.mod; change both together.
-FROM golang:1.27.3 AS build
+FROM golang:1.27.4 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

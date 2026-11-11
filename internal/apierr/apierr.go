@@ -9,9 +9,17 @@ import (
 )
 
 func Write(w http.ResponseWriter, protocol string, status int, kind, message string) {
+	WriteDetails(w, protocol, status, kind, message, nil)
+}
+
+// WriteDetails adds structured error metadata while keeping the protocol envelope.
+func WriteDetails(w http.ResponseWriter, protocol string, status int, kind, message string, details map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	detail := map[string]any{"type": kind, "message": message}
+	for key, value := range details {
+		detail[key] = value
+	}
 	body := map[string]any{"error": detail}
 	if protocol == config.ProtocolAnthropic {
 		body["type"] = "error"

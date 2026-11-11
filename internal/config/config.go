@@ -16,6 +16,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
+	_ "time/tzdata" // IANA zones also work in the static runtime image.
 
 	"go.yaml.in/yaml/v4"
 )
@@ -38,6 +40,7 @@ const (
 // environment.
 type Config struct {
 	Auth    Auth              `yaml:"auth"`
+	Limits  Limits            `yaml:"limits"`
 	OIDC    *OIDC             `yaml:"oidc"` // nil: no portal login
 	Models  map[string]Model  `yaml:"models"`
 	Groups  map[string]Group  `yaml:"groups"`
@@ -50,6 +53,12 @@ type Config struct {
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
 	DefaultKeyLifetimeDays int `yaml:"default_key_lifetime_days"`
+}
+
+// Limits sets the calendar used by quotas and daily accounting.
+type Limits struct {
+	Timezone string         `yaml:"timezone"`
+	Location *time.Location `yaml:"-"`
 }
 
 // OIDC describes the identity provider used for portal login.
@@ -131,7 +140,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, problems
 	}
 
-	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}}
+	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{Timezone: "UTC"}}
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
 	}
@@ -167,6 +176,11 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if problems = cfg.validate(); len(problems) > 0 {
 		return nil, problems
 	}
+	location, err := time.LoadLocation(cfg.Limits.Timezone)
+	if err != nil || cfg.Limits.Timezone == "" || cfg.Limits.Timezone == "Local" {
+		return nil, Problems{"limits.timezone: must be an explicit IANA time zone, such as UTC or Europe/Berlin"}
+	}
+	cfg.Limits.Location = location
 	return &cfg, nil
 }
 

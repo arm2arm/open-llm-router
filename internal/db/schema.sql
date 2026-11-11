@@ -48,8 +48,11 @@ CREATE TABLE IF NOT EXISTS usage (
     input_tokens bigint NOT NULL DEFAULT 0,
     output_tokens bigint NOT NULL DEFAULT 0,
     latency_ms bigint NOT NULL,
-    ttfb_ms bigint
+    ttfb_ms bigint,
+    is_stream boolean NOT NULL DEFAULT false
 );
+-- Additive pilot upgrade. Older records have no reliable stream classification.
+ALTER TABLE usage ADD COLUMN IF NOT EXISTS is_stream boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS usage_user_id_ts_idx ON usage (user_id, ts);
 CREATE INDEX IF NOT EXISTS usage_key_id_idx ON usage (key_id);
 CREATE INDEX IF NOT EXISTS usage_forwarded_for_idx ON usage (forwarded_for);

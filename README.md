@@ -9,7 +9,8 @@ incremental streaming, cancellation, weighted balancing, health checks and failo
 Model aliases and `/v1/models` work. The router initializes its Postgres schema at startup and
 checks the database in `/readyz`. API keys authenticate every `/v1/*` request, with admin CLI
 commands for local users and keys. Group policy controls model access and filters `/v1/models`;
-inference calls record token usage and timing in Postgres. Limits and the portal follow.
+inference calls record token usage and timing in Postgres. Per-user concurrency, RPM and
+day/month token quotas are enforced, with a usage API. The portal follows.
 Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
@@ -21,7 +22,7 @@ Authors: A. Khalatyan (AIP), with Hermes agent.
 
 ## Development
 
-Needs Go 1.27.3 for host-side development, and Docker with Compose 2.20+ for the stack.
+Needs Go 1.27.4 for host-side development, and Docker with Compose 2.20+ for the stack.
 From the repository root:
 
 ```sh
@@ -29,6 +30,7 @@ docker compose up --build -d   # or: make up (also waits for Postgres)
 curl --fail localhost:8080/healthz
 make smoke                   # readiness, model listing and backend probes
 make sdk                     # official OpenAI + Anthropic SDKs (needs uv)
+make sdk-limits              # both SDKs recognize rate limits as RateLimitError
 ```
 
 The stack works with built-in local defaults. Optionally copy [.env.example](.env.example) to
@@ -75,7 +77,8 @@ roles have these permissions). Tests cover schema initialization/restarts, issue
 identities, deletion rules, database loss/recovery, and CLI-created keys through the router binary,
 including immediate cache invalidation across two router processes on revoke and user disable,
 plus group-based model access, filtered model lists, usage persistence, privacy, atomic daily
-totals under 100 concurrent calls, and shutdown flushing for real API keys.
+totals under 100 concurrent calls, shutdown flushing, shared user limits, stream slot
+release, calendar resets, quota recovery after restart, and the usage API for real API keys.
 With Compose running on the default database port, include them with:
 
 ```sh
@@ -131,13 +134,14 @@ request or response bodies.
 | `internal/auth` | API key generation, authentication cache, invalidation and bootstrap administration |
 | `internal/policy` | group policy resolution: allowed models and effective numeric limits |
 | `internal/usage` | incremental usage inspection, timing metadata, asynchronous atomic accounting |
+| `internal/limits` | per-user concurrency, sliding-minute RPM, calendar token quotas and usage snapshots |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: `limits`, `portal`, `metrics`.
+Still to come under `internal/`: `portal`, `metrics`.
 
 ## API keys and bootstrap administration
 
@@ -159,7 +163,7 @@ A forbidden model returns 403 with `permission_error` in the endpoint's OpenAI o
 error format, including for streaming requests and `/v1/messages/count_tokens`.
 Numeric policy limits merge independently: the largest value wins, and an omitted limit in
 any matching group means unlimited for that field. Unknown groups do not affect the result.
-Limits are resolved now; quota and rate enforcement follow in #13.
+These limits apply per user, across all keys, protocols, models and replicas.
 
 The bootstrap commands use `OLR_DATABASE_URL` and work without a running HTTP server. Under
 Compose, run them as `docker compose exec -T router olr admin ...`; on the host use `bin/olr admin ...`.
@@ -244,7 +248,7 @@ backend errors, and aborted responses. Retries remain one call, attributed to th
 selected replica. `/v1/models`, `/v1/messages/count_tokens`, probes, and authentication
 failures are excluded. Rows contain the user/key IDs, canonical model (empty for an unknown
 or invalid model), replica origin, protocol, status, backend token counts, start time,
-`latency_ms`, and `ttfb_ms`. No prompt, completion, raw event, or credential is persisted or
+`latency_ms`, `ttfb_ms`, and `is_stream`. No prompt, completion, raw event, or credential is persisted or
 logged. `ttfb_ms` measures the first backend body byte and is null when none arrives.
 For streaming calls, derive output tokens/second as
 `output_tokens * 1000 / (latency_ms - ttfb_ms)` when the denominator is positive;
@@ -262,12 +266,76 @@ without retaining content. Inspection buffers at most 1 MiB per SSE event and 64
 usage object; oversized events pass through unchanged without inspection or filtering.
 
 Four writer goroutines drain a 1,024-record queue. Each insert and its `usage_daily` upsert
-commit in one transaction, using the request's UTC start date. Database writes have a
+commit in one transaction, using the request's start date in `limits.timezone` (default UTC).
+Database writes have a
 2-second deadline. A full queue drops metadata instead of delaying inference; failed and
 dropped writes are logged generically and counted by `usage.Writer.Counters()`. The HTTP
 shutdown grace runs first, followed by up to 5 seconds to flush accounting before closing
 the database. A database failure during that flush is logged without changing client
-responses. Quota enforcement and its configurable timezone follow in #13.
+responses. The additive startup schema upgrade marks legacy rows `is_stream=false`;
+their TTFB remains available, but their generation rates are excluded from averages.
+
+## Limits and current-user usage
+
+After authentication and model authorization, inference routes acquire a per-user
+concurrency slot, check a sliding 60-second RPM window, and check remaining daily and
+monthly token quota, in that order. A slot lasts through the full response or stream and
+is released on completion, cancellation, failure, or disconnect. A request passing the
+RPM gate consumes an attempt even if the quota gate or backend later rejects it; a
+concurrency rejection consumes no RPM. `/v1/messages/count_tokens` uses these gates but
+does not charge tokens. `/v1/models` and `/v1/me/usage` consume no limits.
+
+A rejected gate returns HTTP 429 with `Retry-After` seconds and the endpoint's native
+JSON error envelope. `error.type` is `rate_limit_error`; `error.limit` identifies
+`max_concurrent`, `rpm`, `tokens_per_day`, or `tokens_per_month`, and `error.reset_at`
+is an RFC3339 timestamp, also named in the message. Concurrency uses an estimated one-second
+retry: a stream may release a slot sooner or remain active longer. RPM retries at the
+oldest accepted attempt plus 60 seconds. Day/month quotas reset at local midnight in the
+configured IANA timezone, including daylight-saving changes:
+
+```yaml
+limits:
+  timezone: Europe/Berlin  # default UTC; same calendar as usage_daily
+```
+
+Quota counts **input plus output tokens** from completed/aborted calls, charged to the
+request's start date. The charge updates memory synchronously before releasing the slot,
+then queues the database write. Already admitted calls can overshoot a quota; strict
+reservations are deferred to #27. With finite concurrency, overshoot is bounded by the
+total tokens of admitted calls. `max_concurrent × max_tokens` bounds only their output,
+not prompt tokens; without finite concurrency and bounded requests there is no fixed bound.
+
+Counters are in memory for one router instance. The first request or usage lookup for a
+user loads the current month's `usage_daily` totals and today's timing metadata from one
+database snapshot; later calls use the cache, including records still queued for storage.
+Unavailable initial counters return a generic 503 with a one-second retry. Token quotas
+survive restarts through committed daily totals; RPM and in-flight counts restart empty.
+Failed/dropped writes remain charged in memory but cannot be recovered after a crash or
+restart. Multiple active router instances and out-of-band usage writes are unsupported
+in v1. Changing the timezone on a populated database requires rebucketing `usage_daily`
+from `usage` while the router is stopped.
+
+```sh
+curl --fail http://localhost:8080/v1/me/usage \
+  -H "Authorization: Bearer $OLR_API_KEY"
+```
+
+`GET /v1/me/usage` returns only the authenticated user's snapshot. Its fields are:
+
+| Field | Meaning |
+|---|---|
+| `timezone` | Configured quota calendar |
+| `limits` | Effective `max_concurrent`, `rpm`, `tokens_per_day`, `tokens_per_month`; null means unlimited |
+| `used` | `tokens_today`, `tokens_this_month`, and attempts in the `rpm` window |
+| `remaining` | Corresponding token and RPM headroom, clamped to zero; null for unlimited fields |
+| `reset_at` | Next `day`/`month` boundary and oldest RPM attempt's expiry (`rpm`, null when empty/unlimited) |
+| `in_flight` | Currently reserved user slots |
+| `models` | Today's per-model `input_tokens`, `output_tokens`, `average_ttfb_ms`, `average_tokens_per_second`, sorted by `model`; empty array without usage |
+
+Model averages are arithmetic means of measured requests. TTFB excludes missing values;
+tokens/second includes only streams with positive output and generation duration. Missing
+measurements are null, and non-stream responses never contribute to throughput averages.
+`used.rpm` is null for unlimited RPM because those attempts are not retained.
 
 The splitter has every-byte boundary tests, a no-allocation content-event check, and a
 bounded fuzz run in CI. To run a longer local fuzz check:

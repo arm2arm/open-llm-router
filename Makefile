@@ -4,7 +4,7 @@ GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 COMPOSE     := docker compose
 SDK_RUN     ?= uv run
 
-.PHONY: build lint vuln test test-clients up smoke sdk sdk-real bench-real down
+.PHONY: build lint vuln test test-clients up smoke sdk sdk-limits sdk-real bench-real down
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
@@ -63,6 +63,14 @@ sdk:
 			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
 			$(SDK_RUN) tests/clients/check_anthropic.py || exit $$?; \
 	done
+
+# A separate user keeps this test independent of the successful SDK traffic.
+sdk-limits:
+	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username limits-sdk-$$(date +%s)-$$$$ -groups students)" || exit $$?; \
+	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
+	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label limits-sdk)" || exit $$?; \
+	address="$$($(COMPOSE) port router 8080)" || exit $$?; \
+	OLR_BASE_URL="http://$$address" OLR_API_KEY="$$key" $(SDK_RUN) tests/clients/check_limits.py
 
 # Existing host-side router configured with config.real.example.yaml; no Compose dependency.
 # Set OLR_REQUIRE_CANCEL_EVIDENCE=1 for the vLLM go/no-go run.
