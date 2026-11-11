@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1
 
+FROM node:22.23.1-bookworm-slim AS portal-build
+WORKDIR /src/web
+COPY web/package*.json ./
+COPY web/scripts/ scripts/
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 # The Go version is pinned here and in go.mod; change both together.
 FROM golang:1.27.4 AS build
 WORKDIR /src
@@ -7,6 +15,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
+COPY web/assets.go web/assets.go
+COPY --from=portal-build /src/web/dist web/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/olr ./cmd/olr \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mock-llm ./cmd/mock-llm
 

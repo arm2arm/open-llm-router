@@ -32,7 +32,8 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
 }
 func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 	var body struct {
-		Label string `json:"label"`
+		Label         string `json:"label"`
+		ExpiresInDays *int   `json:"expires_in_days"`
 	}
 	if !h.jsonBody(w, r, &body) {
 		return
@@ -42,7 +43,15 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 		fail(w, 400, "invalid_request_error", "label must contain 1 to 100 bytes")
 		return
 	}
-	key, err := (&auth.Admin{Pool: h.pool}).CreateKey(r.Context(), u.ID, body.Label, time.Duration(h.cfg.Auth.DefaultKeyLifetimeDays)*24*time.Hour)
+	days := h.cfg.Auth.DefaultKeyLifetimeDays
+	if body.ExpiresInDays != nil {
+		days = *body.ExpiresInDays
+		if days < 1 || days > 36500 {
+			fail(w, 400, "invalid_request_error", "expires_in_days must be between 1 and 36500")
+			return
+		}
+	}
+	key, err := (&auth.Admin{Pool: h.pool}).CreateKey(r.Context(), u.ID, body.Label, time.Duration(days)*24*time.Hour)
 	if err != nil {
 		unavailable(w)
 		return

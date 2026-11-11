@@ -46,8 +46,9 @@ is an empty JSON array and grants no models unless a matching configured group e
 - `GET /portal/api/keys`: `{"keys":[{"id":"uuid","prefix":"olr-...","label":"laptop",
   "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}]}`.
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
-- `POST /portal/api/keys`: accepts `{"label":"laptop"}` (1–100 bytes after trimming).
-  Returns 201 `{"key":"olr-..."}` exactly once. Lifetime uses `auth.default_key_lifetime_days`.
+- `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7}` (label: 1–100 bytes after trimming).
+  `expires_in_days` is optional, an integer from 1 to 36500. Omission uses
+  `auth.default_key_lifetime_days`. Returns 201 `{"key":"olr-..."}` exactly once.
   Refresh the key list for metadata after creating a key. Unknown fields are rejected.
 - `DELETE /portal/api/keys/{uuid}` with `{}`: revokes an owned key, returning 204 with no body.
   Other users' and nonexistent keys return the same 404. Revocation clears API authentication

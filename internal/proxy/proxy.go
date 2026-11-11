@@ -20,6 +20,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
@@ -35,8 +36,9 @@ type Handler struct {
 	cfg       *config.Config
 	transport *http.Transport
 	Pools     *pool.Manager
-	Usage     usage.Recorder  // installed before serving; nil disables persistence
-	Limits    *limits.Manager // installed before serving
+	Usage     usage.Recorder    // installed before serving; nil disables persistence
+	Limits    *limits.Manager   // installed before serving
+	Metrics   *metrics.Observer // installed before serving
 	active    sync.WaitGroup
 }
 
@@ -115,6 +117,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	h.active.Add(1)
 	defer h.active.Done()
 	account := h.account(w, r, protocol)
+	if h.Metrics != nil {
+		ctx, span := h.Metrics.Start(r, protocol)
+		r = r.WithContext(ctx)
+		account.observer, account.span = h.Metrics, span
+	}
 	w = account.writer
 	defer func() {
 		p := recover()
@@ -186,6 +193,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		principal, _ := auth.FromContext(r.Context())
 		account.lease, err = h.Limits.Acquire(r.Context(), principal.UserID, access)
 		if err != nil {
+			var rejected *limits.Rejection
+			if h.Metrics != nil && errors.As(err, &rejected) {
+				h.Metrics.Reject(name, protocol, rejected.Limit)
+			}
 			limits.WriteError(w, protocol, err)
 			return
 		}
@@ -195,7 +206,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		if r.Context().Err() != nil {
 			return
 		}
+		selectionStarted := time.Now()
 		lease := h.Pools.Pools[name].Acquire(previous)
+		account.selection += time.Since(selectionStarted)
 		if lease == nil {
 			w.Header().Set("Retry-After", "1")
 			apierr.Write(w, protocol, 503, "overloaded_error", "no healthy replica with available capacity")
@@ -230,6 +243,10 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		return false, err
 	}
 	req.Header = cleanHeaders(r.Header)
+	if h.Metrics != nil {
+		metrics.Inject(ctx, req.Header)
+	}
+	req.Header.Del("Baggage")
 	for _, key := range []string{"Authorization", "X-Api-Key", "Cookie", "Content-Length", "Host"} {
 		req.Header.Del(key)
 	}

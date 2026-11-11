@@ -6,12 +6,12 @@ SDK_RUN     ?= uv run
 
 .PHONY: build lint vuln test test-clients up smoke sdk sdk-limits portal-check sdk-real bench-real down
 
-build:
+build: web
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
 	CGO_ENABLED=0 go build -trimpath -o bin/mock-llm ./cmd/mock-llm
 
 lint:
-	@unformatted="$$(gofmt -l .)"; \
+	@unformatted="$$(gofmt -l cmd internal tests web/assets.go)"; \
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 	go vet ./...
 	$(STATICCHECK) ./...
@@ -100,3 +100,10 @@ bench-real:
 
 down:
 	$(COMPOSE) down
+
+.PHONY: web web-check
+web:
+	cd web && npm ci && npm run build
+
+web-check:
+	cd web && npm ci && npm run lint && npm run typecheck && npm run build && npm audit

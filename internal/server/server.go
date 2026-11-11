@@ -88,13 +88,17 @@ func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		id := reqid.New()
+		r = r.WithContext(reqid.NewContext(r.Context(), id))
+		details := reqid.DetailsFromContext(r.Context())
 		w.Header().Set("X-Request-Id", id)
 		rec := &recorder{ResponseWriter: w}
 
 		defer func() {
 			p := recover()
 			if p != nil && p != http.ErrAbortHandler {
-				s.log.Error("handler panicked", "request_id", id, "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+				// A panic value can contain request data. Stack frames and a
+				// generic marker preserve diagnostics without copying that value.
+				s.log.Error("handler panicked", "request_id", id, "panic", "handler panic", "stack", string(debug.Stack()))
 				if rec.status == 0 {
 					http.Error(rec, "internal server error", http.StatusInternalServerError)
 					p = nil
@@ -118,6 +122,17 @@ func (s *Server) Handler() http.Handler {
 					"status", status,
 					"bytes", rec.bytes,
 					"duration_ms", time.Since(start).Milliseconds(),
+					"latency_ms", time.Since(start).Milliseconds(),
+					"trace_id", details.TraceID,
+					"user_id", details.UserID,
+					"key_prefix", details.KeyPrefix,
+					"model", details.Record.Model,
+					"replica", details.Record.Replica,
+					"protocol", details.Record.Protocol,
+					"outcome", details.Record.Status,
+					"input_tokens", details.Record.InputTokens,
+					"output_tokens", details.Record.OutputTokens,
+					"ttfb_ms", details.Record.TTFBMS,
 				)
 			}
 			if p != nil {
@@ -125,7 +140,7 @@ func (s *Server) Handler() http.Handler {
 			}
 		}()
 
-		routes.ServeHTTP(rec, r.WithContext(reqid.NewContext(r.Context(), id)))
+		routes.ServeHTTP(rec, r)
 	})
 }
 

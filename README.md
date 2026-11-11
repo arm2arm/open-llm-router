@@ -11,7 +11,9 @@ checks the database in `/readyz`. API keys authenticate every `/v1/*` request, w
 commands for local users and keys. Group policy controls model access and filters `/v1/models`;
 inference calls record token usage and timing in Postgres. Per-user concurrency, RPM and
 day/month token quotas are enforced, with a usage API. Keycloak portal login, sessions,
-and JSON APIs for keys, usage and models work; the React interface follows in #16.
+and the embedded React portal provide self-service keys, usage and connection snippets.
+Protected Prometheus metrics, optional OTLP tracing and metadata-only JSON request logs
+cover proxied calls. See [observability](docs/OBSERVABILITY.md).
 Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
@@ -23,7 +25,7 @@ Authors: A. Khalatyan (AIP), with Hermes agent.
 
 ## Development
 
-Needs Go 1.27.4 for host-side development, and Docker with Compose 2.20+ for the stack.
+Needs Go 1.27.4 and Node 22.23.1+ for host-side development, and Docker with Compose 2.20+ for the stack.
 From the repository root:
 
 ```sh
@@ -33,6 +35,7 @@ make smoke                   # readiness, model listing and backend probes
 make sdk                     # official OpenAI + Anthropic SDKs (needs uv)
 make sdk-limits              # both SDKs recognize rate limits as RateLimitError
 make portal-check            # real Keycloak logins, group refresh, portal API and SSO logout
+cd web && npm ci && npx playwright install chromium && npm run test:e2e
 ```
 
 The stack works with built-in local defaults. Optionally copy [.env.example](.env.example) to
@@ -44,7 +47,7 @@ empty volume, so changing them later also requires updating the database or recr
 
 | Service | Host endpoint | Purpose |
 |---|---|---|
-| `router` | `http://localhost:8080` | OpenAI + Anthropic APIs, `/v1/models`, health probes |
+| `router` | `http://localhost:8080` | APIs, `/portal/`, protected `/metrics`, health probes |
 | `postgres` | `localhost:5432` | database `olr`, user `olr`, public dev password `olr-dev-only` |
 | `mock-llm-a` | `http://localhost:8001` | `chat-model`, 20 ms per token |
 | `mock-llm-b` | `http://localhost:8002` | `chat-model`, 40 ms per token |
@@ -67,7 +70,8 @@ Build and check the Go code:
 ```sh
 make lint test   # gofmt, go vet, staticcheck; tests with the race detector
 make vuln        # govulncheck (pinned version)
-make build       # bin/olr and bin/mock-llm
+make web-check   # lockfile install, frontend lint/typecheck/build, dependency audit
+make build       # builds web assets, then bin/olr and bin/mock-llm
 make down
 ```
 
@@ -93,8 +97,9 @@ OLR_TEST_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=di
 
 CI runs on pushes and pull requests. It uses the same `make lint`, `make vuln` and `make test`
 commands with a Postgres 17 service, while a parallel job builds both runtime images, starts
-Compose and runs `make smoke`, `make portal-check`, and the official SDK checks against the router and both mocks. Jobs have a five-minute timeout; Go modules and build outputs
-are cached by `setup-go`.
+Compose and runs the frontend checks, Playwright self-service journey, `make smoke`,
+`make portal-check`, and official SDK checks against the router and both mocks. The Go
+job has a five-minute timeout and the image/browser job ten minutes. Dependencies are cached.
 
 For a host-side router, run Postgres 17 locally (or `docker compose up -d postgres`) and export
 `OLR_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=disable'` with the
@@ -143,13 +148,13 @@ request or response bodies.
 | `internal/usage` | incremental usage inspection, timing metadata, asynchronous atomic accounting |
 | `internal/limits` | per-user concurrency, sliding-minute RPM, calendar token quotas and usage snapshots |
 | `internal/portal` | OIDC code/PKCE login, opaque sessions and scoped JSON APIs |
+| `web` | Vite/React/TypeScript portal, Tailwind and shadcn/ui, TanStack Query, embedded build assets |
+| `internal/metrics` | protected Prometheus metrics and opt-in OTLP/HTTP call spans |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
-
-Still to come under `internal/`: `metrics`.
 
 ## API keys and bootstrap administration
 
@@ -242,7 +247,8 @@ curl -N http://localhost:8080/v1/messages \
   -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}],"max_tokens":16,"stream":true}'
 ```
 
-The local stack uses deterministic mock answers. A web portal is planned in later issues.
+The local stack uses deterministic mock answers. Visit `/portal/` to create a key,
+copy a working client snippet and see your own usage without bootstrap administration.
 
 For real Ollama, vLLM or SGLang backends, see [docs/CLIENTS.md](docs/CLIENTS.md) and
 [config.real.example.yaml](config.real.example.yaml). The runbook includes the recorded laptop
@@ -251,7 +257,7 @@ results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `
 
 ## Keycloak and portal login
 
-Open [the portal login](http://localhost:8080/portal/login) after `make up`. Compose pins
+Open [the portal](http://localhost:8080/portal/) after `make up`. Compose pins
 Keycloak **26.8.2** and imports `deploy/keycloak/olr-dev-realm.json` on an empty data volume.
 The confidential `olr-portal` client requires authorization code flow with PKCE S256;
 implicit/password grants and service accounts are disabled. Groups appear as names in the

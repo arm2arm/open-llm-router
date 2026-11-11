@@ -9,18 +9,24 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/metrics"
+	"github.com/arm2arm/open-llm-router/internal/reqid"
 	"github.com/arm2arm/open-llm-router/internal/usage"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type accounting struct {
-	writer  *statusWriter
-	sink    usage.Recorder
-	record  usage.Record
-	json    *usage.JSON
-	stream  *usage.Stream
-	aborted bool
-	lease   *limits.Lease
-	began   time.Time
+	writer    *statusWriter
+	sink      usage.Recorder
+	record    usage.Record
+	json      *usage.JSON
+	stream    *usage.Stream
+	aborted   bool
+	lease     *limits.Lease
+	began     time.Time
+	observer  *metrics.Observer
+	span      trace.Span
+	selection time.Duration
 }
 
 func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol string) *accounting {
@@ -54,9 +60,6 @@ func (a *accounting) observe(contentType string, hideUsage bool, emit func([]byt
 }
 
 func (a *accounting) finish(r *http.Request, panicked bool) {
-	if a.sink == nil && a.lease == nil {
-		return
-	}
 	a.record.LatencyMS = time.Since(a.began).Milliseconds()
 	status := a.writer.status
 	if status == 0 {
@@ -81,6 +84,21 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 		a.record.Status = "aborted"
 	}
 	a.record.InputTokens, a.record.OutputTokens = totals.InputTokens, totals.Output()
+	if details := reqid.DetailsFromContext(r.Context()); details != nil {
+		details.Record = a.record
+	}
+	if a.observer != nil {
+		operation := "chat"
+		switch r.URL.Path {
+		case "/v1/completions":
+			operation = "text_completion"
+		case "/v1/embeddings":
+			operation = "embeddings"
+		case "/v1/messages/count_tokens":
+			operation = "count_tokens"
+		}
+		a.observer.Finish(r.Context(), a.span, a.record, a.selection, operation)
+	}
 	if a.lease != nil {
 		if r.URL.Path == "/v1/messages/count_tokens" {
 			a.lease.Release()
