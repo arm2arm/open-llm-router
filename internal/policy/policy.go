@@ -20,6 +20,7 @@ type Policy struct {
 	MaxConcurrent      *int // interactive keys
 	MaxConcurrentBatch *int // batch keys
 	StrictQuota        bool
+	Admin              bool // a member of a group with admin: true
 }
 
 // Resolve ignores memberships absent from groups. Membership names match
@@ -35,6 +36,7 @@ func Resolve(groups map[string]config.Group, memberships []string) Policy {
 		for _, model := range g.Models {
 			p.models[model] = true
 		}
+		p.Admin = p.Admin || g.Admin
 		batch := g.MaxConcurrentBatch
 		if batch == nil {
 			batch = g.MaxConcurrent

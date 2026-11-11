@@ -122,10 +122,16 @@ type postgresStore struct {
 
 func (s postgresStore) insert(ctx context.Context, r Record) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		// usage.user_id is the key owner; forwarded_for the end user a trusted
+		// forwarder called for. Daily totals belong to the attributed user.
+		owner, forwardedFor := r.UserID, ""
+		if r.ForwardedBy != "" {
+			owner, forwardedFor = r.ForwardedBy, r.UserID
+		}
 		_, err := tx.Exec(ctx, `INSERT INTO usage
-			(ts, key_id, user_id, model, replica, protocol, status, input_tokens, output_tokens, latency_ms, ttfb_ms, is_stream)
-			VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-			r.StartedAt, r.KeyID, r.UserID, r.Model, r.Replica, r.Protocol, r.Status,
+			(ts, key_id, user_id, forwarded_for, model, replica, protocol, status, input_tokens, output_tokens, latency_ms, ttfb_ms, is_stream)
+			VALUES ($1, NULLIF($2, '')::uuid, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			r.StartedAt, r.KeyID, owner, forwardedFor, r.Model, r.Replica, r.Protocol, r.Status,
 			r.InputTokens, r.OutputTokens, r.LatencyMS, r.TTFBMS, r.IsStream)
 		if err != nil {
 			return err

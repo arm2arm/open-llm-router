@@ -102,6 +102,38 @@ Daily totals (`usage_daily`) stay, so `quota` and the `today`/`month` token tota
 unchanged; timing averages of the deleted records disappear. Other users' records are
 untouched. See [PRIVACY.md](PRIVACY.md).
 
+## Requests and daily totals
+
+- `GET /portal/api/requests`: `{"limit":200,"requests":[{"time":"RFC3339","model":"chat-model",
+  "protocol":"openai","status":"200","input_tokens":3,"output_tokens":7,"latency_ms":400,
+  "ttfb_ms":50,"stream":true,"key_prefix":"olr-…","forwarded":false}]}`, newest first, the
+  user's last 200 records (metadata only). `key_prefix` is null once the key is removed, and
+  for calls a trusted forwarder made for the user (`forwarded: true`).
+- `GET /portal/api/usage/daily`: `{"timezone":"UTC","days":[{"day":"2026-10-13","requests":0,
+  "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
+  oldest first, from the daily totals (unaffected by deleting activity).
+
+## Admin
+
+Members of a group with `admin: true` in the config get `"admin": true` in `/portal/api/me` and
+these routes; everyone else gets 403. Membership is read from the stored groups on each request.
+
+- `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
+  text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
+  month, and overrides by field.
+- `GET /portal/api/admin/users/{id}`: the user, effective `limits`, `overrides` with `reason`,
+  `set_by` and `set_at`, and key metadata.
+- `PUT /portal/api/admin/users/{id}/overrides/{field}` with `{"value":N,"reason":"…"}` (`null` for
+  unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`;
+  `DELETE …/overrides/{field}` with `{}` clears it. Both return 204 and take effect at the user's
+  next request on every router.
+- `PUT /portal/api/admin/users/{id}/enabled` with `{"enabled":false}` disables a user (sessions
+  and keys stop working at once) or re-enables them; admins cannot disable themselves.
+- `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
+  and tokens this month. A user in several groups counts in each.
+- `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
+  `max_inflight` and weight.
+
 ## Models and client URLs
 
 `GET /portal/api/models`:

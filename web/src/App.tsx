@@ -17,6 +17,7 @@ import {
   Sun,
   Trash2,
   BarChart3,
+  ListOrdered,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +48,7 @@ import {
   type Usage,
 } from '@/lib/api'
 import { clients, snippet, type Client } from '@/lib/snippets'
+import { AdminPage, DailyChart, RequestsPage } from '@/pages'
 
 const number = (value: number) => new Intl.NumberFormat().format(value)
 const date = (value: string | null) =>
@@ -178,10 +180,20 @@ export default function App() {
             <BarChart3 size={18} />
             Usage
           </NavLink>
+          <NavLink to="/requests" className="nav-link">
+            <ListOrdered size={18} />
+            My requests
+          </NavLink>
           <NavLink to="/connect" className="nav-link">
             <Code2 size={18} />
             Connect
           </NavLink>
+          {me.data?.admin && (
+            <NavLink to="/admin" className="nav-link">
+              <ShieldCheck size={18} />
+              Admin
+            </NavLink>
+          )}
         </nav>
         <div className="account">
           <div className="flex items-center gap-2 mb-3">
@@ -250,6 +262,13 @@ export default function App() {
                 <Route path="/keys" element={<Keys />} />
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/connect" element={<Connect />} />
+                <Route path="/requests" element={<RequestsPage />} />
+                {me.data.admin && (
+                  <Route
+                    path="/admin"
+                    element={<AdminPage self={me.data.user.id} />}
+                  />
+                )}
                 <Route path="*" element={<Navigate to="/keys" replace />} />
               </Routes>
             )
@@ -655,6 +674,7 @@ function UsagePage() {
       setErased(deleted)
       await cache.invalidateQueries({ queryKey: ['usage'] })
       await cache.invalidateQueries({ queryKey: ['requests'] })
+      await cache.invalidateQueries({ queryKey: ['daily'] })
     },
   })
   const data = query.data
@@ -712,7 +732,7 @@ function UsagePage() {
                   Request limits
                 </div>
                 <div className="stat-value">
-                  {data.quota.used.rpm}
+                  {data.quota.used.rpm ?? 0}
                   <span className="text-sm font-normal text-muted-foreground ml-2">
                     / {data.quota.limits.rpm ?? '∞'} per minute
                   </span>
@@ -741,11 +761,14 @@ function UsagePage() {
                     reserved).
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground mt-2">
-                  Next request reset {reset(data.quota.reset_at.rpm)}
-                </p>
+                {data.quota.reset_at.rpm && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Next request reset {reset(data.quota.reset_at.rpm)}
+                  </p>
+                )}
               </div>
             </div>
+            <DailyChart />
             <section className="panel">
               <div className="panel-head">
                 <h2 className="panel-title">Activity by model</h2>

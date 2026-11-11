@@ -120,6 +120,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer authenticator.Close()
+	authenticator.Forwarders = cfg.Forwarders
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ln, err := net.Listen("tcp", *listen)
@@ -185,6 +186,7 @@ func serve(args []string) error {
 			return err
 		}
 		defer portalHandler.Close()
+		portalHandler.Pools = forwarder.Pools
 		srv.Handle("/portal", portalHandler)
 		srv.Handle("/portal/", portalHandler)
 	}
