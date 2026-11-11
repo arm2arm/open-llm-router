@@ -84,6 +84,29 @@ func TestHealthEndpoints(t *testing.T) {
 	}
 }
 
+func TestReadinessContext(t *testing.T) {
+	s, _ := newTestServer()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	s.SetReadiness(func(ctx context.Context) bool {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > readinessTimeout {
+			t.Error("readiness check has no bounded deadline")
+		}
+		if ctx.Err() != context.Canceled {
+			t.Error("request cancellation did not reach readiness check")
+		}
+		return false
+	})
+	for path, want := range map[string]int{"/readyz": http.StatusServiceUnavailable, "/healthz": http.StatusOK} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(ctx, "GET", path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s = %d, want %d", path, rec.Code, want)
+		}
+	}
+}
+
 func TestRequestIDAndLog(t *testing.T) {
 	s, logs := newTestServer()
 	var inHandler string

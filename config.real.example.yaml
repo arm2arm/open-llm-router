@@ -1,5 +1,6 @@
 # A host-side router pointing at one real, idle backend replica for issue #8.
 # The endpoint and served model are supplied only through the environment.
+# Also export OLR_DATABASE_URL for a reachable Postgres database (docs/CLIENTS.md).
 # Run: bin/olr serve -listen 127.0.0.1:8080 -config config.real.example.yaml
 models:
   chat-model:
