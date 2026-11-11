@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
 	"github.com/arm2arm/open-llm-router/internal/server"
@@ -38,9 +39,24 @@ func testConfig(backends ...string) *config.Config {
 
 func configured(t *testing.T, cfg *config.Config) (*Handler, *httptest.Server) {
 	t.Helper()
+	// Passthrough tests use a trusted principal with explicit access. Policy
+	// tests supply their own memberships instead.
+	cfg.Groups = map[string]config.Group{"test": {Models: []string{"*"}}}
+	return configuredForGroups(t, cfg, []string{"test"})
+}
+
+func configuredForGroups(t *testing.T, cfg *config.Config, groups []string) (*Handler, *httptest.Server) {
+	t.Helper()
 	h := New(cfg)
 	h.Pools.Check(t.Context())
 	s := server.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if groups != nil {
+		s.SetAPIMiddleware(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r.WithContext(auth.NewContext(r.Context(), auth.Principal{Groups: groups})))
+			})
+		})
+	}
 	s.SetReadiness(func(context.Context) bool { return h.Pools.Ready() })
 	h.Register(s.Handle)
 	ts := httptest.NewServer(s.Handler())

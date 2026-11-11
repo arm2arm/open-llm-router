@@ -35,6 +35,12 @@ type Principal struct {
 
 type contextKey struct{}
 
+// NewContext carries a trusted, authenticated principal to downstream handlers.
+func NewContext(ctx context.Context, p Principal) context.Context {
+	p.Groups = slices.Clone(p.Groups)
+	return context.WithValue(ctx, contextKey{}, p)
+}
+
 func FromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(contextKey{}).(Principal)
 	p.Groups = slices.Clone(p.Groups)
@@ -185,7 +191,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, p)))
+		next.ServeHTTP(w, r.WithContext(NewContext(r.Context(), p)))
 	})
 }
 

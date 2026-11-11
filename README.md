@@ -8,7 +8,8 @@ Status: **in development** — OpenAI and Anthropic APIs now forward to replica 
 incremental streaming, cancellation, weighted balancing, health checks and failover.
 Model aliases and `/v1/models` work. The router initializes its Postgres schema at startup and
 checks the database in `/readyz`. API keys authenticate every `/v1/*` request, with admin CLI
-commands for local users and keys. Group policy, usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
+commands for local users and keys. Group policy controls model access and filters `/v1/models`;
+usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
 Stack: Go backend (one static binary), React portal, PostgreSQL, Keycloak.
@@ -71,7 +72,8 @@ Each test creates and drops its own database, leaving the supplied database inta
 role needs `CREATEDB` and permission to terminate its own connections (the Compose and CI
 roles have these permissions). Tests cover schema initialization/restarts, issuer-scoped
 identities, deletion rules, database loss/recovery, and CLI-created keys through the router binary,
-including immediate cache invalidation across two router processes on revoke and user disable.
+including immediate cache invalidation across two router processes on revoke and user disable,
+plus group-based model access and filtered model lists for real API keys.
 With Compose running on the default database port, include them with:
 
 ```sh
@@ -125,13 +127,14 @@ request or response bodies.
 | `internal/config` | config file: `${VAR}` references, strict decoding, validation |
 | `internal/db` | pgx connection pool and embedded, idempotent Postgres schema |
 | `internal/auth` | API key generation, authentication cache, invalidation and bootstrap administration |
+| `internal/policy` | group policy resolution: allowed models and effective numeric limits |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: group policy, `usage`, `limits`, `portal`, `metrics`.
+Still to come under `internal/`: `usage`, `limits`, `portal`, `metrics`.
 
 ## API keys and bootstrap administration
 
@@ -139,7 +142,21 @@ All `/v1/*` requests require `Authorization: Bearer <key>` or `x-api-key: <key>`
 Matching credentials in both headers are accepted; conflicting or repeated headers are rejected.
 Missing, malformed, unknown, revoked or expired keys and disabled users receive a generic 401
 in the caller's OpenAI or Anthropic error format. `/healthz` and `/readyz` remain public.
-Database authentication failures return 503. Keycloak portal login and group policy follow in later issues.
+Database authentication failures return 503. Keycloak portal login follows in a later issue.
+
+Model access comes from the user's stored groups and the config's `groups` section. Group
+names match exactly. Allowed models are the union of all matching groups; `models: ["*"]`
+grants every configured model. A user with no matching configured group has no model access,
+including when the config has no groups. Bootstrap users therefore need `user add -groups staff`
+or another configured group. `GET /v1/models` returns only allowed models and their aliases;
+callers with no access receive `{"object":"list","data":[]}`.
+
+Model checks run after alias resolution and before upstream-name rewriting or replica selection.
+A forbidden model returns 403 with `permission_error` in the endpoint's OpenAI or Anthropic
+error format, including for streaming requests and `/v1/messages/count_tokens`.
+Numeric policy limits merge independently: the largest value wins, and an omitted limit in
+any matching group means unlimited for that field. Unknown groups do not affect the result.
+Limits are resolved now; quota and rate enforcement follow in #13.
 
 The bootstrap commands use `OLR_DATABASE_URL` and work without a running HTTP server. Under
 Compose, run them as `docker compose exec -T router olr admin ...`; on the host use `bin/olr admin ...`.
