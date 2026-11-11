@@ -45,10 +45,12 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		cfg.OIDCClientSecret = "test-secret"
 		cfg.Portal = config.Portal{BaseURL: "http://portal.example.test", CookieSecure: false}
 		cfg.Groups["students"] = config.Group{Models: []string{"chat-model"}, RPM: limitPtr(20)}
+		cfg.Groups["admins"] = config.Group{Models: []string{"*"}, Admin: true}
 		h, err := portal.New(t.Context(), cfg, pool, forwarder.Limits)
 		if err != nil {
 			t.Fatal(err)
 		}
+		h.Pools = forwarder.Pools
 		t.Cleanup(h.Close)
 		s.Handle("/portal", h)
 		s.Handle("/portal/", h)
@@ -598,5 +600,130 @@ func TestPortalPrivacyDeletion(t *testing.T) {
 	}
 	if errors.Is((auth.Admin{Pool: f.pool}).DeleteUser(t.Context(), alice), auth.ErrNotFound) == false {
 		t.Fatal("deleting a missing user must report not found")
+	}
+}
+
+func TestPortalRequestsDailyChartAndAdmin(t *testing.T) {
+	f := startPortal(t, usageOptions{group: &config.Group{Models: []string{"*"}}})
+	a, b, root := f.browser(t), f.browser(t), f.browser(t)
+	alice, bob := a.login(t, "alice", []string{"staff"}), b.login(t, "bob", []string{"staff"})
+	root.login(t, "root", []string{"admins"})
+	now := time.Now()
+	for i, record := range []usage.Record{
+		{UserID: alice, Model: "chat-model", StartedAt: now.Add(-time.Minute), InputTokens: 3, OutputTokens: 7, LatencyMS: 40, TTFBMS: limitPtr(int64(5)), IsStream: true},
+		{UserID: alice, Model: "chat-model", StartedAt: now.AddDate(0, 0, -3), InputTokens: 1, OutputTokens: 1, LatencyMS: 10},
+		{UserID: bob, Model: "bob-private", StartedAt: now, InputTokens: 9, OutputTokens: 9, LatencyMS: 10},
+	} {
+		record.Protocol, record.Status = "openai", "200"
+		f.writer.Record(record)
+		waitFor(t, func() bool { return f.writer.Counters().Written == uint64(i+1) })
+	}
+
+	resp, data := a.call(t, "GET", "/portal/api/requests", "", "")
+	var requests struct {
+		Requests []struct {
+			Time         time.Time
+			Model        string
+			Status       string
+			InputTokens  int64  `json:"input_tokens"`
+			OutputTokens int64  `json:"output_tokens"`
+			TTFB         *int64 `json:"ttfb_ms"`
+		}
+		Limit int
+	}
+	if json.Unmarshal(data, &requests) != nil || resp.StatusCode != 200 || requests.Limit != 200 || len(requests.Requests) != 2 ||
+		requests.Requests[0].InputTokens != 3 || *requests.Requests[0].TTFB != 5 || !requests.Requests[0].Time.After(requests.Requests[1].Time) || strings.Contains(string(data), "bob-private") {
+		t.Fatalf("requests: %d %s", resp.StatusCode, data)
+	}
+	resp, data = a.call(t, "GET", "/portal/api/usage/daily", "", "")
+	var daily struct {
+		Days []struct {
+			Day          string
+			Requests     int64
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		}
+	}
+	if json.Unmarshal(data, &daily) != nil || resp.StatusCode != 200 || len(daily.Days) != 30 || daily.Days[29].Day != now.UTC().Format("2006-01-02") ||
+		daily.Days[29].Requests != 1 || daily.Days[26].InputTokens != 1 || daily.Days[0].Requests != 0 {
+		t.Fatalf("daily: %d %s", resp.StatusCode, data)
+	}
+
+	// Admin pages are refused for users outside admin groups.
+	for _, path := range []string{"/portal/api/admin/users", "/portal/api/admin/users/" + bob, "/portal/api/admin/groups", "/portal/api/admin/replicas"} {
+		if resp, _ := a.call(t, "GET", path, "", ""); resp.StatusCode != 403 {
+			t.Fatal("non-admin read", path, resp.StatusCode)
+		}
+		if resp, _ := f.browser(t).call(t, "GET", path, "", ""); resp.StatusCode != 401 {
+			t.Fatal("anonymous read", path, resp.StatusCode)
+		}
+	}
+	if resp, _ := a.call(t, "PUT", "/portal/api/admin/users/"+bob+"/overrides/rpm", `{"value":1}`, f.cfg.Portal.BaseURL); resp.StatusCode != 403 {
+		t.Fatal("non-admin override", resp.StatusCode)
+	}
+	if resp, _ := a.call(t, "PUT", "/portal/api/admin/users/"+bob+"/enabled", `{"enabled":false}`, f.cfg.Portal.BaseURL); resp.StatusCode != 403 {
+		t.Fatal("non-admin disable", resp.StatusCode)
+	}
+	_, data = root.call(t, "GET", "/portal/api/me", "", "")
+	if !strings.Contains(string(data), `"admin":true`) {
+		t.Fatal("admin flag", string(data))
+	}
+	resp, data = root.call(t, "GET", "/portal/api/admin/users?match=ALI", "", "")
+	var users struct {
+		Users []struct {
+			ID          string
+			Username    string
+			TokensToday int64 `json:"tokens_today"`
+		}
+	}
+	if json.Unmarshal(data, &users) != nil || resp.StatusCode != 200 || len(users.Users) != 1 || users.Users[0].ID != alice || users.Users[0].TokensToday != 10 {
+		t.Fatalf("admin users: %d %s", resp.StatusCode, data)
+	}
+	// Overrides through the portal, with origin checks and audit fields.
+	if resp, _ := root.call(t, "PUT", "/portal/api/admin/users/"+alice+"/overrides/rpm", `{"value":1}`, "https://evil.example"); resp.StatusCode != 403 {
+		t.Fatal("cross-origin override", resp.StatusCode)
+	}
+	for _, body := range []string{`{"value":0}`, `{"value":-5}`, `{"value":1,"extra":1}`} {
+		if resp, _ := root.call(t, "PUT", "/portal/api/admin/users/"+alice+"/overrides/rpm", body, f.cfg.Portal.BaseURL); resp.StatusCode != 400 {
+			t.Fatal("invalid override accepted", body, resp.StatusCode)
+		}
+	}
+	if resp, _ := root.call(t, "PUT", "/portal/api/admin/users/"+alice+"/overrides/bogus", `{"value":1}`, f.cfg.Portal.BaseURL); resp.StatusCode != 400 {
+		t.Fatal("unknown field accepted", resp.StatusCode)
+	}
+	if resp, _ := root.call(t, "PUT", "/portal/api/admin/users/"+alice+"/overrides/tokens_per_day", `{"value":12345,"reason":"exam week"}`, f.cfg.Portal.BaseURL); resp.StatusCode != 204 {
+		t.Fatal("override", resp.StatusCode)
+	}
+	_, data = a.call(t, "GET", "/portal/api/me", "", "")
+	if !strings.Contains(string(data), `"tokens_per_day":12345`) {
+		t.Fatal("override not applied", string(data))
+	}
+	_, data = root.call(t, "GET", "/portal/api/admin/users/"+alice, "", "")
+	if !strings.Contains(string(data), `"set_by":"portal:root"`) || !strings.Contains(string(data), `"reason":"exam week"`) {
+		t.Fatal("audit fields", string(data))
+	}
+	if resp, _ := root.call(t, "DELETE", "/portal/api/admin/users/"+alice+"/overrides/tokens_per_day", `{}`, f.cfg.Portal.BaseURL); resp.StatusCode != 204 {
+		t.Fatal("clear override", resp.StatusCode)
+	}
+	// Disabling a user ends their session at once; admins cannot lock themselves out.
+	if resp, _ := root.call(t, "PUT", "/portal/api/admin/users/"+bob+"/enabled", `{"enabled":false}`, f.cfg.Portal.BaseURL); resp.StatusCode != 204 {
+		t.Fatal("disable", resp.StatusCode)
+	}
+	if resp, _ := b.call(t, "GET", "/portal/api/me", "", ""); resp.StatusCode != 401 {
+		t.Fatal("disabled user kept a session")
+	}
+	_, data = root.call(t, "GET", "/portal/api/me", "", "")
+	var me struct{ User struct{ ID string } }
+	_ = json.Unmarshal(data, &me)
+	if resp, _ := root.call(t, "PUT", "/portal/api/admin/users/"+me.User.ID+"/enabled", `{"enabled":false}`, f.cfg.Portal.BaseURL); resp.StatusCode != 400 {
+		t.Fatal("self-disable", resp.StatusCode)
+	}
+	resp, data = root.call(t, "GET", "/portal/api/admin/groups", "", "")
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `{"group":"staff","members":2,"requests_today":2,"tokens_today":28`) {
+		t.Fatalf("groups: %s", data)
+	}
+	resp, data = root.call(t, "GET", "/portal/api/admin/replicas", "", "")
+	if resp.StatusCode != 200 || !strings.Contains(string(data), `"model":"chat-model"`) || !strings.Contains(string(data), `"healthy":true`) {
+		t.Fatalf("replicas: %s", data)
 	}
 }

@@ -17,11 +17,14 @@ import (
 
 func TestParseRequestRefusesAmbiguousRoutingFields(t *testing.T) {
 	for body, want := range map[string]requestMeta{
-		`{"model":"a"}`:                                   {Model: "a"},
-		`{"model":"a","stream":true}`:                     {Model: "a", Stream: true},
-		`{"model":"a","stream":null}`:                     {Model: "a"},
-		`{"messages":[{"Model":"x"}],"model":"a"}`:        {Model: "a"},
-		` {"model" : "a" , "n" : 12345678901234567890 } `: {Model: "a"},
+		`{"model":"a"}`:                                             {Model: "a"},
+		`{"model":"a","stream":true}`:                               {Model: "a", Stream: true},
+		`{"model":"a","stream":null}`:                               {Model: "a"},
+		`{"messages":[{"Model":"x"}],"model":"a"}`:                  {Model: "a"},
+		` {"model" : "a" , "n" : 12345678901234567890 } `:           {Model: "a"},
+		`{"model":"a","max_tokens":100,"max_completion_tokens":50}`: {Model: "a", MaxTokens: 100},
+		`{"model":"a","max_tokens":10.5}`:                           {Model: "a", MaxTokens: 11},
+		`{"model":"a","max_tokens":"x"}`:                            {Model: "a"},
 	} {
 		got, err := parseRequest([]byte(body))
 		if err != nil || got != want {
@@ -31,6 +34,7 @@ func TestParseRequestRefusesAmbiguousRoutingFields(t *testing.T) {
 	for _, body := range []string{
 		`{"MODEL":"a"}`, `{"Model":"a"}`, `{"model":"a","MODEL":"b"}`, `{"model":"a","model":"b"}`,
 		`{"model":"a","Stream":true}`, `{"model":"a","stream":false,"stream":true}`,
+		`{"model":"a","max_tokens":1,"max_tokens":100000}`, `{"model":"a","Max_Tokens":1}`,
 	} {
 		if _, err := parseRequest([]byte(body)); err != errAmbiguousField {
 			t.Errorf("%s: err = %v, want ambiguous field", body, err)

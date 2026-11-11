@@ -188,8 +188,8 @@ func TestParseRejects(t *testing.T) {
 	}{
 		// Strict reading of the file.
 		{name: "unknown top-level key",
-			yaml: valid + "forwarders: {unknown_user: reject}\n",
-			want: []string{"line 15:", "forwarders"}},
+			yaml: valid + "priority_classes: {batch: 10}\n",
+			want: []string{"line 15:", "priority_classes"}},
 		{name: "misspelled key",
 			yaml: change(t, "max_inflight: 32", "max_inflght: 32"),
 			want: []string{"line 10:", "max_inflght"}},
@@ -447,6 +447,21 @@ func TestRoutingSettings(t *testing.T) {
 	} {
 		if _, err := Parse([]byte(change(t, tc.old, tc.new)), lookupIn(validEnv)); err == nil {
 			t.Fatalf("accepted %s", tc.new)
+		}
+	}
+}
+
+func TestForwarders(t *testing.T) {
+	cfg, err := Parse([]byte(valid+"forwarders:\n  header_map: {x-openwebui-user-email: email}\n  unknown_user: forwarder_policy\n"), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Forwarders.HeaderMap["X-Openwebui-User-Email"] != "email" || cfg.Forwarders.HeaderMap["X-Olr-End-User"] != "username" || cfg.Forwarders.UnknownUser != "forwarder_policy" {
+		t.Fatalf("%+v", cfg.Forwarders)
+	}
+	for _, bad := range []string{"forwarders: {unknown_user: allow}\n", "forwarders: {header_map: {X-User: phone}}\n"} {
+		if _, err := Parse([]byte(valid+bad), lookupIn(validEnv)); err == nil || !strings.Contains(err.Error(), "forwarders.") {
+			t.Errorf("%q: %v", bad, err)
 		}
 	}
 }
