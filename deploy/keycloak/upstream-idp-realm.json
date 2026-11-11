@@ -1,0 +1,99 @@
+{
+  "realm": "upstream-idp",
+  "enabled": true,
+  "displayName": "Upstream IdP (simulated federation)",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"unmanagedAttributePolicy\": \"ENABLED\", \"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"email\", \"displayName\": \"${email}\", \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"User metadata\", \"displayDescription\": \"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "olr-broker",
+      "name": "olr-dev broker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "olr-broker-dev-only",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:${KEYCLOAK_PORT:8081}/realms/olr-dev/broker/upstream-idp/endpoint"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "affiliation",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "affiliation",
+            "claim.name": "affiliation",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "fed-member",
+      "enabled": true,
+      "email": "fed-member@upstream.example",
+      "emailVerified": true,
+      "firstName": "Fed",
+      "lastName": "Member",
+      "attributes": {
+        "affiliation": [
+          "member@example.org"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "fed-member-dev-only",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "fed-guest",
+      "enabled": true,
+      "email": "fed-guest@upstream.example",
+      "emailVerified": true,
+      "firstName": "Fed",
+      "lastName": "Guest",
+      "attributes": {
+        "affiliation": [
+          "affiliate@example.org"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "fed-guest-dev-only",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
