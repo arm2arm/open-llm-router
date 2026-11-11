@@ -75,6 +75,10 @@ shapes written down in #15), the load-test program in #18, and the lead-time ite
 
 ## Decisions for this release
 
+Several of these were lifted by the deferred work that followed, such as Keycloak tokens on
+the API and the router queue; the current state is in
+[PLAN.md §0](PLAN.md#0-changes).
+
 - `/v1/*` accepts API keys only; Keycloak is used for portal login.
 - One router instance; in-flight, rate and concurrency counters are in memory.
 - A full pool answers 503 with `Retry-After`; no router-side queue (vLLM queues internally).

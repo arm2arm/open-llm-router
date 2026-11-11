@@ -1,0 +1,62 @@
+# Optional observability stack for the local Compose setup: Prometheus scrapes
+# the router (and vLLM backends listed in vllm-targets.json), Grafana shows
+# the router dashboard, and Jaeger receives the router's OTLP spans.
+#
+#   make observability-up     # or:
+#   docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/observability.yml up -d --wait
+#
+# Grafana http://localhost:3001 (anonymous viewer; admin / grafana-dev-only),
+# Prometheus http://localhost:9091, Jaeger http://localhost:16686.
+# All credentials here are public development values.
+services:
+  router:
+    environment:
+      OLR_METRICS_TOKEN: ${OLR_METRICS_TOKEN:-olr-metrics-dev-only}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
+
+  prometheus:
+    image: prom/prometheus:v3.7.0@sha256:29c1e0b48ad816750245dea3d65ac3ce57dda30547e67b1e9a5176e2953cc4dc
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/vllm-targets.json:/etc/prometheus/vllm-targets.json:ro
+      - ../observability/metrics-token:/etc/prometheus/olr-metrics-token:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  grafana:
+    image: grafana/grafana:12.2.0@sha256:74144189b38447facf737dfd0f3906e42e0776212bf575dc3334c3609183adf7
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana-dev-only}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/open-llm-router.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0@sha256:b585df1b6299bbbd16bf7c679da30389349736e4b6bc8f4f500142a75bf26ca8
+    ports:
+      - "127.0.0.1:${JAEGER_PORT:-16686}:16686"
+
+volumes:
+  prometheus-data:
