@@ -36,7 +36,7 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request, u user) {
 	), timing AS (
 		SELECT w.name,a.model,avg(a.ttfb_ms)::double precision AS ttfb,
 			avg(a.output_tokens::double precision*1000/NULLIF(a.latency_ms-a.ttfb_ms,0)) FILTER(WHERE a.is_stream AND a.output_tokens>0 AND a.latency_ms>a.ttfb_ms) AS tps
-		FROM windows w JOIN usage a ON a.user_id=$1 AND a.ts>=w.start_at AND a.ts<w.end_at GROUP BY w.name,a.model
+		FROM windows w JOIN usage a ON (a.forwarded_for=$1 OR (a.user_id=$1 AND a.forwarded_for IS NULL)) AND a.ts>=w.start_at AND a.ts<w.end_at GROUP BY w.name,a.model
 	) SELECT d.name,d.model,d.requests,d.input_tokens,d.output_tokens,t.ttfb,t.tps
 		FROM totals d LEFT JOIN timing t ON t.name=d.name AND t.model=d.model ORDER BY d.name,d.model`, u.ID, day, day.AddDate(0, 0, 1), month, month.AddDate(0, 1, 0), h.cfg.Limits.Location.String())
 	if err != nil {

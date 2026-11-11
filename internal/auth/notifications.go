@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,7 +20,8 @@ const ackPrefix = "olr_auth_ack_"
 // New establishes cache invalidation before returning. Its context bounds
 // startup only; Close stops the dedicated listener, including reconnects.
 func New(ctx context.Context, pool *pgxpool.Pool) (*Authenticator, error) {
-	a := &Authenticator{store: postgresStore{pool}, now: time.Now, done: make(chan struct{})}
+	a := &Authenticator{store: postgresStore{pool}, pool: pool, now: time.Now, done: make(chan struct{}),
+		Forwarders: config.Forwarders{HeaderMap: map[string]string{config.EndUserHeader: "username"}, UnknownUser: config.UnknownUserReject}}
 	a.invalidate(false)
 	conn, err := connectListener(ctx, pool)
 	if err != nil {

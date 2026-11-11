@@ -18,6 +18,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/apierr"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const cacheTTL = time.Minute
@@ -36,6 +37,11 @@ type Principal struct {
 	KeyID     string
 	KeyClass  string            // "interactive" or "batch"
 	Overrides map[string]*int64 // per-user limits; treat as read-only
+	// TrustedForwarder marks a key that may name the end user of a call.
+	TrustedForwarder bool
+	// ForwardedBy is the key owner when the principal is an end user named
+	// by a trusted forwarder; UserID, groups and limits are then the end user's.
+	ForwardedBy string
 }
 
 type contextKey struct{}
@@ -100,6 +106,10 @@ type cacheEntry struct {
 // Authenticator caches successful lookups only. Changes to users or keys clear
 // the cache through a dedicated Postgres LISTEN connection (see notifications.go).
 type Authenticator struct {
+	// Forwarders is installed before serving; see config.Forwarders.
+	Forwarders config.Forwarders
+	pool       *pgxpool.Pool
+	endUsers   map[string]endUserEntry
 	store      keyStore
 	mu         sync.Mutex
 	cache      map[[32]byte]cacheEntry
@@ -116,6 +126,7 @@ func (a *Authenticator) invalidate(listening bool) {
 	defer a.mu.Unlock()
 	a.generation++
 	a.cache = make(map[[32]byte]cacheEntry)
+	a.endUsers = make(map[string]endUserEntry)
 	a.listening = listening
 }
 
@@ -227,6 +238,19 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="olr"`)
 				apierr.Write(w, protocol, 401, "authentication_error", "a valid API key is required")
 			} else {
+				apierr.Write(w, protocol, 503, "api_error", "authentication is temporarily unavailable")
+			}
+			return
+		}
+		r = r.Clone(r.Context())
+		p, err = a.forward(r, p)
+		if err != nil {
+			switch {
+			case errors.Is(err, errUnknownEndUser), errors.Is(err, errDisabledEndUser):
+				apierr.Write(w, protocol, 403, "permission_error", "the end user is unknown or disabled")
+			case errors.Is(err, errEndUserConflict):
+				apierr.Write(w, protocol, 400, "invalid_request_error", "end-user headers must name one user")
+			default:
 				apierr.Write(w, protocol, 503, "api_error", "authentication is temporarily unavailable")
 			}
 			return
