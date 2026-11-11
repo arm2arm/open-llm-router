@@ -154,7 +154,8 @@ The origin is configured, never derived from untrusted Host or forwarding header
 
 ## Deployment settings
 
-`OIDC_AUDIENCE` enables access tokens on `/v1/*`; `OIDC_SYNC_CLIENT_ID` and
+`OIDC_REQUIRED_CLAIM=name=value` refuses portal logins whose ID token lacks the claim value
+(403, no user created). `OIDC_AUDIENCE` enables access tokens on `/v1/*`; `OIDC_SYNC_CLIENT_ID` and
 `OIDC_SYNC_CLIENT_SECRET` enable the group sync job (see the runbook).
 `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_GROUPS_CLAIM`
 (default `groups`) and `OIDC_USERNAME_CLAIM` (default `preferred_username`) override the

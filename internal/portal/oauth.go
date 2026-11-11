@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
@@ -114,6 +115,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid_request_error", "invalid identity claims")
 		return
 	}
+	if !hasRequiredClaim(claims, h.cfg.OIDC.RequiredClaim) {
+		fail(w, 403, "permission_error", "your account is not entitled to use this service")
+		return
+	}
 	if username == "" {
 		username = id.Subject
 	}
@@ -142,4 +147,22 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	h.cookie(w, sessionCookie, session, sessionLifetime)
 	http.Redirect(w, r, "/portal/", http.StatusSeeOther)
+}
+
+// hasRequiredClaim reports whether the ID token carries the configured claim:
+// a string equal to the value, or an array of strings containing it.
+func hasRequiredClaim(claims map[string]json.RawMessage, rc *config.RequiredClaim) bool {
+	if rc == nil {
+		return true
+	}
+	raw, ok := claims[rc.Name]
+	if !ok {
+		return false
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return one == rc.Value
+	}
+	var many []string
+	return json.Unmarshal(raw, &many) == nil && slices.Contains(many, rc.Value)
 }
