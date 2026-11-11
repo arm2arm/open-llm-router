@@ -112,7 +112,7 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
         'olr',
         '-At',
         '-c',
-        "SELECT sum(requests),sum(input_tokens),sum(output_tokens) FROM usage_daily d JOIN users u ON u.id=d.user_id WHERE u.username='staff' AND u.issuer<>'local' AND d.model='chat-model' AND d.day=current_date",
+        "SELECT sum(requests),sum(input_tokens),sum(output_tokens) FROM usage_daily d JOIN users u ON u.id=d.user_id WHERE u.username='staff' AND u.issuer<>'local' AND u.enabled AND d.model='chat-model' AND d.day=current_date",
       ],
       { cwd: '..', encoding: 'utf8' },
     )

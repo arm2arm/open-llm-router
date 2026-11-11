@@ -18,6 +18,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/oidcclient"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,15 +30,15 @@ const loginCookie = "olr_login"
 const sessionLifetime = 8 * time.Hour
 
 type Handler struct {
-	cfg       *config.Config
-	pool      *pgxpool.Pool
-	limits    *limits.Manager
-	oauth     oauth2.Config
-	verifier  *oidc.IDTokenVerifier
-	client    *http.Client
-	transport *http.Transport
-	logout    string
-	mux       *http.ServeMux
+	cfg      *config.Config
+	pool     *pgxpool.Pool
+	limits   *limits.Manager
+	oauth    oauth2.Config
+	verifier *oidc.IDTokenVerifier
+	client   *http.Client
+	idp      *oidcclient.Client
+	logout   string
+	mux      *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
 	Pools *pool.Manager
 }
@@ -49,33 +50,19 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	if cfg.Portal.CookieSecure && !strings.HasPrefix(cfg.Portal.BaseURL, "https://") {
 		return nil, errors.New("PORTAL_BASE_URL must use HTTPS with secure cookies; local HTTP development must explicitly set PORTAL_COOKIE_SECURE=false")
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	var rt http.RoundTripper = transport
-	if cfg.OIDC.BackchannelURL != "" {
-		public, err := url.Parse(cfg.OIDC.Issuer)
-		if err != nil {
-			return nil, errors.New("invalid issuer")
-		}
-		internal, err := url.Parse(cfg.OIDC.BackchannelURL)
-		if err != nil {
-			return nil, errors.New("invalid OIDC backchannel URL")
-		}
-		rt = backchannel{public, internal, transport}
-	}
-	client := &http.Client{Transport: rt, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, client), cfg.OIDC.Issuer)
+	idp, err := oidcclient.New(ctx, cfg.OIDC)
 	if err != nil {
-		transport.CloseIdleConnections()
 		return nil, errors.New("portal OIDC discovery failed")
 	}
+	provider := idp.Provider
 	var metadata struct {
 		Logout string `json:"end_session_endpoint"`
 	}
 	if provider.Claims(&metadata) != nil || !endpoint(metadata.Logout) {
-		transport.CloseIdleConnections()
+		idp.Close()
 		return nil, errors.New("OIDC discovery must advertise an HTTP(S) end_session_endpoint")
 	}
-	h := &Handler{cfg: cfg, pool: pool, limits: manager, client: client, transport: transport, logout: metadata.Logout, mux: http.NewServeMux(),
+	h := &Handler{cfg: cfg, pool: pool, limits: manager, client: idp.HTTP, idp: idp, logout: metadata.Logout, mux: http.NewServeMux(),
 		oauth:    oauth2.Config{ClientID: cfg.OIDC.PortalClientID, ClientSecret: cfg.OIDCClientSecret, RedirectURL: cfg.Portal.BaseURL + "/portal/callback", Endpoint: provider.Endpoint(), Scopes: []string{oidc.ScopeOpenID, "profile", "email"}},
 		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.OIDC.PortalClientID})}
 	h.mux.HandleFunc("GET /portal/login", h.login)
@@ -110,7 +97,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	return h, nil
 }
 
-func (h *Handler) Close() { h.transport.CloseIdleConnections() }
+func (h *Handler) Close() { h.idp.Close() }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -120,25 +107,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	h.mux.ServeHTTP(w, r.WithContext(ctx))
-}
-
-type backchannel struct {
-	public, internal *url.URL
-	next             http.RoundTripper
-}
-
-func (b backchannel) RoundTrip(r *http.Request) (*http.Response, error) {
-	prefix := strings.TrimSuffix(b.public.Path, "/")
-	if r.URL.Scheme == b.public.Scheme && r.URL.Host == b.public.Host && (r.URL.Path == prefix || strings.HasPrefix(r.URL.Path, prefix+"/")) {
-		r = r.Clone(r.Context())
-		u := *r.URL
-		u.Scheme, u.Host = b.internal.Scheme, b.internal.Host
-		u.Path = strings.TrimSuffix(b.internal.Path, "/") + strings.TrimPrefix(u.Path, prefix)
-		u.RawPath = ""
-		r.URL = &u
-		r.Host = ""
-	}
-	return b.next.RoundTrip(r)
 }
 
 func endpoint(raw string) bool {

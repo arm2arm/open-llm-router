@@ -36,6 +36,7 @@ const (
 const (
 	EnvDatabaseURL      = "OLR_DATABASE_URL"
 	EnvOIDCClientSecret = "OIDC_PORTAL_CLIENT_SECRET"
+	EnvOIDCSyncSecret   = "OIDC_SYNC_CLIENT_SECRET"
 )
 
 // Config is the content of the config file plus the secrets from the
@@ -54,6 +55,7 @@ type Config struct {
 
 	DatabaseURL      string `yaml:"-"`
 	OIDCClientSecret string `yaml:"-"`
+	OIDCSyncSecret   string `yaml:"-"` // client secret of oidc.sync_client_id
 }
 
 // Forwarders lets a key flagged trusted_forwarder (such as Open WebUI's) name
@@ -106,6 +108,15 @@ type OIDC struct {
 	GroupsClaim    string `yaml:"groups_claim"`   // default "groups"
 	UsernameClaim  string `yaml:"username_claim"` // default "preferred_username"
 	BackchannelURL string `yaml:"-"`
+	// Audience enables identity-provider access tokens on /v1/*: a token
+	// must name it in aud. Empty: API keys only.
+	Audience string `yaml:"audience"`
+	// SyncClientID is a confidential client with a read-only service
+	// account (Keycloak: realm-management view-users). With its secret in
+	// OIDC_SYNC_CLIENT_SECRET, groups and enabled state of users are
+	// refreshed every SyncIntervalS seconds (default 900).
+	SyncClientID  string `yaml:"sync_client_id"`
+	SyncIntervalS int    `yaml:"sync_interval_s"`
 }
 
 type Portal struct {
@@ -173,6 +184,7 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.DatabaseURL = os.Getenv(EnvDatabaseURL)
 	cfg.OIDCClientSecret = os.Getenv(EnvOIDCClientSecret)
+	cfg.OIDCSyncSecret = os.Getenv(EnvOIDCSyncSecret)
 	return cfg, nil
 }
 
@@ -207,7 +219,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		cfg.OIDC.Issuer = issuer
 	}
 	if cfg.OIDC != nil {
-		for name, target := range map[string]*string{"OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
+		for name, target := range map[string]*string{"OIDC_AUDIENCE": &cfg.OIDC.Audience, "OIDC_SYNC_CLIENT_ID": &cfg.OIDC.SyncClientID, "OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
 			if value, ok := lookup(name); ok {
 				*target = value
 			}
@@ -215,6 +227,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	}
 	if value, ok := lookup("OIDC_PORTAL_CLIENT_SECRET"); ok {
 		cfg.OIDCClientSecret = value
+	}
+	if value, ok := lookup(EnvOIDCSyncSecret); ok {
+		cfg.OIDCSyncSecret = value
 	}
 	if value, ok := lookup("PORTAL_BASE_URL"); ok {
 		cfg.Portal.BaseURL = strings.TrimSuffix(value, "/")
@@ -233,6 +248,12 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		}
 		if cfg.OIDC.UsernameClaim == "" {
 			cfg.OIDC.UsernameClaim = "preferred_username"
+		}
+		if cfg.OIDC.SyncClientID == "" {
+			cfg.OIDC.SyncClientID = "olr-sync"
+		}
+		if cfg.OIDC.SyncIntervalS == 0 {
+			cfg.OIDC.SyncIntervalS = 900
 		}
 	}
 	for name, model := range cfg.Models {
@@ -410,6 +431,9 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.PortalClientID == "" {
 			add("oidc.portal_client_id: must be set")
+		}
+		if c.OIDC.SyncIntervalS < 60 {
+			add("oidc.sync_interval_s: must be at least 60")
 		}
 		if c.OIDC.BackchannelURL != "" && !isIssuerURL(c.OIDC.BackchannelURL) {
 			add("OIDC_BACKCHANNEL_URL: must be an http or https URL without credentials, query or fragment")
