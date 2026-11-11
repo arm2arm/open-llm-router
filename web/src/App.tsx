@@ -17,6 +17,7 @@ import {
   Sun,
   Trash2,
   BarChart3,
+  ListOrdered,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +48,7 @@ import {
   type Usage,
 } from '@/lib/api'
 import { clients, snippet, type Client } from '@/lib/snippets'
+import { AdminPage, DailyChart, RequestsPage } from '@/pages'
 
 const number = (value: number) => new Intl.NumberFormat().format(value)
 const date = (value: string | null) =>
@@ -178,10 +180,20 @@ export default function App() {
             <BarChart3 size={18} />
             Usage
           </NavLink>
+          <NavLink to="/requests" className="nav-link">
+            <ListOrdered size={18} />
+            My requests
+          </NavLink>
           <NavLink to="/connect" className="nav-link">
             <Code2 size={18} />
             Connect
           </NavLink>
+          {me.data?.admin && (
+            <NavLink to="/admin" className="nav-link">
+              <ShieldCheck size={18} />
+              Admin
+            </NavLink>
+          )}
         </nav>
         <div className="account">
           <div className="flex items-center gap-2 mb-3">
@@ -250,6 +262,13 @@ export default function App() {
                 <Route path="/keys" element={<Keys />} />
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/connect" element={<Connect />} />
+                <Route path="/requests" element={<RequestsPage />} />
+                {me.data.admin && (
+                  <Route
+                    path="/admin"
+                    element={<AdminPage self={me.data.user.id} />}
+                  />
+                )}
                 <Route path="*" element={<Navigate to="/keys" replace />} />
               </Routes>
             )
@@ -270,11 +289,15 @@ function Keys() {
   const [secret, setSecret] = useState('')
   const [label, setLabel] = useState('')
   const [expiry, setExpiry] = useState('')
+  const [keyClass, setKeyClass] = useState<'interactive' | 'batch'>(
+    'interactive',
+  )
   const [selected, setSelected] = useState<Key | null>(null)
   const create = useMutation({
     mutationFn: async () => {
       const result = await api<{ key: string }>('keys', 'POST', {
         label,
+        class: keyClass,
         ...(expiry ? { expires_in_days: Number(expiry) } : {}),
       })
       setSecret(result.key) // The mutation cache receives no plaintext key.
@@ -296,6 +319,7 @@ function Keys() {
     setSecret('')
     setLabel('')
     setExpiry('')
+    setKeyClass('interactive')
     create.reset()
   }
   function submit(event: FormEvent) {
@@ -391,6 +415,9 @@ function Keys() {
                         <code className="text-xs text-muted-foreground">
                           {key.prefix}…
                         </code>
+                        {key.class === 'batch' && (
+                          <span className="badge inactive ml-2">batch</span>
+                        )}
                       </td>
                       <td>{date(key.created)}</td>
                       <td>{date(key.last_used)}</td>
@@ -507,6 +534,23 @@ function Keys() {
                       {days} days
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className="field">
+                Use
+                <select
+                  className="select"
+                  value={keyClass}
+                  onChange={(e) =>
+                    setKeyClass(e.target.value as 'interactive' | 'batch')
+                  }
+                >
+                  <option value="interactive">
+                    Interactive: chat, coding tools
+                  </option>
+                  <option value="batch">
+                    Batch: scripts and bulk jobs (own concurrency limit)
+                  </option>
                 </select>
               </label>
               <DialogFooter>
@@ -630,6 +674,7 @@ function UsagePage() {
       setErased(deleted)
       await cache.invalidateQueries({ queryKey: ['usage'] })
       await cache.invalidateQueries({ queryKey: ['requests'] })
+      await cache.invalidateQueries({ queryKey: ['daily'] })
     },
   })
   const data = query.data
@@ -687,7 +732,7 @@ function UsagePage() {
                   Request limits
                 </div>
                 <div className="stat-value">
-                  {data.quota.used.rpm}
+                  {data.quota.used.rpm ?? 0}
                   <span className="text-sm font-normal text-muted-foreground ml-2">
                     / {data.quota.limits.rpm ?? '∞'} per minute
                   </span>
@@ -698,14 +743,32 @@ function UsagePage() {
                     : `${number(data.quota.remaining.rpm)} requests remaining`}
                 </p>
                 <p className="text-xs text-muted-foreground mt-3">
-                  {data.quota.in_flight} /{' '}
+                  {data.quota.in_flight - data.quota.in_flight_batch} /{' '}
                   {data.quota.limits.max_concurrent ?? '∞'} concurrent requests
+                  · batch {data.quota.in_flight_batch} /{' '}
+                  {data.quota.limits.max_concurrent_batch ?? '∞'}
                 </p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Next request reset {reset(data.quota.reset_at.rpm)}
-                </p>
+                {data.quota.limits.tpm !== null && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {number(data.quota.remaining.tpm ?? 0)} of{' '}
+                    {number(data.quota.limits.tpm)} tokens per minute available
+                  </p>
+                )}
+                {data.quota.limits.strict_quota && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Strict quota: each request reserves its max_tokens plus its
+                    size until it ends ({number(data.quota.reserved_tokens)}{' '}
+                    reserved).
+                  </p>
+                )}
+                {data.quota.reset_at.rpm && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Next request reset {reset(data.quota.reset_at.rpm)}
+                  </p>
+                )}
               </div>
             </div>
+            <DailyChart />
             <section className="panel">
               <div className="panel-head">
                 <h2 className="panel-title">Activity by model</h2>

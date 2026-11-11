@@ -47,11 +47,55 @@ type store interface {
 type userState struct {
 	mu       sync.Mutex
 	user     string
-	inflight int
+	inflight [2]int // by class: interactive, batch
 	requests []time.Time
 	loaded   bool
 	loading  chan struct{}
 	days     ledger
+	// tpm token bucket: level tokens at tpmAt, refilled at tpm/60 per second
+	// up to tpm. Completed calls subtract their tokens; the level can go
+	// negative, and admission needs at least one token.
+	tpmLevel float64
+	tpmAt    time.Time
+	tpmSet   bool
+	reserved int64 // strict-quota reservations of calls in flight
+}
+
+// Key classes.
+const (
+	ClassInteractive = "interactive"
+	ClassBatch       = "batch"
+)
+
+func classIndex(class string) int {
+	if class == ClassBatch {
+		return 1
+	}
+	return 0
+}
+
+func (s *userState) inFlight() int { return s.inflight[0] + s.inflight[1] }
+
+// refillTPM brings the bucket to now for a capacity of tpm tokens per minute.
+func (s *userState) refillTPM(tpm int64, now time.Time) {
+	capacity := float64(tpm)
+	if !s.tpmSet {
+		s.tpmLevel, s.tpmAt, s.tpmSet = capacity, now, true
+		return
+	}
+	if elapsed := now.Sub(s.tpmAt).Seconds(); elapsed > 0 {
+		s.tpmLevel += elapsed * capacity / 60
+	}
+	s.tpmLevel = min(s.tpmLevel, capacity)
+	s.tpmAt = now
+}
+
+// Admission describes one call: the key's class and, for strict quotas, the
+// tokens to reserve until the call completes.
+type Admission struct {
+	User    string
+	Class   string
+	Reserve int64
 }
 
 type Manager struct {
@@ -96,28 +140,49 @@ func pruneRPM(s *userState, now time.Time) {
 	}
 }
 
-// Acquire applies concurrency, sliding-minute RPM, then remaining token quota.
-// A request that passes RPM consumes that attempt even if quota or loading later
-// rejects it. A concurrency rejection consumes no RPM.
+// Acquire admits an interactive call without a reservation.
 func (m *Manager) Acquire(ctx context.Context, user string, p policy.Policy) (*Lease, error) {
-	s := m.user(user)
+	return m.AcquireFor(ctx, Admission{User: user}, p)
+}
+
+// AcquireFor applies concurrency for the key's class, sliding-minute RPM, the
+// TPM bucket, then remaining token quota. A request that passes RPM consumes
+// that attempt even if a later gate rejects it. A concurrency rejection
+// consumes no RPM. With a strict quota, the reservation must fit into the
+// remaining quota next to the reservations of calls already in flight.
+func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) (*Lease, error) {
+	s := m.user(a.User)
+	class := classIndex(a.Class)
+	gate := "max_concurrent"
+	if class == 1 {
+		gate = "max_concurrent_batch"
+	}
 	s.mu.Lock()
 	now := m.Now()
-	if p.MaxConcurrent != nil && s.inflight >= *p.MaxConcurrent {
+	if limit := p.Concurrency(a.Class); limit != nil && s.inflight[class] >= *limit {
 		s.mu.Unlock()
-		return nil, reject("max_concurrent", now, now.Add(time.Second))
+		return nil, reject(gate, now, now.Add(time.Second))
 	}
-	s.inflight++
-	lease := &Lease{manager: m, state: s}
+	s.inflight[class]++
+	lease := &Lease{manager: m, state: s, class: class}
 	pruneRPM(s, now)
 	if p.RPM != nil {
 		if len(s.requests) >= *p.RPM {
 			reset := s.requests[0].Add(time.Minute)
-			s.inflight--
+			s.inflight[class]--
 			s.mu.Unlock()
 			return nil, reject("rpm", now, reset)
 		}
 		s.requests = append(s.requests, now)
+	}
+	if p.TPM != nil {
+		s.refillTPM(*p.TPM, now)
+		if s.tpmLevel < 1 {
+			wait := time.Duration((1 - s.tpmLevel) * 60 / float64(*p.TPM) * float64(time.Second))
+			s.inflight[class]--
+			s.mu.Unlock()
+			return nil, reject("tpm", now, now.Add(wait))
+		}
 	}
 	s.mu.Unlock()
 	if err := m.ensureLoaded(ctx, s, now); err != nil {
@@ -130,10 +195,26 @@ func (m *Manager) Acquire(ctx context.Context, user string, p policy.Policy) (*L
 	pruneDays(s, period)
 	today, month := used(s.days, period)
 	var err error
-	if p.TokensPerDay != nil && today >= *p.TokensPerDay {
+	reserve := int64(0)
+	if p.StrictQuota {
+		reserve = max(a.Reserve, 0)
+	}
+	exceeds := func(limit *int64, used int64) bool {
+		if limit == nil {
+			return false
+		}
+		if used >= *limit {
+			return true
+		}
+		return p.StrictQuota && add(add(used, s.reserved), reserve) > *limit
+	}
+	if exceeds(p.TokensPerDay, today) {
 		err = reject("tokens_per_day", now, period.nextDay)
-	} else if p.TokensPerMonth != nil && month >= *p.TokensPerMonth {
+	} else if exceeds(p.TokensPerMonth, month) {
 		err = reject("tokens_per_month", now, period.nextMonth)
+	} else {
+		s.reserved = add(s.reserved, reserve)
+		lease.reserved = reserve
 	}
 	s.mu.Unlock()
 	if err != nil {
@@ -187,9 +268,11 @@ func (m *Manager) ensureLoaded(ctx context.Context, s *userState, now time.Time)
 // it; Release handles calls such as count_tokens that have no usage record.
 // Both are idempotent and safe against concurrent completion/cancellation.
 type Lease struct {
-	once    sync.Once
-	manager *Manager
-	state   *userState
+	once     sync.Once
+	manager  *Manager
+	state    *userState
+	class    int
+	reserved int64
 }
 
 func (l *Lease) Release()                     { l.finish(nil) }
@@ -219,8 +302,12 @@ func (l *Lease) finish(record *usage.Record) {
 				totals.rateSum += record.TokensPerSecond()
 				totals.rateCount++
 			}
+			if s.tpmSet {
+				s.tpmLevel -= float64(add(max(record.InputTokens, 0), record.OutputTokens))
+			}
 		}
-		s.inflight--
+		s.reserved -= l.reserved
+		s.inflight[l.class]--
 	})
 }
 
@@ -266,10 +353,19 @@ func pruneDays(s *userState, period calendar) {
 }
 
 type EffectiveLimits struct {
-	TokensPerDay   *int64 `json:"tokens_per_day"`
-	TokensPerMonth *int64 `json:"tokens_per_month"`
-	RPM            *int   `json:"rpm"`
-	MaxConcurrent  *int   `json:"max_concurrent"`
+	TokensPerDay       *int64 `json:"tokens_per_day"`
+	TokensPerMonth     *int64 `json:"tokens_per_month"`
+	RPM                *int   `json:"rpm"`
+	TPM                *int64 `json:"tpm"`
+	MaxConcurrent      *int   `json:"max_concurrent"`
+	MaxConcurrentBatch *int   `json:"max_concurrent_batch"`
+	StrictQuota        bool   `json:"strict_quota"`
+}
+
+// Effective lists a policy's limits for the usage APIs.
+func Effective(p policy.Policy) EffectiveLimits {
+	return EffectiveLimits{TokensPerDay: p.TokensPerDay, TokensPerMonth: p.TokensPerMonth, RPM: p.RPM, TPM: p.TPM,
+		MaxConcurrent: p.MaxConcurrent, MaxConcurrentBatch: p.MaxConcurrentBatch, StrictQuota: p.StrictQuota}
 }
 
 type Used struct {
@@ -282,6 +378,7 @@ type Remaining struct {
 	Today *int64 `json:"tokens_today"`
 	Month *int64 `json:"tokens_this_month"`
 	RPM   *int   `json:"rpm"`
+	TPM   *int64 `json:"tpm"`
 }
 
 type Resets struct {
@@ -305,6 +402,8 @@ type Snapshot struct {
 	Remaining Remaining       `json:"remaining"`
 	ResetAt   Resets          `json:"reset_at"`
 	InFlight  int             `json:"in_flight"`
+	Batch     int             `json:"in_flight_batch"`
+	Reserved  int64           `json:"reserved_tokens"`
 	Models    []ModelUsage    `json:"models"`
 }
 
@@ -329,9 +428,15 @@ func (m *Manager) Snapshot(ctx context.Context, user string, p policy.Policy) (S
 	pruneRPM(s, now)
 	result := Snapshot{
 		Timezone: m.location.String(),
-		Limits:   EffectiveLimits{TokensPerDay: p.TokensPerDay, TokensPerMonth: p.TokensPerMonth, RPM: p.RPM, MaxConcurrent: p.MaxConcurrent},
+		Limits:   Effective(p),
 		Used:     Used{Today: today, Month: month}, Remaining: Remaining{Today: remaining(p.TokensPerDay, today), Month: remaining(p.TokensPerMonth, month)},
-		ResetAt: Resets{Day: period.nextDay, Month: period.nextMonth}, InFlight: s.inflight, Models: make([]ModelUsage, 0),
+		ResetAt: Resets{Day: period.nextDay, Month: period.nextMonth}, InFlight: s.inFlight(), Batch: s.inflight[1],
+		Reserved: s.reserved, Models: make([]ModelUsage, 0),
+	}
+	if p.TPM != nil {
+		s.refillTPM(*p.TPM, now)
+		left := max(0, int64(s.tpmLevel))
+		result.Remaining.TPM = &left
 	}
 	if p.RPM != nil {
 		used, left := len(s.requests), max(0, *p.RPM-len(s.requests))

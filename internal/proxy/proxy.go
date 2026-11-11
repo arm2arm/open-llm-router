@@ -92,7 +92,7 @@ func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callerPolicy(r *http.Request) policy.Policy {
 	p, _ := auth.FromContext(r.Context())
-	return policy.Resolve(h.cfg.Groups, p.Groups)
+	return policy.Resolve(h.cfg.Groups, p.Groups).WithOverrides(p.Overrides)
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +148,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	meta, err := parseRequest(body)
 	if errors.Is(err, errAmbiguousField) {
-		apierr.Write(w, protocol, 400, "invalid_request_error", "model and stream must each appear once, spelled in lower case")
+		apierr.Write(w, protocol, 400, "invalid_request_error", "model, stream, max_tokens and max_completion_tokens must each appear once, spelled in lower case")
 		return
 	}
 	if err != nil || meta.Model == "" {
@@ -198,7 +198,17 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	}
 	if h.Limits != nil {
 		principal, _ := auth.FromContext(r.Context())
-		account.lease, err = h.Limits.Acquire(r.Context(), principal.UserID, access)
+		admission := limits.Admission{User: principal.UserID, Class: principal.KeyClass}
+		if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {
+			// The request size bounds its input tokens: a token covers at
+			// least one byte of text. Over-reserving lasts only while in flight.
+			if meta.MaxTokens == 0 && r.URL.Path != "/v1/embeddings" {
+				apierr.Write(w, protocol, 400, "invalid_request_error", "your group has a strict quota: set max_tokens")
+				return
+			}
+			admission.Reserve = meta.MaxTokens + int64(len(body))
+		}
+		account.lease, err = h.Limits.AcquireFor(r.Context(), admission, access)
 		if err != nil {
 			var rejected *limits.Rejection
 			if h.Metrics != nil && errors.As(err, &rejected) {
