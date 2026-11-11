@@ -1,5 +1,6 @@
 /bin/
 .env
+/loadtest*.json
 __pycache__/
 web/node_modules/
 web/dist/*

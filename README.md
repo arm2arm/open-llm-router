@@ -34,6 +34,7 @@ curl --fail localhost:8080/healthz
 make smoke                   # readiness, model listing and backend probes
 make sdk                     # official OpenAI + Anthropic SDKs (needs uv)
 make sdk-limits              # both SDKs recognize rate limits as RateLimitError
+make loadtest > loadtest.json # isolated 256-stream benchmark and accounting/leak checks
 make portal-check            # real Keycloak logins, group refresh, portal API and SSO logout
 cd web && npm ci && npx playwright install chromium && npm run test:e2e
 ```
@@ -64,6 +65,9 @@ curl -N http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"chat-model","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
+
+Streaming benchmark methodology, capacity experiments and recorded results are in
+[docs/RUNBOOK.md](docs/RUNBOOK.md#streaming-load-test).
 
 Build and check the Go code:
 

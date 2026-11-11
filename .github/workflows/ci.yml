@@ -80,6 +80,15 @@ jobs:
           /tmp/olr-sdk/bin/pip install 'openai==3.49.0' 'anthropic==2.8.0'
           make sdk SDK_RUN=/tmp/olr-sdk/bin/python
           make sdk-limits SDK_RUN=/tmp/olr-sdk/bin/python
+      - name: 256-stream load, disconnect, accounting and leak checks
+        run: make loadtest LOADTEST_ARGS='-requests 256 -tokens 32 -settle 250ms -check-performance=false' > loadtest.json
+      - name: Preserve load-test measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: loadtest
+          path: loadtest.json
+          if-no-files-found: ignore
       - name: Show logs on failure
         if: failure()
         run: docker compose logs --no-color
