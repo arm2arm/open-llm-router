@@ -1,0 +1,18 @@
+# Development scrape configuration. In production use HTTPS and keep the
+# metrics token in a secret file (docs/OBSERVABILITY.md).
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: olr
+    static_configs:
+      - targets: [router:8080]
+    authorization:
+      credentials_file: /etc/prometheus/olr-metrics-token
+
+  # vLLM's own /metrics, shown next to the router's on the dashboard. List
+  # backends in vllm-targets.json: [{"targets": ["vllm-a:8000"], "labels": {"model": "chat-model"}}]
+  - job_name: vllm
+    file_sd_configs:
+      - files: [/etc/prometheus/vllm-targets.json]
