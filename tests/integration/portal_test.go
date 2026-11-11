@@ -664,7 +664,7 @@ func TestPortalRequestsDailyChartAndAdmin(t *testing.T) {
 	if resp, _ := a.call(t, "PUT", "/portal/api/admin/users/"+bob+"/enabled", `{"enabled":false}`, f.cfg.Portal.BaseURL); resp.StatusCode != 403 {
 		t.Fatal("non-admin disable", resp.StatusCode)
 	}
-	resp, data = root.call(t, "GET", "/portal/api/me", "", "")
+	_, data = root.call(t, "GET", "/portal/api/me", "", "")
 	if !strings.Contains(string(data), `"admin":true`) {
 		t.Fatal("admin flag", string(data))
 	}
