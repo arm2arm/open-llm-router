@@ -1,5 +1,5 @@
 # Local development stack. All published ports are restricted to loopback.
-# Keycloak is added in #14. The router forwards both protocols to these replicas.
+# The router forwards both protocols to these replicas and handles portal login.
 name: olr
 
 services:
@@ -11,11 +11,18 @@ services:
       - "127.0.0.1:${OLR_PORT:-8080}:8080"
     environment:
       OLR_DATABASE_URL: ${OLR_DATABASE_URL:-postgres://olr:olr-dev-only@postgres:5432/olr?sslmode=disable}
-      # Read by config.example.yaml; portal OIDC follows in #14.
-      OIDC_ISSUER: ${OIDC_ISSUER:-http://keycloak:8080/realms/olr-dev}
-      OIDC_PORTAL_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:${KEYCLOAK_PORT:-8081}/realms/olr-dev}
+      OIDC_PORTAL_CLIENT_ID: ${OIDC_PORTAL_CLIENT_ID:-olr-portal}
+      OIDC_PORTAL_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:-olr-portal-dev-only}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-groups}
+      OIDC_USERNAME_CLAIM: ${OIDC_USERNAME_CLAIM:-preferred_username}
+      OIDC_BACKCHANNEL_URL: ${OIDC_BACKCHANNEL_URL-http://keycloak:8080/realms/olr-dev}
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-http://localhost:${OLR_PORT:-8080}}
+      PORTAL_COOKIE_SECURE: ${PORTAL_COOKIE_SECURE:-false}
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
       mock-llm-a:
         condition: service_started
@@ -25,6 +32,28 @@ services:
       - ../../config.example.yaml:/etc/olr/config.yaml:ro
     # A little longer than the router's own shutdown grace of 30 s.
     stop_grace_period: 35s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-keycloak-admin-dev-only}
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-http://localhost:${OLR_PORT:-8080}}
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ../keycloak/olr-dev-realm.json:/opt/keycloak/data/import/olr-dev-realm.json:ro
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&3; read -r line <&3; [[ $$line == *' 200 '* ]]"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+      start_period: 15s
 
   postgres:
     image: postgres:17
@@ -68,3 +97,4 @@ services:
 
 volumes:
   postgres-data:
+  keycloak-data:

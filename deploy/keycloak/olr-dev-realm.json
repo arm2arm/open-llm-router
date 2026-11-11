@@ -1,0 +1,45 @@
+{
+  "realm": "olr-dev",
+  "enabled": true,
+  "displayName": "Open LLM Router development",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "resetPasswordAllowed": false,
+  "groups": [{"name":"staff"},{"name":"students"},{"name":"admins"}],
+  "clients": [{
+    "clientId": "olr-portal",
+    "enabled": true,
+    "protocol": "openid-connect",
+    "publicClient": false,
+    "secret": "olr-portal-dev-only",
+    "standardFlowEnabled": true,
+    "implicitFlowEnabled": false,
+    "directAccessGrantsEnabled": false,
+    "serviceAccountsEnabled": false,
+    "redirectUris": ["${PORTAL_BASE_URL}/portal/callback"],
+    "webOrigins": ["${PORTAL_BASE_URL}"],
+    "attributes": {
+      "pkce.code.challenge.method": "S256",
+      "post.logout.redirect.uris": "${PORTAL_BASE_URL}/portal/"
+    },
+    "protocolMappers": [{
+      "name": "groups",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-group-membership-mapper",
+      "consentRequired": false,
+      "config": {
+        "claim.name": "groups",
+        "full.path": "false",
+        "id.token.claim": "true",
+        "access.token.claim": "true",
+        "userinfo.token.claim": "true"
+      }
+    }]
+  }],
+  "users": [
+    {"username":"staff","email":"staff@example.test","emailVerified":true,"enabled":true,"firstName":"Dev","lastName":"Staff","groups":["/staff"],"credentials":[{"type":"password","value":"staff-dev-only","temporary":false}]},
+    {"username":"student","email":"student@example.test","emailVerified":true,"enabled":true,"firstName":"Dev","lastName":"Student","groups":["/students"],"credentials":[{"type":"password","value":"student-dev-only","temporary":false}]},
+    {"username":"admin","email":"admin@example.test","emailVerified":true,"enabled":true,"firstName":"Dev","lastName":"Admin","groups":["/admins"],"credentials":[{"type":"password","value":"admin-dev-only","temporary":false}]}
+  ]
+}

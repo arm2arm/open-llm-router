@@ -18,6 +18,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
 	usagewriter "github.com/arm2arm/open-llm-router/internal/usage"
@@ -144,6 +145,17 @@ func serve(args []string) error {
 		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
 	})
 	forwarder.Register(srv.Handle)
+	if cfg.OIDC != nil {
+		portalCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		portalHandler, err := portal.New(portalCtx, cfg, database, forwarder.Limits)
+		cancel()
+		if err != nil {
+			return err
+		}
+		defer portalHandler.Close()
+		srv.Handle("/portal", portalHandler)
+		srv.Handle("/portal/", portalHandler)
+	}
 
 	log.Info("listening", "addr", ln.Addr().String(), "config", *configPath, "models", len(cfg.Models))
 	if err := srv.Run(ctx, ln, *grace); err != nil {

@@ -10,13 +10,14 @@ Model aliases and `/v1/models` work. The router initializes its Postgres schema 
 checks the database in `/readyz`. API keys authenticate every `/v1/*` request, with admin CLI
 commands for local users and keys. Group policy controls model access and filters `/v1/models`;
 inference calls record token usage and timing in Postgres. Per-user concurrency, RPM and
-day/month token quotas are enforced, with a usage API. The portal follows.
+day/month token quotas are enforced, with a usage API. Keycloak portal login, sessions,
+and JSON APIs for keys, usage and models work; the React interface follows in #16.
 Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
 Stack: Go backend (one static binary), React portal, PostgreSQL, Keycloak.
-Development runs fully local with Docker Compose (router, Postgres, two mock LLMs);
-local Keycloak follows in #14 and Kubernetes manifests after the pilot.
+Development runs fully local with Docker Compose (router, Postgres, Keycloak and two mock LLMs);
+Kubernetes manifests follow after the pilot.
 
 Authors: A. Khalatyan (AIP), with Hermes agent.
 
@@ -31,12 +32,13 @@ curl --fail localhost:8080/healthz
 make smoke                   # readiness, model listing and backend probes
 make sdk                     # official OpenAI + Anthropic SDKs (needs uv)
 make sdk-limits              # both SDKs recognize rate limits as RateLimitError
+make portal-check            # real Keycloak logins, group refresh, portal API and SSO logout
 ```
 
 The stack works with built-in local defaults. Optionally copy [.env.example](.env.example) to
 `.env` to override ports, credentials or token delays. Compose reads `.env` automatically;
 host-side Go commands read only exported environment variables. All published ports bind to
-`127.0.0.1`. Postgres data is kept in a named volume across `make down` / `make up`;
+`127.0.0.1`. Postgres and Keycloak data are kept in named volumes across `make down` / `make up`;
 `docker compose down --volumes` deletes that local data. Postgres credentials initialize an
 empty volume, so changing them later also requires updating the database or recreating the volume.
 
@@ -46,6 +48,7 @@ empty volume, so changing them later also requires updating the database or recr
 | `postgres` | `localhost:5432` | database `olr`, user `olr`, public dev password `olr-dev-only` |
 | `mock-llm-a` | `http://localhost:8001` | `chat-model`, 20 ms per token |
 | `mock-llm-b` | `http://localhost:8002` | `chat-model`, 40 ms per token |
+| `keycloak` | `http://localhost:8081` | imported `olr-dev` realm, portal login, dev admin console |
 
 The pool URLs in `config.example.yaml` use service names and container ports. The differing
 delays match its 2:1 weights, used by weighted least-outstanding balancing. To try a stream through the router:
@@ -79,6 +82,9 @@ including immediate cache invalidation across two router processes on revoke and
 plus group-based model access, filtered model lists, usage persistence, privacy, atomic daily
 totals under 100 concurrent calls, shutdown flushing, shared user limits, stream slot
 release, calendar resets, quota recovery after restart, and the usage API for real API keys.
+Portal tests use a signing OIDC provider and real Postgres to test state, nonce, issuer,
+audience, expiry, replay prevention, session rotation, disabled users, origin checks, custom
+claims, scoped usage/keys, group refresh and immediate API-key cache invalidation.
 With Compose running on the default database port, include them with:
 
 ```sh
@@ -87,7 +93,7 @@ OLR_TEST_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=di
 
 CI runs on pushes and pull requests. It uses the same `make lint`, `make vuln` and `make test`
 commands with a Postgres 17 service, while a parallel job builds both runtime images, starts
-Compose and runs `make smoke` plus the official SDK checks against the router and both mocks. Jobs have a five-minute timeout; Go modules and build outputs
+Compose and runs `make smoke`, `make portal-check`, and the official SDK checks against the router and both mocks. Jobs have a five-minute timeout; Go modules and build outputs
 are cached by `setup-go`.
 
 For a host-side router, run Postgres 17 locally (or `docker compose up -d postgres`) and export
@@ -99,7 +105,8 @@ Versioned migrations will be introduced with the first schema change after the p
 
 Without Docker, build both binaries, run two mock processes on ports 8001/8002, and copy the
 example config with pool URLs changed to `http://127.0.0.1:8001` and `http://127.0.0.1:8002`.
-Then run `OIDC_ISSUER=http://localhost:8081/realms/olr-dev bin/olr serve -config <local-config>`.
+Remove the `oidc` section to use API keys without portal login. To enable the portal, export
+the OIDC and portal settings below before running `bin/olr serve -config <local-config>`.
 
 The deterministic mock backend speaks the OpenAI and Anthropic protocols and can be run directly
 or as its own container:
@@ -135,13 +142,14 @@ request or response bodies.
 | `internal/policy` | group policy resolution: allowed models and effective numeric limits |
 | `internal/usage` | incremental usage inspection, timing metadata, asynchronous atomic accounting |
 | `internal/limits` | per-user concurrency, sliding-minute RPM, calendar token quotas and usage snapshots |
+| `internal/portal` | OIDC code/PKCE login, opaque sessions and scoped JSON APIs |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: `portal`, `metrics`.
+Still to come under `internal/`: `metrics`.
 
 ## API keys and bootstrap administration
 
@@ -149,7 +157,7 @@ All `/v1/*` requests require `Authorization: Bearer <key>` or `x-api-key: <key>`
 Matching credentials in both headers are accepted; conflicting or repeated headers are rejected.
 Missing, malformed, unknown, revoked or expired keys and disabled users receive a generic 401
 in the caller's OpenAI or Anthropic error format. `/healthz` and `/readyz` remain public.
-Database authentication failures return 503. Keycloak portal login follows in a later issue.
+Database authentication failures return 503. Portal sessions never authenticate `/v1/*`.
 
 Model access comes from the user's stored groups and the config's `groups` section. Group
 names match exactly. Allowed models are the union of all matching groups; `models: ["*"]`
@@ -240,6 +248,75 @@ For real Ollama, vLLM or SGLang backends, see [docs/CLIENTS.md](docs/CLIENTS.md)
 [config.real.example.yaml](config.real.example.yaml). The runbook includes the recorded laptop
 results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `make sdk-real`
 / `make bench-real`. The deployed vLLM/SGLang acceptance run remains pending.
+
+## Keycloak and portal login
+
+Open [the portal login](http://localhost:8080/portal/login) after `make up`. Compose pins
+Keycloak **26.8.2** and imports `deploy/keycloak/olr-dev-realm.json` on an empty data volume.
+The confidential `olr-portal` client requires authorization code flow with PKCE S256;
+implicit/password grants and service accounts are disabled. Groups appear as names in the
+ID token. The import creates these public, development-only credentials:
+
+| Realm | Username | Password | Group |
+|---|---|---|---|
+| `olr-dev` | `staff` | `staff-dev-only` | `staff` |
+| `olr-dev` | `student` | `student-dev-only` | `students` |
+| `olr-dev` | `admin` | `admin-dev-only` | `admins` |
+| `master` (admin console) | `admin` | `keycloak-admin-dev-only` | Keycloak administrator |
+
+The dev client secret is `olr-portal-dev-only`, in both the realm file and `.env.example`.
+These values are for the local stack. Register a separate confidential client and use
+deployment secrets for another environment. Imports preserve existing realms; changing the
+realm file or bootstrap admin settings does not overwrite a populated Keycloak volume.
+For a fresh local import, `docker compose down --volumes` deletes both local databases.
+
+The browser issuer is `http://localhost:8081/realms/olr-dev`. Keycloak fixes `KC_HOSTNAME`
+to that public origin and enables `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`. The router sets
+the same `OIDC_ISSUER`, and transports server-side requests via
+`OIDC_BACKCHANNEL_URL=http://keycloak:8080/realms/olr-dev`. Discovery and the verified ID
+token must still advertise the public issuer exactly, following the
+[Keycloak hostname configuration](https://www.keycloak.org/server/hostname). No issuer or signature check is
+disabled. The router discovers authorization, token, JWKS and logout endpoints; the
+internal discovery is checked at startup before listening. `make portal-check` also checks
+public discovery and completes real logins against the container to verify both sides.
+
+`OLR_PORT` and `KEYCLOAK_PORT` change the default public origins in Compose. The realm's
+redirects use its `PORTAL_BASE_URL` import placeholder, defaulting to
+`http://localhost:8080/portal/callback` and `http://localhost:8080/portal/` after logout.
+When copying `.env.example`, keep its explicit origins in sync with any changed ports.
+Use `localhost` in the browser, matching the registered origin and cookies.
+
+Host-side development against this Keycloak can use:
+
+```sh
+export OIDC_ISSUER=http://localhost:8081/realms/olr-dev
+export OIDC_PORTAL_CLIENT_ID=olr-portal
+export OIDC_PORTAL_CLIENT_SECRET=olr-portal-dev-only
+export PORTAL_BASE_URL=http://localhost:8080
+export PORTAL_COOKIE_SECURE=false
+unset OIDC_BACKCHANNEL_URL  # the public issuer is reachable from the host
+```
+
+In deployment, set an HTTPS `PORTAL_BASE_URL`; `PORTAL_COOKIE_SECURE` defaults to true and
+startup rejects HTTP with secure cookies. `OIDC_GROUPS_CLAIM` and `OIDC_USERNAME_CLAIM`
+override the default `groups` and `preferred_username` claims. All five OIDC settings can
+override the YAML or enable OIDC with no YAML section. Use the public issuer directly when
+reachable, or configure an internal backchannel without changing the expected issuer.
+No provider-specific endpoints are hardcoded.
+
+The backend stores only hashed opaque session IDs (eight hours) and one-use login
+challenges (ten minutes) in Postgres. Browser cookies are HttpOnly and SameSite=Lax, scoped
+to `/portal`. OIDC tokens are discarded after validation. Users match `(issuer, sub)`;
+claims refresh on login, disabled users are refused, and API key caches see updated groups
+before the login finishes. Sessions check the stored enabled flag on every request.
+
+The JSON contract for the forthcoming interface is [docs/PORTAL_API.md](docs/PORTAL_API.md).
+It covers current user/limits, owned keys, per-model daily/monthly usage and allowed models.
+Mutations require JSON and the configured origin; API keys are returned once at creation.
+Logout invalidates the local session and returns a discovered Keycloak logout URL for the
+browser to visit. Keycloak asks for confirmation because no ID token is retained or sent
+to the browser as a logout hint. `make portal-check` verifies the resulting SSO session is
+ended and restores its temporary Keycloak group changes.
 
 ## Usage accounting
 

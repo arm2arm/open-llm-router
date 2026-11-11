@@ -106,7 +106,20 @@ func (a *Authenticator) listen(ctx context.Context, pool *pgxpool.Pool, conn *pg
 // waits for every advertised router to clear its cache. Plain NOTIFY alone would
 // leave a scheduling race between the CLI returning and the next HTTP request.
 // Acknowledgements contain process IDs only, never key material or user data.
-func (a Admin) change(ctx context.Context, sql, id string) error {
+func (a Admin) change(ctx context.Context, sql string, args ...any) error {
+	return a.changeWith(ctx, func(tx pgx.Tx) error {
+		result, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return errors.New("update authentication record failed")
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+func (a Admin) changeWith(ctx context.Context, mutate func(pgx.Tx) error) error {
 	conn, err := pgx.ConnectConfig(ctx, a.Pool.Config().ConnConfig.Copy())
 	if err != nil {
 		return errors.New("connect for authentication change failed")
@@ -118,12 +131,8 @@ func (a Admin) change(ctx context.Context, sql, id string) error {
 	}
 	pending := map[string]bool{}
 	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		result, err := tx.Exec(ctx, sql, id)
-		if err != nil {
-			return errors.New("update authentication record failed")
-		}
-		if result.RowsAffected() == 0 {
-			return ErrNotFound
+		if err := mutate(tx); err != nil {
+			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT pid::text FROM pg_stat_activity
 			WHERE datname = current_database() AND application_name = $1`, listenerName)

@@ -35,9 +35,10 @@ type usageRouter struct {
 }
 
 type usageOptions struct {
-	group    *config.Group
-	location *time.Location
-	clock    func() time.Time
+	group     *config.Group
+	location  *time.Location
+	clock     func() time.Time
+	configure func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
 }
 
 func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOptions) *usageRouter {
@@ -70,6 +71,8 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	}
 	f.writer = usage.NewWriterInLocation(f.pool, log, location)
 	cfg := &config.Config{
+		Auth:   config.Auth{DefaultKeyLifetimeDays: 90},
+		Limits: config.Limits{Timezone: location.String(), Location: location},
 		Models: map[string]config.Model{"chat-model": {
 			Protocols: []string{"openai", "anthropic"}, TimeoutS: 3, IdleTimeoutS: 2,
 			Pool: []config.Replica{{URL: backend.URL, Weight: 1, MaxInflight: 256}},
@@ -89,6 +92,9 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	s := server.New(log)
 	s.SetAPIMiddleware(authenticator.Middleware)
 	forwarder.Register(s.Handle)
+	if len(options) > 0 && options[0].configure != nil {
+		options[0].configure(cfg, forwarder, s, f.pool)
+	}
 	f.router = httptest.NewServer(s.Handler())
 	var once sync.Once
 	f.stop = func() {
