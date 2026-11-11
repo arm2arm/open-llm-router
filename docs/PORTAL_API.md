@@ -154,6 +154,8 @@ The origin is configured, never derived from untrusted Host or forwarding header
 
 ## Deployment settings
 
+`OIDC_AUDIENCE` enables access tokens on `/v1/*`; `OIDC_SYNC_CLIENT_ID` and
+`OIDC_SYNC_CLIENT_SECRET` enable the group sync job (see the runbook).
 `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_GROUPS_CLAIM`
 (default `groups`) and `OIDC_USERNAME_CLAIM` (default `preferred_username`) override the
 optional YAML `oidc` section. Setting an issuer enables the portal. `PORTAL_BASE_URL` sets
