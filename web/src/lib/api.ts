@@ -54,7 +54,10 @@ export type Limits = {
   tokens_per_day: number | null
   tokens_per_month: number | null
   rpm: number | null
+  tpm: number | null
   max_concurrent: number | null
+  max_concurrent_batch: number | null
+  strict_quota: boolean
 }
 export type Me = {
   user: { username: string; email: string; groups: string[] }
@@ -68,6 +71,7 @@ export type Key = {
   last_used: string | null
   expires: string | null
   revoked: boolean
+  class: 'interactive' | 'batch'
 }
 export type ModelUsage = {
   model: string
@@ -89,9 +93,12 @@ export type Usage = {
       tokens_today: number | null
       tokens_this_month: number | null
       rpm: number | null
+      tpm: number | null
     }
     reset_at: { day: string; month: string; rpm: string }
     in_flight: number
+    in_flight_batch: number
+    reserved_tokens: number
   }
 }
 export type Models = {

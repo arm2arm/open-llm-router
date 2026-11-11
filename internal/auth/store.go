@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,9 +17,10 @@ type postgresStore struct{ pool *pgxpool.Pool }
 
 func (s postgresStore) lookup(ctx context.Context, hash [32]byte) (keyRecord, error) {
 	var r keyRecord
-	err := s.pool.QueryRow(ctx, `SELECT k.id, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled
+	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,
+		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = u.id)
 		FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.hash = $1`, hash[:]).
-		Scan(&r.KeyID, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled)
+		Scan(&r.KeyID, &r.KeyClass, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.Overrides)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrInvalidKey
 	}
@@ -74,22 +76,32 @@ type KeyInfo struct {
 	LastUsed *time.Time `json:"last_used"`
 	Expires  *time.Time `json:"expires"`
 	Revoked  bool       `json:"revoked"`
+	Class    string     `json:"class"`
 }
 
 // CreateKey is the only operation that returns a plaintext key. A positive
 // lifetime is mandatory; indefinite bootstrap keys cannot be created.
 func (a Admin) CreateKey(ctx context.Context, userID, label string, lifetime time.Duration) (string, error) {
+	return a.CreateKeyOfClass(ctx, userID, label, "interactive", lifetime)
+}
+
+// CreateKeyOfClass creates an "interactive" or a "batch" key; the classes
+// have separate concurrency limits.
+func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string, lifetime time.Duration) (string, error) {
 	if lifetime <= 0 {
 		return "", errors.New("key lifetime must be positive")
+	}
+	if class != "interactive" && class != "batch" {
+		return "", errors.New("key class must be interactive or batch")
 	}
 	key, err := Generate()
 	if err != nil {
 		return "", err
 	}
 	hash := sha256.Sum256([]byte(key))
-	result, err := a.Pool.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires)
-		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond'
-		FROM users WHERE id = $1 AND enabled`, userID, key[:12], hash[:], label, lifetime.Microseconds())
+	result, err := a.Pool.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class)
+		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6
+		FROM users WHERE id = $1 AND enabled`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class)
 	if err != nil {
 		return "", errors.New("create API key failed")
 	}
@@ -100,7 +112,7 @@ func (a Admin) CreateKey(ctx context.Context, userID, label string, lifetime tim
 }
 
 func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked
+	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class
 		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID)
 	if err != nil {
 		return nil, errors.New("list API keys failed")
@@ -109,7 +121,7 @@ func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 	keys := []KeyInfo{}
 	for rows.Next() {
 		var k KeyInfo
-		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked); err != nil {
+		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class); err != nil {
 			return nil, errors.New("read API key metadata failed")
 		}
 		keys = append(keys, k)
@@ -210,4 +222,52 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 		return err
 	})
 	return id, err
+}
+
+// Override is one per-user limit; a nil Value means unlimited.
+type Override struct {
+	Field  string    `json:"field"`
+	Value  *int64    `json:"value"`
+	Reason string    `json:"reason"`
+	SetBy  string    `json:"set_by"`
+	SetAt  time.Time `json:"set_at"`
+}
+
+// SetOverride replaces one field of a user's effective policy. Every router
+// applies it to the next request, because the change clears the API-key caches.
+func (a Admin) SetOverride(ctx context.Context, userID, field string, value *int64, reason, setBy string) error {
+	if !policy.ValidOverride(field, value) {
+		return errors.New("invalid override field or value")
+	}
+	return a.change(ctx, `INSERT INTO quota_overrides (user_id, field, value, reason, set_by, set_at)
+		SELECT id, $2, $3, $4, $5, clock_timestamp() FROM users WHERE id = $1
+		ON CONFLICT (user_id, field) DO UPDATE SET value = EXCLUDED.value, reason = EXCLUDED.reason,
+		set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`, userID, field, value, reason, setBy)
+}
+
+// ClearOverride returns one field to the group policy.
+func (a Admin) ClearOverride(ctx context.Context, userID, field string) error {
+	return a.change(ctx, `DELETE FROM quota_overrides WHERE user_id = $1 AND field = $2`, userID, field)
+}
+
+// ListOverrides returns a user's overrides by field.
+func (a Admin) ListOverrides(ctx context.Context, userID string) ([]Override, error) {
+	rows, err := a.Pool.Query(ctx, `SELECT field, value, reason, set_by, set_at FROM quota_overrides
+		WHERE user_id = $1 ORDER BY field`, userID)
+	if err != nil {
+		return nil, errors.New("list overrides failed")
+	}
+	defer rows.Close()
+	list := []Override{}
+	for rows.Next() {
+		var o Override
+		if err := rows.Scan(&o.Field, &o.Value, &o.Reason, &o.SetBy, &o.SetAt); err != nil {
+			return nil, errors.New("read override failed")
+		}
+		list = append(list, o)
+	}
+	if rows.Err() != nil {
+		return nil, errors.New("list overrides failed")
+	}
+	return list, nil
 }

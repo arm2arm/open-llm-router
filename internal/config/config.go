@@ -120,7 +120,14 @@ type Group struct {
 	TokensPerDay   *int64   `yaml:"tokens_per_day"`
 	TokensPerMonth *int64   `yaml:"tokens_per_month"`
 	RPM            *int     `yaml:"rpm"`
-	MaxConcurrent  *int     `yaml:"max_concurrent"`
+	TPM            *int64   `yaml:"tpm"`            // tokens per minute, a token bucket
+	MaxConcurrent  *int     `yaml:"max_concurrent"` // interactive keys
+	// MaxConcurrentBatch limits batch keys, counted apart from interactive
+	// ones; omitted, batch keys get max_concurrent.
+	MaxConcurrentBatch *int `yaml:"max_concurrent_batch"`
+	// StrictQuota reserves max_tokens plus the request size before a call,
+	// so concurrent calls cannot exceed tokens_per_day or tokens_per_month.
+	StrictQuota bool `yaml:"strict_quota"`
 }
 
 // Problems lists everything found wrong with a config file in one pass.
@@ -452,7 +459,9 @@ func (c *Config) validate() Problems {
 			{"tokens_per_day", g.TokensPerDay != nil, deref(g.TokensPerDay)},
 			{"tokens_per_month", g.TokensPerMonth != nil, deref(g.TokensPerMonth)},
 			{"rpm", g.RPM != nil, int64(deref(g.RPM))},
+			{"tpm", g.TPM != nil, deref(g.TPM)},
 			{"max_concurrent", g.MaxConcurrent != nil, int64(deref(g.MaxConcurrent))},
+			{"max_concurrent_batch", g.MaxConcurrentBatch != nil, int64(deref(g.MaxConcurrentBatch))},
 		}
 		for _, l := range limits {
 			if l.set && l.val <= 0 {
