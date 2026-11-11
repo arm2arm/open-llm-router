@@ -46,6 +46,10 @@ models:
     protocols: [openai, anthropic]
     timeout_s: 900
     idle_timeout_s: 30             # max silence between response chunks
+    queue_timeout_s: 10            # wait for a free replica when all are full (0: 503 at once)
+    session_affinity: true         # same X-Session-Id -> same replica while it has capacity
+    # priority: {interactive: 0, batch: 10}  # sent as "priority" to vLLM started
+    #                                        # with --scheduling-policy priority
     # upstream_model: backend-served-name  # optional, also applied to aliases
     pool:
       # weight is the relative throughput of a replica; max_inflight caps the
