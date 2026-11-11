@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS usage (
     model text NOT NULL,
     replica text NOT NULL,
     protocol text NOT NULL,
-    -- HTTP status as text, or 'aborted' when a client disconnects (#12).
+    -- HTTP status as text, 'aborted' for incomplete responses, or 'error' for an SSE error.
     status text NOT NULL,
     input_tokens bigint NOT NULL DEFAULT 0,
     output_tokens bigint NOT NULL DEFAULT 0,

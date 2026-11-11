@@ -193,6 +193,10 @@ groups:
 	request(base, "/v1/messages", "X-Api-Key", expiredKey, 401)
 	stop()
 	stopOther()
+	var accounted int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM usage WHERE user_id=$1 AND status='200'`, owner).Scan(&accounted); err != nil || accounted != 4 {
+		t.Fatalf("real router shutdown: accounted=%d, want 4 inference calls; err=%v", accounted, err)
+	}
 	for _, secretKey := range []string{key, secondKey, expiredKey} {
 		hash := sha256.Sum256([]byte(secretKey))
 		for _, secret := range []string{secretKey, fmt.Sprintf("%x", hash), fmt.Sprintf("%v", hash[:])} {

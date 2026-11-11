@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/apierr"
@@ -21,6 +22,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
+	"github.com/arm2arm/open-llm-router/internal/usage"
 )
 
 const MaxBody = 32 << 20
@@ -32,6 +34,8 @@ type Handler struct {
 	cfg       *config.Config
 	transport *http.Transport
 	Pools     *pool.Manager
+	Usage     usage.Recorder // installed before serving; nil disables persistence
+	active    sync.WaitGroup
 }
 
 func New(cfg *config.Config) *Handler {
@@ -45,7 +49,12 @@ func New(cfg *config.Config) *Handler {
 	return &Handler{cfg: cfg, transport: t, Pools: pool.New(cfg, t)}
 }
 
-func (h *Handler) Close() { h.transport.CloseIdleConnections() }
+// Close waits for handlers after the HTTP server stops, then closes idle
+// connections. The usage writer must be drained afterwards.
+func (h *Handler) Close() {
+	h.active.Wait()
+	h.transport.CloseIdleConnections()
+}
 
 func (h *Handler) Register(handle func(string, http.Handler)) {
 	for path, protocol := range map[string]string{
@@ -85,6 +94,17 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol string) {
+	h.active.Add(1)
+	defer h.active.Done()
+	account := h.account(w, r, protocol)
+	w = account.writer
+	defer func() {
+		p := recover()
+		account.finish(r, p != nil)
+		if p != nil {
+			panic(p)
+		}
+	}()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -112,6 +132,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		apierr.Write(w, protocol, 404, "not_found_error", "model is unavailable for this protocol")
 		return
 	}
+	account.record.Model = name
 	if !h.callerPolicy(r).AllowsModel(name) {
 		apierr.Write(w, protocol, 403, "permission_error", "access to this model is forbidden")
 		return
@@ -132,6 +153,16 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		fields["model"], _ = json.Marshal(upstreamName)
 		body, _ = json.Marshal(fields)
 	}
+	hideUsage := false
+	if protocol == config.ProtocolOpenAI && meta.Stream && r.URL.Path != "/v1/embeddings" {
+		var asked bool
+		body, asked, err = usage.IncludeUsage(body)
+		if err != nil {
+			apierr.Write(w, protocol, 400, "invalid_request_error", "stream_options must contain an optional boolean include_usage")
+			return
+		}
+		hideUsage = !asked
+	}
 	var previous *pool.Lease
 	for attempt := 0; attempt < 2; attempt++ {
 		if r.Context().Err() != nil {
@@ -143,7 +174,8 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			apierr.Write(w, protocol, 503, "overloaded_error", "no healthy replica with available capacity")
 			return
 		}
-		committed, err := h.attempt(w, r, body, model, lease)
+		account.record.Replica = lease.Replica.URL
+		committed, err := h.attempt(w, r, body, model, lease, account, hideUsage)
 		if err == nil || committed || r.Context().Err() != nil {
 			return
 		}
@@ -154,7 +186,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 
 // attempt reserves its lease until the response is finished or aborted. The
 // first read happens before committing headers, allowing one safe failover.
-func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, model config.Model, lease *pool.Lease) (committed bool, err error) {
+func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, model config.Model, lease *pool.Lease, account *accounting, hideUsage bool) (committed bool, err error) {
 	defer lease.Release()
 	defer func() {
 		if err != nil && !committed && r.Context().Err() == nil {
@@ -196,29 +228,61 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	if n == 0 && readErr != nil && readErr != io.EOF {
 		return false, readErr
 	}
+	if n > 0 {
+		account.firstByte()
+	}
 	for key, values := range cleanHeaders(resp.Header) {
 		w.Header()[key] = values
 	}
 	w.Header().Set("X-Request-Id", reqid.FromContext(r.Context()))
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(resp.StatusCode)
 	controller := http.NewResponseController(w)
+	write := func(p []byte) error {
+		_, err := w.Write(p)
+		return err
+	}
+	account.observe(resp.Header.Get("Content-Type"), hideUsage, write)
+	if account.stream != nil && hideUsage {
+		// A filtered event changes the length, even if the backend supplied a
+		// Content-Length for its SSE response.
+		w.Header().Del("Content-Length")
+	}
+	w.WriteHeader(resp.StatusCode)
 	defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 	for {
 		_ = controller.SetWriteDeadline(time.Now().Add(time.Duration(model.IdleTimeoutS) * time.Second))
 		if n > 0 {
-			if _, err := w.Write(buf[:n]); err != nil {
+			account.firstByte()
+			var err error
+			if account.stream != nil {
+				err = account.stream.Write(buf[:n])
+			} else {
+				if account.json != nil {
+					account.json.Write(buf[:n])
+				}
+				err = write(buf[:n])
+			}
+			if err != nil {
+				account.aborted = true
 				return true, err
 			}
 			if err := controller.Flush(); err != nil {
+				account.aborted = true
 				return true, err
 			}
 		}
 		if readErr != nil {
+			if account.stream != nil {
+				if err := account.stream.Finish(); err != nil {
+					account.aborted = true
+					return true, err
+				}
+			}
 			if readErr != io.EOF {
 				// Terminate the HTTP response instead of reporting a truncated
 				// stream as a successful, complete response.
+				account.aborted = true
 				panic(http.ErrAbortHandler)
 			}
 			return true, nil
