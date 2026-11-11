@@ -107,6 +107,15 @@ bench-real:
 down:
 	$(COMPOSE) down
 
+# Optional Prometheus, Grafana and Jaeger next to the development stack.
+OBSERVABILITY := $(COMPOSE) -f deploy/compose/docker-compose.yml -f deploy/compose/observability.yml
+.PHONY: observability-up observability-down
+observability-up:
+	$(OBSERVABILITY) up --build --detach --wait --wait-timeout 90
+
+observability-down:
+	$(OBSERVABILITY) down
+
 # Unique project, private network, disposable database; leaves the dev stack up.
 .PHONY: loadtest
 loadtest:
