@@ -9,7 +9,8 @@ incremental streaming, cancellation, weighted balancing, health checks and failo
 Model aliases and `/v1/models` work. The router initializes its Postgres schema at startup and
 checks the database in `/readyz`. API keys authenticate every `/v1/*` request, with admin CLI
 commands for local users and keys. Group policy controls model access and filters `/v1/models`;
-usage accounting and the portal follow. Requirements in [docs/PLAN.md](docs/PLAN.md),
+inference calls record token usage and timing in Postgres. Limits and the portal follow.
+Requirements in [docs/PLAN.md](docs/PLAN.md),
 delivery plan in [docs/WEEK1.md](docs/WEEK1.md), work items in the
 [issues](https://github.com/arm2arm/open-llm-router/issues/1).
 Stack: Go backend (one static binary), React portal, PostgreSQL, Keycloak.
@@ -73,7 +74,8 @@ role needs `CREATEDB` and permission to terminate its own connections (the Compo
 roles have these permissions). Tests cover schema initialization/restarts, issuer-scoped
 identities, deletion rules, database loss/recovery, and CLI-created keys through the router binary,
 including immediate cache invalidation across two router processes on revoke and user disable,
-plus group-based model access and filtered model lists for real API keys.
+plus group-based model access, filtered model lists, usage persistence, privacy, atomic daily
+totals under 100 concurrent calls, and shutdown flushing for real API keys.
 With Compose running on the default database port, include them with:
 
 ```sh
@@ -128,13 +130,14 @@ request or response bodies.
 | `internal/db` | pgx connection pool and embedded, idempotent Postgres schema |
 | `internal/auth` | API key generation, authentication cache, invalidation and bootstrap administration |
 | `internal/policy` | group policy resolution: allowed models and effective numeric limits |
+| `internal/usage` | incremental usage inspection, timing metadata, asynchronous atomic accounting |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |
 | `internal/proxy`, `internal/apierr` | bounded request bodies, protocol errors, byte-preserving streaming and model listing |
 | `internal/pool` | weighted selection, in-flight caps, health checks and passive cooldown |
 | `internal/reqid` | the request ID carried in a request's context |
 | `deploy/compose` | the local development stack |
 
-Still to come under `internal/`: `usage`, `limits`, `portal`, `metrics`.
+Still to come under `internal/`: `limits`, `portal`, `metrics`.
 
 ## API keys and bootstrap administration
 
@@ -197,7 +200,8 @@ Backend URLs must be HTTP(S) origins without credentials, a path prefix or a que
 
 An alias resolves to its configured model; `upstream_model` optionally changes the name sent
 to the backend. Only a rewritten request is serialized again, preserving unknown JSON values.
-Responses, including backend errors and SSE bytes, pass through unchanged. Redirects are
+Responses, including backend errors and SSE bytes, pass through unchanged except for the
+injected usage-only event described below. Redirects are
 returned to the caller. Unsupported model/protocol combinations give a protocol-shaped 404.
 
 Pools choose the healthy replica with the smallest `inflight / weight` and randomize ties.
@@ -232,6 +236,45 @@ For real Ollama, vLLM or SGLang backends, see [docs/CLIENTS.md](docs/CLIENTS.md)
 [config.real.example.yaml](config.real.example.yaml). The runbook includes the recorded laptop
 results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `make sdk-real`
 / `make bench-real`. The deployed vLLM/SGLang acceptance run remains pending.
+
+## Usage accounting
+
+Each authenticated inference call creates one `usage` row, including rejected requests,
+backend errors, and aborted responses. Retries remain one call, attributed to the final
+selected replica. `/v1/models`, `/v1/messages/count_tokens`, probes, and authentication
+failures are excluded. Rows contain the user/key IDs, canonical model (empty for an unknown
+or invalid model), replica origin, protocol, status, backend token counts, start time,
+`latency_ms`, and `ttfb_ms`. No prompt, completion, raw event, or credential is persisted or
+logged. `ttfb_ms` measures the first backend body byte and is null when none arrives.
+For streaming calls, derive output tokens/second as
+`output_tokens * 1000 / (latency_ms - ttfb_ms)` when the denominator is positive;
+this rate is not meaningful for non-stream responses that arrive all at once.
+
+OpenAI streams request `stream_options.include_usage: true`. If the caller omitted it or
+set it to false, the router removes only the extra event with empty `choices` and numeric
+usage; all other events keep their original bytes. If the caller requested usage, that
+event is delivered unchanged. Unknown request fields and stream options remain intact.
+Anthropic input comes from `message_start`; output comes from the last `message_delta`.
+An incomplete stream or client disconnect has status `aborted`; an explicit SSE error has
+status `error`. Without final output usage, the number of observed content events is a
+lower-bound estimate. Missing input usage is zero. Non-stream JSON is inspected incrementally
+without retaining content. Inspection buffers at most 1 MiB per SSE event and 64 KiB per
+usage object; oversized events pass through unchanged without inspection or filtering.
+
+Four writer goroutines drain a 1,024-record queue. Each insert and its `usage_daily` upsert
+commit in one transaction, using the request's UTC start date. Database writes have a
+2-second deadline. A full queue drops metadata instead of delaying inference; failed and
+dropped writes are logged generically and counted by `usage.Writer.Counters()`. The HTTP
+shutdown grace runs first, followed by up to 5 seconds to flush accounting before closing
+the database. A database failure during that flush is logged without changing client
+responses. Quota enforcement and its configurable timezone follow in #13.
+
+The splitter has every-byte boundary tests, a no-allocation content-event check, and a
+bounded fuzz run in CI. To run a longer local fuzz check:
+
+```sh
+go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=30s -parallel=2
+```
 
 ## Citation
 

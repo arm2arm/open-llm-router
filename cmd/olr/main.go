@@ -19,6 +19,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
+	usagewriter "github.com/arm2arm/open-llm-router/internal/usage"
 )
 
 const usage = `usage: olr <command> [flags]
@@ -118,7 +119,16 @@ func serve(args []string) error {
 	}
 	defer ln.Close()
 
+	accounting := usagewriter.NewWriter(database, log)
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := accounting.Close(flushCtx); err != nil {
+			log.Error("usage shutdown flush incomplete")
+		}
+	}()
 	forwarder := proxy.New(cfg)
+	forwarder.Usage = accounting
 	defer forwarder.Close()
 	forwarder.Pools.Check(ctx)
 	// Health checks keep running during graceful shutdown until Run returns.

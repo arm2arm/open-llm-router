@@ -43,6 +43,8 @@ jobs:
         run: make vuln
       - name: Unit and integration tests (race detector)
         run: make test
+      - name: SSE splitter fuzz test
+        run: go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=10s -parallel=2
       - name: Client verification helpers
         run: make test-clients
 
