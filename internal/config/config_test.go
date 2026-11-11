@@ -108,6 +108,16 @@ func TestPortalEnvironment(t *testing.T) {
 	}
 }
 
+func TestIssuerErrorDoesNotExposeCredentials(t *testing.T) {
+	_, err := Parse([]byte(valid), lookupIn(map[string]string{"OIDC_ISSUER": "https://name:private-password@login.example/realm"}))
+	if err == nil || !strings.Contains(err.Error(), "oidc.issuer:") {
+		t.Fatal("credential-bearing issuer must be rejected")
+	}
+	if strings.Contains(err.Error(), "private-password") {
+		t.Fatal("issuer validation exposed credentials")
+	}
+}
+
 func TestLimitsTimezone(t *testing.T) {
 	for _, zone := range []string{"", "UTC", "Europe/Berlin", "Mars/Unknown", "Local"} {
 		data := valid
@@ -217,7 +227,7 @@ func TestParseRejects(t *testing.T) {
 		// Validation.
 		{name: "issuer is not a URL",
 			yaml: valid, env: map[string]string{"OIDC_ISSUER": "keycloak:8080"},
-			want: []string{"oidc.issuer:", `"keycloak:8080"`}},
+			want: []string{"oidc.issuer:", "http or https URL"}},
 		{name: "issuer is empty",
 			yaml: valid, env: map[string]string{"OIDC_ISSUER": ""},
 			want: []string{"oidc.issuer:"}},

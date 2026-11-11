@@ -332,7 +332,7 @@ func (c *Config) validate() Problems {
 
 	if c.OIDC != nil {
 		if !isIssuerURL(c.OIDC.Issuer) {
-			add("oidc.issuer: must be an http or https URL, got %q", c.OIDC.Issuer)
+			add("oidc.issuer: must be an http or https URL without credentials, query or fragment")
 		}
 		if c.OIDC.PortalClientID == "" {
 			add("oidc.portal_client_id: must be set")
