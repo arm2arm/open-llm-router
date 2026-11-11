@@ -1,5 +1,198 @@
 # Operations runbook
 
+Everything an operator needs to deploy and run the router. Behaviour in detail is in
+[REFERENCE.md](REFERENCE.md); the portal API in [PORTAL_API.md](PORTAL_API.md); metrics and
+traces in [OBSERVABILITY.md](OBSERVABILITY.md); the privacy notice in [PRIVACY.md](PRIVACY.md).
+
+## Deployment
+
+The router is one container image (`olr`, distroless, non-root, port 8080) plus PostgreSQL 17
+and an OIDC provider (Keycloak). The image carries no configuration: mount the site's config
+file at `/etc/olr/config.yaml` and pass secrets in the environment. A private deployment file
+holds the site's values for the keys of [config.example.yaml](../config.example.yaml); it does
+not belong in this repository. Run one router instance (see [Known limitations](#known-limitations)).
+
+Startup applies database migrations, checks the OIDC discovery, and fails before listening if
+any of it fails. `/healthz` is liveness; `/readyz` needs the database and one healthy replica
+per model. A first `SIGTERM` gives streams 30 s (`-shutdown-grace`) to finish.
+
+### Behind a TLS reverse proxy
+
+Terminate TLS in a reverse proxy and keep the router's port internal. The proxy must stream:
+
+- response buffering **off** (the router also sends `X-Accel-Buffering: no`);
+- read/send timeouts **at least** the largest model `timeout_s` (default 900 s);
+- request body limit **32 MiB**, the router's own limit;
+- HTTP/1.1 to the router, keep-alive on; `/metrics` not exposed publicly, or only with its token;
+- rate limiting per client address here if wanted: the router does not trust `X-Forwarded-For`.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name llm.example.org;
+    client_max_body_size 32m;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 960s;
+        proxy_send_timeout 960s;
+    }
+    location = /metrics { deny all; }
+}
+```
+
+Set `PORTAL_BASE_URL=https://llm.example.org` (secure cookies are the default and require
+HTTPS). In the identity provider, register the confidential client `olr-portal` with redirect URI
+`https://llm.example.org/portal/callback`, post-logout redirect `https://llm.example.org/portal/`,
+PKCE S256 and a groups mapper. Switching from the dev Keycloak to a production one is
+configuration only: `OIDC_ISSUER`, client ID and secret (and remove `OIDC_BACKCHANNEL_URL`).
+
+### Configuration reference
+
+The config file is YAML, read strictly: unknown keys, unset `${VAR}` references and invalid
+values stop the start with a list of every problem. Limits of 0 are refused; leave a key out for
+no limit.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `auth.default_key_lifetime_days` | 90 | lifetime of new API keys (1–36500) |
+| `limits.timezone` | UTC | IANA zone of daily/monthly quotas and daily totals |
+| `retention.usage_days` / `usage_daily_days` / `run_at` | 90 / 400 / `03:00` | how long records and daily totals are kept; when the nightly job runs |
+| `oidc.issuer`, `portal_client_id` | — / `olr-portal` | identity provider; leave `oidc` out for API keys only |
+| `oidc.groups_claim`, `username_claim` | `groups`, `preferred_username` | claim names |
+| `oidc.audience` | — | enables access tokens on `/v1/*` with this `aud` |
+| `oidc.sync_client_id`, `sync_interval_s` | `olr-sync`, 900 | group sync (runs when its secret is set) |
+| `oidc.required_claim` | — | `{name, value}` a portal login must carry |
+| `models.<name>.protocols` | — | `openai`, `anthropic` or both |
+| `models.<name>.upstream_model` | the name | model name sent to the backend |
+| `models.<name>.timeout_s` | — | wait for response headers |
+| `models.<name>.idle_timeout_s` | 30 | silence allowed between chunks |
+| `models.<name>.queue_timeout_s` | 0 | wait for a free replica when all are full |
+| `models.<name>.session_affinity` | false | `X-Session-Id` keeps a session on one replica |
+| `models.<name>.priority` | — | `{interactive, batch}` sent as vLLM `priority` |
+| `models.<name>.pool[]` | — | replicas: `url` (origin), `weight`, `max_inflight`, `health_path` (`/health`), `bearer_token_env` |
+| `groups.<name>.models` | — | allowed models, `"*"` for all |
+| `groups.<name>.tokens_per_day`, `tokens_per_month`, `rpm`, `tpm` | unlimited | quotas and rates per user |
+| `groups.<name>.max_concurrent`, `max_concurrent_batch` | unlimited | calls at once for interactive / batch keys |
+| `groups.<name>.strict_quota` | false | reserve `max_tokens` + request size before a call |
+| `groups.<name>.priority`, `admin` | 0, false | added to the class priority; portal admin pages |
+| `aliases` | — | client model name → configured model |
+| `forwarders.header_map`, `unknown_user` | `X-OLR-End-User: username`, `reject` | trusted forwarders |
+
+| Environment variable | Meaning |
+|---|---|
+| `OLR_CONFIG` | config file path (image: `/etc/olr/config.yaml`) |
+| `OLR_DATABASE_URL` | Postgres URL — **secret** |
+| `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables the portal |
+| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | client secrets — **secret** |
+| `OIDC_AUDIENCE`, `OIDC_SYNC_CLIENT_ID`, `OIDC_REQUIRED_CLAIM=name=value` | override the `oidc` keys |
+| `OIDC_BACKCHANNEL_URL` | reach the issuer at an internal URL; the issuer stays the public one |
+| `PORTAL_BASE_URL`, `PORTAL_COOKIE_SECURE` | public origin; secure cookies (default true) |
+| `OLR_METRICS_TOKEN` | bearer token for `/metrics` — **secret**; empty refuses scrapes |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | OTLP/HTTP traces |
+| `OLR_TRACE_USER_ID` | add the user ID to spans (default false) |
+| any name in `bearer_token_env` | a backend's API key — **secret** |
+
+## Everyday operations
+
+### Add a model or a replica
+
+Edit the config file — a new entry under `models` or a new `pool` replica with its `weight`
+(relative throughput) and `max_inflight` — then restart the router. Restarts are graceful;
+clients of streams still running after the grace period see an aborted stream. A replica is
+used once it passes two health checks. Give access with `groups.<name>.models`, and add
+aliases for the names clients send by default.
+
+### Disable a user, revoke keys
+
+```sh
+olr admin user list -match alice
+olr admin user disable -id <uuid>         # keys, sessions and forwarded calls stop at once
+olr admin key list -user <uuid>
+olr admin key revoke -id <key uuid>
+```
+
+or the portal's **Admin** page. Every router clears its key cache before the command returns.
+A user disabled in Keycloak is disabled here by the group sync. Users can revoke their own keys.
+
+### Change one user's limits
+
+`olr admin override set -user <uuid> -field tokens_per_day -value 5000000 -reason "thesis"`
+(`-value unlimited` lifts a limit), `override clear` and `override list`, or the **Admin** page.
+Changes apply at the user's next request.
+
+### Rotate secrets
+
+| Secret | How |
+|---|---|
+| Postgres password | `ALTER ROLE olr PASSWORD '…'`, update `OLR_DATABASE_URL`, restart |
+| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, restart; logins in progress must start again, sessions stay |
+| `OLR_METRICS_TOKEN` | set the new token in the router and in Prometheus's credentials file, restart both |
+| backend tokens (`bearer_token_env`) | configure the backend to accept old and new, update the router, restart, drop the old one |
+| API keys | users create a new key and revoke the old one; keys expire after `auth.default_key_lifetime_days` |
+
+### Back up Postgres
+
+The database holds users, keys (hashes), sessions, overrides and usage. Back it up daily:
+
+```sh
+pg_dump --format=custom --file=olr-$(date +%F).dump "$OLR_DATABASE_URL"
+pg_restore --clean --if-exists --dbname="$OLR_DATABASE_URL" olr-YYYY-MM-DD.dump   # restore, router stopped
+```
+
+Keep backups no longer than the usage retention, or erasures (below) come back with a restore;
+after restoring an old backup, repeat the erasures done since.
+
+### Connect Prometheus and a tracing backend
+
+Set `OLR_METRICS_TOKEN` and scrape `/metrics` with it; set `OTEL_EXPORTER_OTLP_ENDPOINT` to a
+collector or Jaeger (OTLP/HTTP). Scrape configuration, metric names, the Grafana dashboard and
+span attributes are in [OBSERVABILITY.md](OBSERVABILITY.md); `make observability-up` shows the
+whole setup locally.
+
+### Log retention
+
+The router logs one JSON line per request to stdout: request ID, user ID, 12-character key
+prefix, model, replica, status, tokens and timing, never content. Keep these logs no longer
+than `retention.usage_days`, e.g. `docker` log rotation with `max-size`/`max-file`, or the
+retention of the log system they are shipped to.
+
+## Limits and their errors
+
+Calls pass, in order: authentication, model allow-list, concurrency (`max_concurrent` or
+`max_concurrent_batch` for the key's class), `rpm`, `tpm`, `tokens_per_day`, `tokens_per_month`.
+A refused call gets **429** with `Retry-After` (seconds) and the protocol's error shape:
+
+```json
+{"error":{"code":429,"type":"rate_limit_error","param":null,"limit":"tpm",
+           "message":"tpm exceeded; retry at 2026-11-11T12:00:21Z","reset_at":"2026-11-11T12:00:21.4Z"}}
+```
+
+Anthropic clients get the same inside `{"type":"error","error":{…}}`. `limit` names the gate;
+`reset_at` is when it opens again (for concurrency an estimate of one second). Other answers:
+401 bad or missing credentials; 403 model not allowed, or unknown/disabled forwarded user;
+400 malformed body or, with `strict_quota`, a call without `max_tokens`; 408 a body not sent
+within two minutes; 413 a body over 32 MiB; 503 no replica free after `queue_timeout_s`, or the
+database is unreachable. Users see their own limits and use in the portal and at `/v1/me/usage`.
+
+## Known limitations
+
+- One router instance: concurrency, RPM and TPM counters, the queue and session affinity are in
+  memory. More than one replica needs shared counters (Redis or Postgres), see PLAN §4.
+- Configuration changes need a restart; there is no reload.
+- Quotas count tokens as the backend reports them; a stream that ends without usage is counted
+  by its content events, a lower bound. Without `strict_quota`, calls already admitted can
+  overshoot a quota.
+- A call refused by `tpm` or a quota still counts against `rpm`.
+- Per-request records are one table; monthly partitions are not used (see Usage retention).
+- Exported traces and shipped logs are outside the router's erasure and retention.
+- Users are re-enabled by an operator only, never by the group sync.
+
+
 ## Erase a user on request
 
 Find the user, then delete them. Deletion removes the account with its keys, sessions,
