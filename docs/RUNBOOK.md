@@ -16,6 +16,24 @@ A user who signs in again afterwards gets a new, empty account. To block access 
 `olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the
 database; see [PRIVACY.md](PRIVACY.md).
 
+## Federated login and the required claim
+
+Federated login (an institutional IdP, eduGAIN or a community AAI) is Keycloak configuration:
+add the upstream as an identity provider of the realm and map its attributes. The router keeps
+trusting only Keycloak. The dev stack simulates this with a second realm, `upstream-idp`
+(users `fed-member` and `fed-guest`, passwords `<user>-dev-only`), brokered into `olr-dev`:
+
+- an attribute importer stores the upstream `affiliation` claim on the `olr-dev` user;
+- an *advanced claim to group* mapper puts `affiliation = member@example.org` into `students`;
+- the `olr-portal` client emits `affiliation` in the ID token.
+
+As defence in depth the router refuses portal logins whose ID token lacks a claim:
+`OIDC_REQUIRED_CLAIM=affiliation=member@example.org` (or `oidc.required_claim: {name, value}`).
+A string claim must equal the value; an array must contain it. A refused login gets 403 and
+creates no router user. Compose sets this default; the local dev users carry the affiliation.
+`make brokered-check` signs in `fed-member` through the broker, creates and uses a key, and
+checks that `fed-guest` is refused.
+
 ## Service tokens and group sync (Keycloak)
 
 **Access tokens on `/v1/*`.** With `oidc.audience` (`OIDC_AUDIENCE`, e.g. `olr-api`) set, a
