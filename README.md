@@ -47,7 +47,7 @@ empty volume, so changing them later also requires updating the database or recr
 
 | Service | Host endpoint | Purpose |
 |---|---|---|
-| `router` | `http://localhost:8080` | APIs, `/portal/`, protected `/metrics`, health probes |
+| `router` | `http://localhost:8080` | public home page with portal sign-in, APIs, `/portal/`, protected `/metrics`, health probes |
 | `postgres` | `localhost:5432` | database `olr`, user `olr`, public dev password `olr-dev-only` |
 | `mock-llm-a` | `http://localhost:8001` | `chat-model`, 20 ms per token |
 | `mock-llm-b` | `http://localhost:8002` | `chat-model`, 40 ms per token |
@@ -148,6 +148,7 @@ request or response bodies.
 | `internal/usage` | incremental usage inspection, timing metadata, asynchronous atomic accounting |
 | `internal/limits` | per-user concurrency, sliding-minute RPM, calendar token quotas and usage snapshots |
 | `internal/portal` | OIDC code/PKCE login, opaque sessions and scoped JSON APIs |
+| `internal/home` | public project overview and portal sign-in entry point at `/` |
 | `web` | Vite/React/TypeScript portal, Tailwind and shadcn/ui, TanStack Query, embedded build assets |
 | `internal/metrics` | protected Prometheus metrics and opt-in OTLP/HTTP call spans |
 | `internal/server` | HTTP server: routes, request ID and request log, `/healthz`, `/readyz`, graceful shutdown |

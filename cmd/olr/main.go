@@ -17,6 +17,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/home"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/portal"
@@ -157,6 +158,7 @@ func serve(args []string) error {
 	go func() { defer close(healthDone); forwarder.Pools.Run(healthCtx) }()
 	defer func() { cancelHealth(); <-healthDone }()
 	srv := server.New(log)
+	srv.Handle("/", home.New(cfg.OIDC != nil))
 	srv.SetAPIMiddleware(authenticator.Middleware)
 	srv.SetReadiness(func(ctx context.Context) bool {
 		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
