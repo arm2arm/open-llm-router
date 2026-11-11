@@ -9,6 +9,7 @@ SDK_RUN     ?= uv run
 build: web
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
 	CGO_ENABLED=0 go build -trimpath -o bin/mock-llm ./cmd/mock-llm
+	CGO_ENABLED=0 go build -trimpath -o bin/olr-loadtest ./cmd/olr-loadtest
 
 lint:
 	@unformatted="$$(gofmt -l cmd internal tests web/assets.go)"; \
@@ -100,6 +101,11 @@ bench-real:
 
 down:
 	$(COMPOSE) down
+
+# Unique project, private network, disposable database; leaves the dev stack up.
+.PHONY: loadtest
+loadtest:
+	@bash tests/loadtest/run.sh $(LOADTEST_ARGS)
 
 .PHONY: web web-check
 web:

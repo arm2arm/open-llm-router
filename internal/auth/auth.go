@@ -25,6 +25,7 @@ const keyLength = 4 + 43 // 32 random bytes, encoded as fixed-width base62
 
 var ErrInvalidKey = errors.New("invalid API key")
 var ErrNotFound = errors.New("user or key not found")
+var errCacheChanged = errors.New("authentication cache changed during lookup")
 
 // Principal identifies the caller for authorization and usage accounting.
 type Principal struct {
@@ -95,6 +96,7 @@ type Authenticator struct {
 	store      keyStore
 	mu         sync.Mutex
 	cache      map[[32]byte]cacheEntry
+	refreshing map[[32]byte]chan struct{}
 	generation uint64
 	listening  bool
 	now        func() time.Time
@@ -128,40 +130,72 @@ func (a *Authenticator) Authenticate(ctx context.Context, key string) (Principal
 			return entry.principal, nil
 		}
 		delete(a.cache, hash)
+		var refresh chan struct{}
+		if a.listening {
+			if pending := a.refreshing[hash]; pending != nil {
+				a.mu.Unlock()
+				select {
+				case <-ctx.Done():
+					return Principal{}, ctx.Err()
+				case <-pending:
+					continue // Recheck cache, expiry and invalidation generation.
+				}
+			}
+			if a.refreshing == nil {
+				a.refreshing = make(map[[32]byte]chan struct{})
+			}
+			refresh = make(chan struct{})
+			a.refreshing[hash] = refresh
+		}
 		a.mu.Unlock()
-
-		record, err := a.store.lookup(ctx, hash)
-		if err != nil {
-			return Principal{}, err
-		}
-		now := a.now()
-		if subtle.ConstantTimeCompare(hash[:], record.hash) != 1 || !record.enabled || record.revoked ||
-			(record.expires != nil && !now.Before(*record.expires)) {
-			return Principal{}, ErrInvalidKey
-		}
-		if err := a.store.touch(ctx, record.KeyID); err != nil {
-			return Principal{}, err
-		}
-		until := now.Add(cacheTTL)
-		if record.expires != nil && record.expires.Before(until) {
-			until = *record.expires
-		}
-		a.mu.Lock()
-		if generation != a.generation {
-			// A revoke may have committed while the lookup was in flight.
+		principal, err := a.refresh(ctx, hash, generation)
+		if refresh != nil {
+			a.mu.Lock()
+			delete(a.refreshing, hash)
+			close(refresh)
 			a.mu.Unlock()
+		}
+		if errors.Is(err, errCacheChanged) {
 			continue
 		}
-		if a.listening {
-			if len(a.cache) >= maxCachedKeys {
-				a.cache = make(map[[32]byte]cacheEntry)
-			}
-			a.cache[hash] = cacheEntry{principal: record.Principal, until: until}
-		}
-		a.mu.Unlock()
-		record.Groups = slices.Clone(record.Groups)
-		return record.Principal, nil
+		return principal, err
 	}
+}
+
+// refresh is shared only while the invalidation listener is healthy. Waiters
+// own their contexts; a cancelled owner wakes them to retry, rather than
+// cancelling their requests. Without a listener every call still reads the DB.
+func (a *Authenticator) refresh(ctx context.Context, hash [32]byte, generation uint64) (Principal, error) {
+	record, err := a.store.lookup(ctx, hash)
+	if err != nil {
+		return Principal{}, err
+	}
+	now := a.now()
+	if subtle.ConstantTimeCompare(hash[:], record.hash) != 1 || !record.enabled || record.revoked ||
+		(record.expires != nil && !now.Before(*record.expires)) {
+		return Principal{}, ErrInvalidKey
+	}
+	if err := a.store.touch(ctx, record.KeyID); err != nil {
+		return Principal{}, err
+	}
+	until := now.Add(cacheTTL)
+	if record.expires != nil && record.expires.Before(until) {
+		until = *record.expires
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if generation != a.generation {
+		// Never repopulate the cache from a lookup that raced a revocation.
+		return Principal{}, errCacheChanged
+	}
+	if a.listening {
+		if len(a.cache) >= maxCachedKeys {
+			a.cache = make(map[[32]byte]cacheEntry)
+		}
+		a.cache[hash] = cacheEntry{principal: record.Principal, until: until}
+	}
+	record.Groups = slices.Clone(record.Groups)
+	return record.Principal, nil
 }
 
 // Middleware authenticates the entire /v1 namespace, including unknown routes

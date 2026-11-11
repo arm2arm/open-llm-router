@@ -1,0 +1,12 @@
+# Benchmark capacities, deliberately separate from the small pilot defaults.
+limits: {timezone: UTC}
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    timeout_s: 120
+    idle_timeout_s: 30
+    pool:
+      - {url: http://mock-llm-a:8000, weight: 2, max_inflight: 8192}
+      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 8192}
+groups:
+  loadtest: {models: [chat-model], max_concurrent: 16384}

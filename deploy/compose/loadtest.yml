@@ -1,0 +1,67 @@
+# Isolated, synthetic benchmark. No host ports and no shared application data.
+# Start it through `make loadtest`; the script creates a unique Compose project.
+services:
+  router:
+    build:
+      context: ../..
+      target: olr
+    environment:
+      OLR_DATABASE_URL: postgres://olr:olr-loadtest-dev-only@postgres:5432/olr?sslmode=disable
+      OLR_METRICS_TOKEN: olr-loadtest-metrics-dev-only
+    volumes:
+      - ./loadtest.config.yaml:/etc/olr/config.yaml:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      mock-llm-a: {condition: service_started}
+      mock-llm-b: {condition: service_started}
+    cpus: ${OLR_LOADTEST_CPUS:-4}
+    mem_limit: 1g
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}
+    stop_grace_period: 35s
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: olr
+      POSTGRES_DB: olr
+      POSTGRES_PASSWORD: olr-loadtest-dev-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U olr -d olr"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    cpus: ${OLR_LOADTEST_AUX_CPUS:-2}
+    mem_limit: 512m
+
+  mock-llm-a:
+    build: {context: ../.., target: mock-llm}
+    environment:
+      MOCK_TOKENS: 128
+      MOCK_TOKEN_DELAY: 5ms
+    cpus: ${OLR_LOADTEST_AUX_CPUS:-2}
+    mem_limit: 512m
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}
+
+  mock-llm-b:
+    build: {context: ../.., target: mock-llm}
+    environment:
+      MOCK_TOKENS: 128
+      MOCK_TOKEN_DELAY: 10ms
+    cpus: ${OLR_LOADTEST_AUX_CPUS:-2}
+    mem_limit: 512m
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}
+
+  loadtest:
+    profiles: [tools]
+    build: {context: ../.., target: loadtest}
+    environment:
+      OLR_API_KEY: ${OLR_API_KEY:-}
+      OLR_METRICS_TOKEN: olr-loadtest-metrics-dev-only
+      OLR_LOADTEST_DATABASE_URL: postgres://olr:olr-loadtest-dev-only@postgres:5432/olr?sslmode=disable
+    cpus: ${OLR_LOADTEST_CPUS:-4}
+    mem_limit: 1g
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}

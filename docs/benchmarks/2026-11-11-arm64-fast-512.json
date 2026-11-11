@@ -1,0 +1,199 @@
+{
+  "Concurrency": 512,
+  "RequestsPerBatch": 2048,
+  "Runs": 1,
+  "Tokens": 128,
+  "Mock": true,
+  "MockDelay": "0s",
+  "Comparisons": [
+    {
+      "Run": 1,
+      "Protocol": "openai",
+      "Direct": {
+        "Requests": 2048,
+        "Completed": 2048,
+        "Aborted": 0,
+        "PeakClients": 512,
+        "errors": {},
+        "P50TTFTMS": 66.3435,
+        "P95TTFTMS": 223.873583,
+        "MedianTPS": 190523.91075079923,
+        "AggregateTPS": 575526.2894537927,
+        "Seconds": 0.455485709
+      },
+      "Router": {
+        "Requests": 2048,
+        "Completed": 2048,
+        "Aborted": 0,
+        "PeakClients": 512,
+        "errors": {},
+        "P50TTFTMS": 63.312375,
+        "P95TTFTMS": 264.52425,
+        "MedianTPS": 188602.1904585112,
+        "AggregateTPS": 553399.5851783047,
+        "Seconds": 0.4736975
+      },
+      "AddedP95TTFTMS": 40.650667,
+      "MedianTPSRatio": 0.9899134954520139,
+      "AggregateTPSRatio": 0.9615539642915573,
+      "PerformancePassed": false
+    },
+    {
+      "Run": 1,
+      "Protocol": "anthropic",
+      "Direct": {
+        "Requests": 2048,
+        "Completed": 2048,
+        "Aborted": 0,
+        "PeakClients": 512,
+        "errors": {},
+        "P50TTFTMS": 69.180709,
+        "P95TTFTMS": 149.490917,
+        "MedianTPS": 230629.4003453993,
+        "AggregateTPS": 696158.4383777649,
+        "Seconds": 0.376557958
+      },
+      "Router": {
+        "Requests": 2048,
+        "Completed": 2048,
+        "Aborted": 0,
+        "PeakClients": 512,
+        "errors": {},
+        "P50TTFTMS": 50.408167,
+        "P95TTFTMS": 199.298834,
+        "MedianTPS": 271754.24856740574,
+        "AggregateTPS": 753559.6555364474,
+        "Seconds": 0.34787425
+      },
+      "AddedP95TTFTMS": 49.807917,
+      "MedianTPSRatio": 1.1783157228021073,
+      "AggregateTPSRatio": 1.082454243164017,
+      "PerformancePassed": false
+    }
+  ],
+  "Cancellations": null,
+  "Runtime": [
+    {
+      "At": "2026-11-11T11:33:53.187678052Z",
+      "CPUSeconds": 0.86,
+      "CPUCores": 0,
+      "ResidentBytes": 68853760,
+      "HeapInUse": 40460288,
+      "Goroutines": 851,
+      "ReplicaInFlight": 0,
+      "UserInFlight": 0,
+      "WriteFailures": 0,
+      "Dropped": 0,
+      "RequestsByReplica": {
+        "http://mock-llm-a:8000": 626,
+        "http://mock-llm-b:8000": 398
+      }
+    },
+    {
+      "At": "2026-11-11T11:33:56.38367572Z",
+      "CPUSeconds": 4.67,
+      "CPUCores": 0,
+      "ResidentBytes": 84058112,
+      "HeapInUse": 39084032,
+      "Goroutines": 884,
+      "ReplicaInFlight": 0,
+      "UserInFlight": 0,
+      "WriteFailures": 0,
+      "Dropped": 690,
+      "RequestsByReplica": {
+        "http://mock-llm-a:8000": 3562,
+        "http://mock-llm-b:8000": 2582
+      }
+    }
+  ],
+  "Peak": {
+    "Samples": 12,
+    "CPUCores": 3.2990838086531387,
+    "ResidentBytes": 84058112,
+    "HeapInUse": 48676864,
+    "Goroutines": 2145,
+    "ReplicaInFlight": 511,
+    "UserInFlight": 511
+  },
+  "Checks": [
+    {
+      "name": "openai run 1: complete streams",
+      "passed": true,
+      "detail": "direct and router must have zero errors"
+    },
+    {
+      "name": "openai run 1: full client concurrency",
+      "passed": true,
+      "detail": "requested concurrent clients must actually overlap"
+    },
+    {
+      "name": "anthropic run 1: complete streams",
+      "passed": true,
+      "detail": "direct and router must have zero errors"
+    },
+    {
+      "name": "anthropic run 1: full client concurrency",
+      "passed": true,
+      "detail": "requested concurrent clients must actually overlap"
+    },
+    {
+      "name": "runtime samples collected",
+      "passed": true,
+      "detail": "protected Prometheus snapshots every 250 ms"
+    },
+    {
+      "name": "replica leases and user concurrency slots released",
+      "passed": true,
+      "detail": "both protected metrics and /v1/me/usage"
+    },
+    {
+      "name": "no usage writer failures or drops",
+      "passed": false,
+      "detail": "compare counters before/after the run"
+    },
+    {
+      "name": "one usage row per router request",
+      "passed": false,
+      "detail": "expected 6144, observed 5454, including warm-ups and disconnects"
+    },
+    {
+      "name": "replica_1 has no in-flight requests",
+      "passed": true,
+      "detail": "mock counter"
+    },
+    {
+      "name": "replica_2 has no in-flight requests",
+      "passed": true,
+      "detail": "mock counter"
+    },
+    {
+      "name": "disconnects reach the backends",
+      "passed": true,
+      "detail": "at least 0 expected; 0 observed"
+    }
+  ],
+  "RouterRequests": 6144,
+  "UsageRows": 5454,
+  "ReplicaRequests": {
+    "http://mock-llm-a:8000": 2936,
+    "http://mock-llm-b:8000": 2184
+  },
+  "ReplicaAborted": {
+    "replica_1": 0,
+    "replica_2": 0
+  },
+  "AccountingVerified": false,
+  "LeakStabilityVerified": false,
+  "PerformanceEnforced": false,
+  "MaxAddedP95MS": 5,
+  "MaxTPSLoss": 0.02,
+  "Passed": false,
+  "GoVersion": "go1.27.4",
+  "Platform": "linux/arm64",
+  "AvailableCPUs": 18,
+  "ClientGOMAXPROCS": 4,
+  "Limitations": [
+    "Fewer than three runs cannot establish memory stability.",
+    "Performance thresholds were measured but not enforced."
+  ]
+}

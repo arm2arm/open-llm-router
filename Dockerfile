@@ -18,7 +18,13 @@ COPY internal/ internal/
 COPY web/assets.go web/assets.go
 COPY --from=portal-build /src/web/dist web/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/olr ./cmd/olr \
- && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mock-llm ./cmd/mock-llm
+ && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mock-llm ./cmd/mock-llm \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/olr-loadtest ./cmd/olr-loadtest
+
+FROM gcr.io/distroless/static-debian13:nonroot AS loadtest
+COPY --from=build /out/olr-loadtest /usr/local/bin/olr-loadtest
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/olr-loadtest"]
 
 # Build with `docker build --target mock-llm -t olr-mock-llm .` when only
 # the deterministic test backend is needed.
