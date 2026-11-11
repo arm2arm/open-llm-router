@@ -185,6 +185,7 @@ func serve(args []string) error {
 			return err
 		}
 		defer portalHandler.Close()
+		portalHandler.Pools = forwarder.Pools
 		srv.Handle("/portal", portalHandler)
 		srv.Handle("/portal/", portalHandler)
 	}

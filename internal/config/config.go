@@ -128,6 +128,8 @@ type Group struct {
 	// StrictQuota reserves max_tokens plus the request size before a call,
 	// so concurrent calls cannot exceed tokens_per_day or tokens_per_month.
 	StrictQuota bool `yaml:"strict_quota"`
+	// Admin grants the portal's admin pages to the group's members.
+	Admin bool `yaml:"admin"`
 }
 
 // Problems lists everything found wrong with a config file in one pass.

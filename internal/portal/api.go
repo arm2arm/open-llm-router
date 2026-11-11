@@ -19,7 +19,8 @@ func (h *Handler) access(u user) policy.Policy {
 }
 func effective(p policy.Policy) limits.EffectiveLimits { return limits.Effective(p) }
 func (h *Handler) me(w http.ResponseWriter, r *http.Request, u user) {
-	respond(w, 200, map[string]any{"user": u, "limits": effective(h.access(u))})
+	access := h.access(u)
+	respond(w, 200, map[string]any{"user": u, "limits": effective(access), "admin": access.Admin})
 }
 
 func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
