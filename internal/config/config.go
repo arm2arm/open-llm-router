@@ -136,11 +136,27 @@ type Portal struct {
 
 // Model is one model name served to clients and the replicas behind it.
 type Model struct {
-	Protocols     []string  `yaml:"protocols"`
-	UpstreamModel string    `yaml:"upstream_model"`
-	TimeoutS      int       `yaml:"timeout_s"`
-	IdleTimeoutS  int       `yaml:"idle_timeout_s"` // default 30; between response chunks
-	Pool          []Replica `yaml:"pool"`
+	Protocols     []string `yaml:"protocols"`
+	UpstreamModel string   `yaml:"upstream_model"`
+	TimeoutS      int      `yaml:"timeout_s"`
+	IdleTimeoutS  int      `yaml:"idle_timeout_s"` // default 30; between response chunks
+	// QueueTimeoutS lets a call wait this long for a free replica when
+	// every replica is at max_inflight; 0 answers 503 at once.
+	QueueTimeoutS int `yaml:"queue_timeout_s"`
+	// SessionAffinity sends calls with the same X-Session-Id to the same
+	// replica while it is healthy and has capacity (prefix-cache reuse).
+	SessionAffinity bool `yaml:"session_affinity"`
+	// Priority, if set, is sent to the backend as the request field
+	// "priority" (vLLM with --scheduling-policy priority; lower is sooner).
+	Priority *Priorities `yaml:"priority"`
+	Pool     []Replica   `yaml:"pool"`
+}
+
+// Priorities maps key classes to backend priorities; a group's priority is
+// added to them.
+type Priorities struct {
+	Interactive int `yaml:"interactive"`
+	Batch       int `yaml:"batch"`
 }
 
 // Replica is one backend server of a model.
@@ -170,6 +186,9 @@ type Group struct {
 	StrictQuota bool `yaml:"strict_quota"`
 	// Admin grants the portal's admin pages to the group's members.
 	Admin bool `yaml:"admin"`
+	// Priority is added to the key class's priority (lower is sooner), for
+	// the router's queue and the backend's scheduler.
+	Priority int `yaml:"priority"`
 }
 
 // Problems lists everything found wrong with a config file in one pass.
@@ -486,6 +505,9 @@ func (c *Config) validate() Problems {
 		}
 		if m.IdleTimeoutS <= 0 {
 			add("%s.idle_timeout_s: must be greater than 0", at)
+		}
+		if m.QueueTimeoutS < 0 || m.QueueTimeoutS > m.TimeoutS {
+			add("%s.queue_timeout_s: must be between 0 and timeout_s", at)
 		}
 		if len(m.Pool) == 0 {
 			add("%s.pool: at least one replica is required", at)

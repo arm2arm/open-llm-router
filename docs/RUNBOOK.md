@@ -16,6 +16,27 @@ A user who signs in again afterwards gets a new, empty account. To block access 
 `olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the
 database; see [PRIVACY.md](PRIVACY.md).
 
+## Queueing, session affinity and priority
+
+Per model:
+
+- `queue_timeout_s`: when every replica is at `max_inflight`, a call waits up to this long for
+  a free slot instead of getting 503 at once. Waiting calls are served in priority order, first
+  come first served within a priority; a call that does not get a slot in time gets
+  503 with `Retry-After: 1`. `olr_queue_waiting{model}` shows the queue. Keep it well below the
+  reverse proxy's read timeout.
+- `session_affinity: true`: calls with the same `X-Session-Id` header go to the same replica
+  (weighted rendezvous hashing) while it is healthy and below `max_inflight`, so the backend's
+  prefix cache is reused; otherwise they go to the least-loaded replica.
+- `priority: {interactive: 0, batch: 10}`: the router sets the request field `priority` to the
+  key class's value plus the caller's group `priority` (the lowest of their groups), replacing
+  any value the client sent. Start vLLM with `--scheduling-policy priority`; lower values are
+  scheduled first. Verified on vLLM 0.33.0 for `/v1/chat/completions` and `/v1/messages`. Without
+  this setting the field passes through unchanged.
+
+The router's own queue orders calls the same way — interactive before batch — with or without
+`priority`; batch keys rank 10 after interactive ones by default.
+
 ## Federated login and the required claim
 
 Federated login (an institutional IdP, eduGAIN or a community AAI) is Keycloak configuration:
