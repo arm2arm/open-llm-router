@@ -120,6 +120,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer authenticator.Close()
+	authenticator.Forwarders = cfg.Forwarders
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ln, err := net.Listen("tcp", *listen)

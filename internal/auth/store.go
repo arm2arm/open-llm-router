@@ -17,10 +17,10 @@ type postgresStore struct{ pool *pgxpool.Pool }
 
 func (s postgresStore) lookup(ctx context.Context, hash [32]byte) (keyRecord, error) {
 	var r keyRecord
-	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,
+	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.trusted_forwarder, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = u.id)
 		FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.hash = $1`, hash[:]).
-		Scan(&r.KeyID, &r.KeyClass, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.Overrides)
+		Scan(&r.KeyID, &r.KeyClass, &r.TrustedForwarder, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.Overrides)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrInvalidKey
 	}
@@ -83,6 +83,8 @@ type KeyInfo struct {
 	Expires  *time.Time `json:"expires"`
 	Revoked  bool       `json:"revoked"`
 	Class    string     `json:"class"`
+	// TrustedForwarder keys may name the end user of a call.
+	TrustedForwarder bool `json:"trusted_forwarder"`
 }
 
 // CreateKey is the only operation that returns a plaintext key. A positive
@@ -91,9 +93,20 @@ func (a Admin) CreateKey(ctx context.Context, userID, label string, lifetime tim
 	return a.CreateKeyOfClass(ctx, userID, label, "interactive", lifetime)
 }
 
+// CreateForwarderKey creates a key for an application such as Open WebUI
+// that may name the end user of each call (forwarders.header_map). Only
+// operators create these; the portal cannot.
+func (a Admin) CreateForwarderKey(ctx context.Context, userID, label, class string, lifetime time.Duration) (string, error) {
+	return a.createKey(ctx, userID, label, class, lifetime, true)
+}
+
 // CreateKeyOfClass creates an "interactive" or a "batch" key; the classes
 // have separate concurrency limits.
 func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string, lifetime time.Duration) (string, error) {
+	return a.createKey(ctx, userID, label, class, lifetime, false)
+}
+
+func (a Admin) createKey(ctx context.Context, userID, label, class string, lifetime time.Duration, trusted bool) (string, error) {
 	if lifetime <= 0 {
 		return "", errors.New("key lifetime must be positive")
 	}
@@ -105,9 +118,9 @@ func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string
 		return "", err
 	}
 	hash := sha256.Sum256([]byte(key))
-	result, err := a.Pool.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class)
-		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6
-		FROM users WHERE id = $1 AND enabled`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class)
+	result, err := a.Pool.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
+		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
+		FROM users WHERE id = $1 AND enabled`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
 	if err != nil {
 		return "", errors.New("create API key failed")
 	}
@@ -118,7 +131,7 @@ func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string
 }
 
 func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class
+	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class, trusted_forwarder
 		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID)
 	if err != nil {
 		return nil, errors.New("list API keys failed")
@@ -127,7 +140,7 @@ func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 	keys := []KeyInfo{}
 	for rows.Next() {
 		var k KeyInfo
-		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class); err != nil {
+		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class, &k.TrustedForwarder); err != nil {
 			return nil, errors.New("read API key metadata failed")
 		}
 		keys = append(keys, k)
