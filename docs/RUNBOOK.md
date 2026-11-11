@@ -16,6 +16,27 @@ A user who signs in again afterwards gets a new, empty account. To block access 
 `olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the
 database; see [PRIVACY.md](PRIVACY.md).
 
+## Open WebUI and other trusted forwarders
+
+An application that serves many users with one key can attribute each call to its user:
+
+1. Create a service user and a forwarder key:
+   `olr admin user add -username open-webui -groups staff`, then
+   `olr admin key create -user <uuid> -label open-webui -trusted-forwarder`.
+2. Map the header the application sends, in the config file:
+   `forwarders: {header_map: {X-OpenWebUI-User-Email: email}, unknown_user: reject}`.
+   `X-OLR-End-User: <username>` always works.
+3. In Open WebUI set `ENABLE_FORWARD_USER_INFO_HEADERS=true` and add the router as an OpenAI
+   connection (`<router>/v1`) with the forwarder key.
+
+Each call with the header is authorized against the end user's groups, counts against their
+limits and quotas, and is recorded with `usage.forwarded_for` set to them, so it appears in
+their portal and they can delete it. Users must exist in the router — they have signed in to
+the portal once, or were added with `olr admin user add` — and their email must be unique.
+Otherwise the call is refused with 403 (`unknown_user: reject`) or served as the forwarder's
+own (`forwarder_policy`). A disabled user is always refused. The mapped headers are removed
+before the call reaches a backend, and ignored from keys without the flag.
+
 ## Usage retention
 
 The router deletes per-request records older than `retention.usage_days` (default 90) and

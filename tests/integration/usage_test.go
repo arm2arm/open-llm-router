@@ -35,10 +35,11 @@ type usageRouter struct {
 }
 
 type usageOptions struct {
-	group     *config.Group
-	location  *time.Location
-	clock     func() time.Time
-	configure func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
+	group      *config.Group
+	location   *time.Location
+	clock      func() time.Time
+	configure  func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
+	forwarders *config.Forwarders
 }
 
 func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOptions) *usageRouter {
@@ -58,6 +59,9 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	authenticator, err := auth.New(t.Context(), f.pool)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(options) > 0 && options[0].forwarders != nil {
+		authenticator.Forwarders = *options[0].forwarders
 	}
 	log := slog.New(slog.NewJSONHandler(f.logs, nil))
 	location, clock := time.UTC, time.Now

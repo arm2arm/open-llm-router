@@ -40,7 +40,7 @@ func (s postgresStore) load(ctx context.Context, user string, period calendar) (
 			COALESCE(sum(output_tokens::double precision * 1000 / NULLIF(latency_ms - ttfb_ms, 0))
 				FILTER (WHERE is_stream AND output_tokens > 0 AND latency_ms > ttfb_ms), 0),
 			count(*) FILTER (WHERE is_stream AND output_tokens > 0 AND latency_ms > ttfb_ms)
-			FROM usage WHERE user_id=$1 AND ts >= $2 AND ts < $3 GROUP BY model`, user, period.day, period.nextDay)
+			FROM usage WHERE (forwarded_for=$1 OR (user_id=$1 AND forwarded_for IS NULL)) AND ts >= $2 AND ts < $3 GROUP BY model`, user, period.day, period.nextDay)
 		if err != nil {
 			return err
 		}
