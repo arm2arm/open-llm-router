@@ -12,6 +12,10 @@
 auth:
   default_key_lifetime_days: 90
 
+# IANA timezone for both daily accounting and day/month quota resets.
+limits:
+  timezone: UTC                    # default; e.g. Europe/Berlin
+
 # Portal login. Leave the section out to run without a portal (API keys only).
 oidc:
   issuer: ${OIDC_ISSUER}            # dev: http://keycloak:8080/realms/olr-dev
@@ -37,7 +41,7 @@ models:
 # Policy per group: model access is the union over matching memberships; no
 # matching group means no access. Aliases inherit access to their target model.
 # Limits take the largest value per field; an omitted limit in any matching
-# group means unlimited. Numeric enforcement follows in #13.
+# group means unlimited. Limits apply per user across all their keys/replicas.
 groups:
   staff:    {models: ["*"], tokens_per_day: 2000000, rpm: 60, max_concurrent: 4}
   students: {models: [chat-model], tokens_per_day: 300000, rpm: 20, max_concurrent: 2}

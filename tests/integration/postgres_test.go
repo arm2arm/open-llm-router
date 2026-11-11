@@ -117,6 +117,22 @@ func wantConstraint(t *testing.T, pool *pgxpool.Pool, code, sql string, args ...
 	}
 }
 
+func TestSchemaAddsStreamFlagToExistingUsage(t *testing.T) {
+	database := newDatabase(t)
+	pool := openDatabase(t, database.dsn)
+	id := user(t, pool, "local", "legacy")
+	execSQL(t, pool, `ALTER TABLE usage DROP COLUMN is_stream`)
+	execSQL(t, pool, `INSERT INTO usage(user_id,model,replica,protocol,status,input_tokens,output_tokens,latency_ms,ttfb_ms)
+		VALUES ($1,'chat-model','http://backend','openai','200',3,7,100,30)`, id)
+	upgraded := openDatabase(t, database.dsn)
+	var stream bool
+	var input, output, ttfb int64
+	if err := upgraded.QueryRow(t.Context(), `SELECT is_stream,input_tokens,output_tokens,ttfb_ms FROM usage WHERE user_id=$1`, id).
+		Scan(&stream, &input, &output, &ttfb); err != nil || stream || input != 3 || output != 7 || ttfb != 30 {
+		t.Fatal(stream, input, output, ttfb, err)
+	}
+}
+
 func TestSchemaStartup(t *testing.T) {
 	database := newDatabase(t)
 	pool := openDatabase(t, database.dsn)

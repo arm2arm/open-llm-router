@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 )
 
@@ -18,10 +19,16 @@ type accounting struct {
 	json    *usage.JSON
 	stream  *usage.Stream
 	aborted bool
+	lease   *limits.Lease
+	began   time.Time
 }
 
 func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol string) *accounting {
 	a := &accounting{writer: &statusWriter{ResponseWriter: w}, record: usage.Record{StartedAt: time.Now(), Protocol: protocol}}
+	a.began = a.record.StartedAt
+	if h.Limits != nil {
+		a.record.StartedAt = h.Limits.Now()
+	}
 	if p, ok := auth.FromContext(r.Context()); ok && r.URL.Path != "/v1/messages/count_tokens" {
 		a.sink = h.Usage
 		a.record.UserID, a.record.KeyID = p.UserID, p.KeyID
@@ -31,7 +38,7 @@ func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol strin
 
 func (a *accounting) firstByte() {
 	if a.record.TTFBMS == nil {
-		ttfb := time.Since(a.record.StartedAt).Milliseconds()
+		ttfb := time.Since(a.began).Milliseconds()
 		a.record.TTFBMS = &ttfb
 	}
 }
@@ -39,6 +46,7 @@ func (a *accounting) firstByte() {
 func (a *accounting) observe(contentType string, hideUsage bool, emit func([]byte) error) {
 	contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
 	if contentType == "text/event-stream" {
+		a.record.IsStream = true
 		a.stream = usage.NewStream(a.record.Protocol, hideUsage, emit)
 	} else if contentType == "application/json" {
 		a.json = &usage.JSON{Protocol: a.record.Protocol}
@@ -46,10 +54,10 @@ func (a *accounting) observe(contentType string, hideUsage bool, emit func([]byt
 }
 
 func (a *accounting) finish(r *http.Request, panicked bool) {
-	if a.sink == nil {
+	if a.sink == nil && a.lease == nil {
 		return
 	}
-	a.record.LatencyMS = time.Since(a.record.StartedAt).Milliseconds()
+	a.record.LatencyMS = time.Since(a.began).Milliseconds()
 	status := a.writer.status
 	if status == 0 {
 		status = http.StatusOK
@@ -73,7 +81,16 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 		a.record.Status = "aborted"
 	}
 	a.record.InputTokens, a.record.OutputTokens = totals.InputTokens, totals.Output()
-	a.sink.Record(a.record)
+	if a.lease != nil {
+		if r.URL.Path == "/v1/messages/count_tokens" {
+			a.lease.Release()
+		} else {
+			a.lease.Complete(a.record)
+		}
+	}
+	if a.sink != nil {
+		a.sink.Record(a.record)
+	}
 }
 
 // Unwrap keeps deadlines and flushing available through ResponseController.

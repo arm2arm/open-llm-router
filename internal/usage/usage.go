@@ -20,6 +20,7 @@ type Record struct {
 	OutputTokens int64
 	LatencyMS    int64
 	TTFBMS       *int64
+	IsStream     bool
 }
 
 // TokensPerSecond derives the generation rate from the stored measurements.

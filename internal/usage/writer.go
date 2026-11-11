@@ -38,7 +38,12 @@ type Writer struct {
 }
 
 func NewWriter(pool *pgxpool.Pool, log *slog.Logger) *Writer {
-	return newWriter(postgresStore{pool}, log, queueSize, writerCount)
+	return NewWriterInLocation(pool, log, time.UTC)
+}
+
+// NewWriterInLocation buckets daily totals in the quota calendar.
+func NewWriterInLocation(pool *pgxpool.Pool, log *slog.Logger, location *time.Location) *Writer {
+	return newWriter(postgresStore{pool: pool, location: location}, log, queueSize, writerCount)
 }
 
 func newWriter(store store, log *slog.Logger, capacity, workers int) *Writer {
@@ -110,15 +115,18 @@ func (w *Writer) Close(ctx context.Context) error {
 	}
 }
 
-type postgresStore struct{ pool *pgxpool.Pool }
+type postgresStore struct {
+	pool     *pgxpool.Pool
+	location *time.Location
+}
 
 func (s postgresStore) insert(ctx context.Context, r Record) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO usage
-			(ts, key_id, user_id, model, replica, protocol, status, input_tokens, output_tokens, latency_ms, ttfb_ms)
-			VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			(ts, key_id, user_id, model, replica, protocol, status, input_tokens, output_tokens, latency_ms, ttfb_ms, is_stream)
+			VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			r.StartedAt, r.KeyID, r.UserID, r.Model, r.Replica, r.Protocol, r.Status,
-			r.InputTokens, r.OutputTokens, r.LatencyMS, r.TTFBMS)
+			r.InputTokens, r.OutputTokens, r.LatencyMS, r.TTFBMS, r.IsStream)
 		if err != nil {
 			return err
 		}
@@ -128,7 +136,7 @@ func (s postgresStore) insert(ctx context.Context, r Record) error {
 			requests = usage_daily.requests + 1,
 			input_tokens = usage_daily.input_tokens + EXCLUDED.input_tokens,
 			output_tokens = usage_daily.output_tokens + EXCLUDED.output_tokens`,
-			r.StartedAt.UTC().Format("2006-01-02"), r.UserID, r.Model, r.InputTokens, r.OutputTokens)
+			r.StartedAt.In(s.location).Format("2006-01-02"), r.UserID, r.Model, r.InputTokens, r.OutputTokens)
 		return err
 	})
 }

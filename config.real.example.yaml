@@ -2,6 +2,9 @@
 # The endpoint and served model are supplied only through the environment.
 # Also export OLR_DATABASE_URL for a reachable Postgres database (docs/CLIENTS.md).
 # Run: bin/olr serve -listen 127.0.0.1:8080 -config config.real.example.yaml
+limits:
+  timezone: UTC
+
 models:
   chat-model:
     protocols: [openai, anthropic]

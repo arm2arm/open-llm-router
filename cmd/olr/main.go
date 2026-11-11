@@ -17,6 +17,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
 	usagewriter "github.com/arm2arm/open-llm-router/internal/usage"
@@ -119,7 +120,7 @@ func serve(args []string) error {
 	}
 	defer ln.Close()
 
-	accounting := usagewriter.NewWriter(database, log)
+	accounting := usagewriter.NewWriterInLocation(database, log, cfg.Limits.Location)
 	defer func() {
 		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -129,6 +130,7 @@ func serve(args []string) error {
 	}()
 	forwarder := proxy.New(cfg)
 	forwarder.Usage = accounting
+	forwarder.Limits = limits.New(database, cfg.Limits.Location, time.Now)
 	defer forwarder.Close()
 	forwarder.Pools.Check(ctx)
 	// Health checks keep running during graceful shutdown until Run returns.
