@@ -60,6 +60,8 @@ jobs:
         run: make up
       - name: Probe router and both mock backends
         run: make smoke
+      - name: Keycloak login, portal API and SSO logout
+        run: make portal-check
       - name: Official OpenAI and Anthropic SDKs against router and mocks
         run: |
           python3 -m venv /tmp/olr-sdk

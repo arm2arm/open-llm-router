@@ -123,3 +123,28 @@ func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 func (a Admin) RevokeKey(ctx context.Context, keyID string) error {
 	return a.change(ctx, `UPDATE api_keys SET revoked = true WHERE id = $1`, keyID)
 }
+
+// RevokeOwnedKey scopes the mutation itself, including cache invalidation.
+func (a Admin) RevokeOwnedKey(ctx context.Context, userID, keyID string) error {
+	return a.change(ctx, `UPDATE api_keys SET revoked=true WHERE id=$1 AND user_id=$2`, keyID, userID)
+}
+
+// SyncIdentity refreshes claims without re-enabling disabled accounts or linking
+// by email. API key caches observe new memberships before this returns.
+func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string) (string, error) {
+	if groups == nil {
+		groups = []string{}
+	}
+	var id string
+	err := a.changeWith(ctx, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at)
+			VALUES($1,$2,$3,$4,$5,clock_timestamp()) ON CONFLICT(issuer,sub) DO UPDATE SET
+			username=EXCLUDED.username,email=EXCLUDED.email,groups=EXCLUDED.groups,synced_at=EXCLUDED.synced_at
+			WHERE users.enabled RETURNING id`, issuer, sub, username, email, groups).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	})
+	return id, err
+}

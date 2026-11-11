@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata" // IANA zones also work in the static runtime image.
@@ -42,6 +43,7 @@ type Config struct {
 	Auth    Auth              `yaml:"auth"`
 	Limits  Limits            `yaml:"limits"`
 	OIDC    *OIDC             `yaml:"oidc"` // nil: no portal login
+	Portal  Portal            `yaml:"-"`
 	Models  map[string]Model  `yaml:"models"`
 	Groups  map[string]Group  `yaml:"groups"`
 	Aliases map[string]string `yaml:"aliases"` // client model name -> model
@@ -67,6 +69,12 @@ type OIDC struct {
 	PortalClientID string `yaml:"portal_client_id"`
 	GroupsClaim    string `yaml:"groups_claim"`   // default "groups"
 	UsernameClaim  string `yaml:"username_claim"` // default "preferred_username"
+	BackchannelURL string `yaml:"-"`
+}
+
+type Portal struct {
+	BaseURL      string
+	CookieSecure bool
 }
 
 // Model is one model name served to clients and the replicas behind it.
@@ -143,6 +151,34 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{Timezone: "UTC"}}
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
+	}
+	cfg.Portal = Portal{BaseURL: "http://localhost:8080", CookieSecure: true}
+	if issuer, ok := lookup("OIDC_ISSUER"); ok {
+		if cfg.OIDC == nil {
+			cfg.OIDC = &OIDC{PortalClientID: "olr-portal"}
+		}
+		cfg.OIDC.Issuer = issuer
+	}
+	if cfg.OIDC != nil {
+		for name, target := range map[string]*string{"OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
+			if value, ok := lookup(name); ok {
+				*target = value
+			}
+		}
+	}
+	if value, ok := lookup("OIDC_PORTAL_CLIENT_SECRET"); ok {
+		cfg.OIDCClientSecret = value
+	}
+	if value, ok := lookup("PORTAL_BASE_URL"); ok {
+		cfg.Portal.BaseURL = strings.TrimSuffix(value, "/")
+	}
+	if value, ok := lookup("PORTAL_COOKIE_SECURE"); ok {
+		secure, err := strconv.ParseBool(value)
+		if err != nil {
+			problems = append(problems, "PORTAL_COOKIE_SECURE: must be true or false")
+		} else {
+			cfg.Portal.CookieSecure = secure
+		}
 	}
 	if cfg.OIDC != nil {
 		if cfg.OIDC.GroupsClaim == "" {
@@ -295,12 +331,18 @@ func (c *Config) validate() Problems {
 	}
 
 	if c.OIDC != nil {
-		if !isHTTPURL(c.OIDC.Issuer) {
+		if !isIssuerURL(c.OIDC.Issuer) {
 			add("oidc.issuer: must be an http or https URL, got %q", c.OIDC.Issuer)
 		}
 		if c.OIDC.PortalClientID == "" {
 			add("oidc.portal_client_id: must be set")
 		}
+		if c.OIDC.BackchannelURL != "" && !isIssuerURL(c.OIDC.BackchannelURL) {
+			add("OIDC_BACKCHANNEL_URL: must be an http or https URL without credentials, query or fragment")
+		}
+	}
+	if !isBackendURL(c.Portal.BaseURL) {
+		add("PORTAL_BASE_URL: must be an http or https origin without credentials, path, query or fragment")
 	}
 
 	if len(c.Models) == 0 {
@@ -405,6 +447,11 @@ func deref[T any](p *T) T {
 func isHTTPURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+func isIssuerURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && isHTTPURL(s) && u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
 
 // Backend URLs name origins; paths and queries come exclusively from the caller.

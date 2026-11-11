@@ -34,6 +34,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions (user_id);
+CREATE INDEX IF NOT EXISTS sessions_expires_idx ON sessions (expires);
+
+-- One-use, browser-bound authorization challenges. No OIDC tokens are stored.
+CREATE TABLE IF NOT EXISTS portal_login_attempts (
+    id_hash bytea PRIMARY KEY,
+    state_hash bytea NOT NULL,
+    nonce text NOT NULL,
+    verifier text NOT NULL,
+    expires timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS portal_login_attempts_expires_idx ON portal_login_attempts (expires);
 
 CREATE TABLE IF NOT EXISTS usage (
     ts timestamptz NOT NULL DEFAULT now(),

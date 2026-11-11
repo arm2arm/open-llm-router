@@ -18,7 +18,7 @@ limits:
 
 # Portal login. Leave the section out to run without a portal (API keys only).
 oidc:
-  issuer: ${OIDC_ISSUER}            # dev: http://keycloak:8080/realms/olr-dev
+  issuer: ${OIDC_ISSUER}            # dev public issuer: http://localhost:8081/realms/olr-dev
   portal_client_id: olr-portal
   groups_claim: groups              # default
   username_claim: preferred_username # default

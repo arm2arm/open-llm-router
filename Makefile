@@ -4,7 +4,7 @@ GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 COMPOSE     := docker compose
 SDK_RUN     ?= uv run
 
-.PHONY: build lint vuln test test-clients up smoke sdk sdk-limits sdk-real bench-real down
+.PHONY: build lint vuln test test-clients up smoke sdk sdk-limits portal-check sdk-real bench-real down
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/olr ./cmd/olr
@@ -71,6 +71,16 @@ sdk-limits:
 	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label limits-sdk)" || exit $$?; \
 	address="$$($(COMPOSE) port router 8080)" || exit $$?; \
 	OLR_BASE_URL="http://$$address" OLR_API_KEY="$$key" $(SDK_RUN) tests/clients/check_limits.py
+
+portal-check:
+	@router_address="$$($(COMPOSE) port router 8080)" || exit $$?; \
+	issuer_address="$$($(COMPOSE) port keycloak 8080)" || exit $$?; \
+	admin_user="$$($(COMPOSE) exec -T keycloak bash -ec 'printf %s "$$KC_BOOTSTRAP_ADMIN_USERNAME"')" || exit $$?; \
+	admin_password="$$($(COMPOSE) exec -T keycloak bash -ec 'printf %s "$$KC_BOOTSTRAP_ADMIN_PASSWORD"')" || exit $$?; \
+	OLR_BASE_URL="http://localhost:$${router_address##*:}" \
+		OIDC_ISSUER="http://localhost:$${issuer_address##*:}/realms/olr-dev" \
+		KEYCLOAK_ADMIN_USER="$$admin_user" KEYCLOAK_ADMIN_PASSWORD="$$admin_password" \
+		python3 tests/clients/check_portal.py
 
 # Existing host-side router configured with config.real.example.yaml; no Compose dependency.
 # Set OLR_REQUIRE_CANCEL_EVIDENCE=1 for the vLLM go/no-go run.

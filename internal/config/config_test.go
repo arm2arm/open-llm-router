@@ -85,6 +85,29 @@ func TestParseWithoutOIDC(t *testing.T) {
 	}
 }
 
+func TestPortalEnvironment(t *testing.T) {
+	data := valid[strings.Index(valid, "models:"):]
+	env := map[string]string{"OIDC_ISSUER": "https://login.example/realm", "OIDC_PORTAL_CLIENT_ID": "another-client", "OIDC_PORTAL_CLIENT_SECRET": "test-secret", "OIDC_GROUPS_CLAIM": "memberships", "OIDC_USERNAME_CLAIM": "name", "OIDC_BACKCHANNEL_URL": "http://internal/realm", "PORTAL_BASE_URL": "https://portal.example/", "PORTAL_COOKIE_SECURE": "true"}
+	cfg, err := Parse([]byte(data), lookupIn(env))
+	if err != nil || cfg.OIDC.PortalClientID != "another-client" || cfg.OIDC.GroupsClaim != "memberships" || cfg.OIDC.UsernameClaim != "name" || cfg.OIDCClientSecret != "test-secret" || cfg.Portal.BaseURL != "https://portal.example" || !cfg.Portal.CookieSecure {
+		t.Fatal("environment-only OIDC configuration failed", err)
+	}
+	for _, tc := range []struct{ name, value string }{{"PORTAL_BASE_URL", "https://portal.example/path"}, {"PORTAL_COOKIE_SECURE", "maybe"}, {"OIDC_BACKCHANNEL_URL", "https://name:secret@internal/realm"}, {"OIDC_ISSUER", "https://login.example/realm?query=1"}} {
+		copy := make(map[string]string)
+		for k, v := range env {
+			copy[k] = v
+		}
+		copy[tc.name] = tc.value
+		if _, err := Parse([]byte(data), lookupIn(copy)); err == nil {
+			t.Fatal("invalid setting accepted", tc.name)
+		}
+	}
+	cfg, err = Parse([]byte(data), lookupIn(nil))
+	if err != nil || !cfg.Portal.CookieSecure {
+		t.Fatal("cookies must be secure by default", err)
+	}
+}
+
 func TestLimitsTimezone(t *testing.T) {
 	for _, zone := range []string{"", "UTC", "Europe/Berlin", "Mars/Unknown", "Local"} {
 		data := valid
