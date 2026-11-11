@@ -178,12 +178,29 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	if model.UpstreamModel != "" {
 		upstreamName = model.UpstreamModel
 	}
-	if upstreamName != meta.Model {
+	// Queue order and backend priority: the key class's value (batch after
+	// interactive by default) plus the group's.
+	principal, _ := auth.FromContext(r.Context())
+	priority := access.Priority
+	if principal.KeyClass == "batch" {
+		priority += 10
+	}
+	if model.Priority != nil {
+		priority = access.Priority + model.Priority.Interactive
+		if principal.KeyClass == "batch" {
+			priority = access.Priority + model.Priority.Batch
+		}
+	}
+	if upstreamName != meta.Model || model.Priority != nil {
 		// RawMessage retains unknown values, including large integers, while
-		// replacing only the model. Otherwise forward the original bytes.
+		// replacing only the model and the priority, which callers cannot
+		// choose. Otherwise forward the original bytes.
 		var fields map[string]json.RawMessage
 		_ = json.Unmarshal(body, &fields)
 		fields["model"], _ = json.Marshal(upstreamName)
+		if model.Priority != nil {
+			fields["priority"], _ = json.Marshal(priority)
+		}
 		body, _ = json.Marshal(fields)
 	}
 	hideUsage := false
@@ -224,7 +241,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			return
 		}
 		selectionStarted := time.Now()
-		lease := h.Pools.Pools[name].Acquire(previous)
+		request := pool.Request{Exclude: previous, Priority: priority, Wait: time.Duration(model.QueueTimeoutS) * time.Second}
+		if model.SessionAffinity {
+			request.Session = r.Header.Get("X-Session-Id")
+		}
+		lease := h.Pools.Pools[name].AcquireRequest(r.Context(), request)
 		account.selection += time.Since(selectionStarted)
 		if lease == nil {
 			w.Header().Set("Retry-After", "1")
