@@ -35,6 +35,9 @@ oidc:
   # Group sync: a read-only service account refreshes groups and disables
   # users removed or disabled in Keycloak. Runs only when its secret is set
   # in OIDC_SYNC_CLIENT_SECRET.
+  # Refuse portal logins without this claim value (string equal, or array
+  # containing it). Env: OIDC_REQUIRED_CLAIM=affiliation=member@example.org
+  # required_claim: {name: affiliation, value: member@example.org}
   sync_client_id: olr-sync          # default
   sync_interval_s: 900              # default
 

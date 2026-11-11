@@ -117,6 +117,16 @@ type OIDC struct {
 	// refreshed every SyncIntervalS seconds (default 900).
 	SyncClientID  string `yaml:"sync_client_id"`
 	SyncIntervalS int    `yaml:"sync_interval_s"`
+	// RequiredClaim, if set, must be in the ID token at portal login: a
+	// string claim equal to Value, or an array containing it. Env:
+	// OIDC_REQUIRED_CLAIM=name=value.
+	RequiredClaim *RequiredClaim `yaml:"required_claim"`
+}
+
+// RequiredClaim names a claim and the value a user must have.
+type RequiredClaim struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
 }
 
 type Portal struct {
@@ -227,6 +237,15 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	}
 	if value, ok := lookup("OIDC_PORTAL_CLIENT_SECRET"); ok {
 		cfg.OIDCClientSecret = value
+	}
+	if value, ok := lookup("OIDC_REQUIRED_CLAIM"); ok && cfg.OIDC != nil {
+		if value == "" {
+			cfg.OIDC.RequiredClaim = nil
+		} else if name, want, found := strings.Cut(value, "="); found {
+			cfg.OIDC.RequiredClaim = &RequiredClaim{Name: name, Value: want}
+		} else {
+			problems = append(problems, "OIDC_REQUIRED_CLAIM: must be name=value")
+		}
 	}
 	if value, ok := lookup(EnvOIDCSyncSecret); ok {
 		cfg.OIDCSyncSecret = value
@@ -431,6 +450,9 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.PortalClientID == "" {
 			add("oidc.portal_client_id: must be set")
+		}
+		if rc := c.OIDC.RequiredClaim; rc != nil && (rc.Name == "" || rc.Value == "") {
+			add("oidc.required_claim: name and value must both be set")
 		}
 		if c.OIDC.SyncIntervalS < 60 {
 			add("oidc.sync_interval_s: must be at least 60")

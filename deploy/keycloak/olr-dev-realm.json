@@ -51,6 +51,21 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true"
           }
+        },
+        {
+          "name": "affiliation",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "affiliation",
+            "claim.name": "affiliation",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
         }
       ]
     },
@@ -143,7 +158,12 @@
           "value": "staff-dev-only",
           "temporary": false
         }
-      ]
+      ],
+      "attributes": {
+        "affiliation": [
+          "member@example.org"
+        ]
+      }
     },
     {
       "username": "student",
@@ -161,7 +181,12 @@
           "value": "student-dev-only",
           "temporary": false
         }
-      ]
+      ],
+      "attributes": {
+        "affiliation": [
+          "member@example.org"
+        ]
+      }
     },
     {
       "username": "admin",
@@ -179,7 +204,12 @@
           "value": "admin-dev-only",
           "temporary": false
         }
-      ]
+      ],
+      "attributes": {
+        "affiliation": [
+          "member@example.org"
+        ]
+      }
     },
     {
       "username": "service-account-olr-sync",
@@ -198,6 +228,70 @@
       "groups": [
         "/staff"
       ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"unmanagedAttributePolicy\": \"ENABLED\", \"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"email\", \"displayName\": \"${email}\", \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"User metadata\", \"displayDescription\": \"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  },
+  "identityProviders": [
+    {
+      "alias": "upstream-idp",
+      "displayName": "Upstream IdP",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "config": {
+        "clientId": "olr-broker",
+        "clientSecret": "olr-broker-dev-only",
+        "clientAuthMethod": "client_secret_post",
+        "authorizationUrl": "http://localhost:${KEYCLOAK_PORT:8081}/realms/upstream-idp/protocol/openid-connect/auth",
+        "tokenUrl": "http://localhost:8080/realms/upstream-idp/protocol/openid-connect/token",
+        "jwksUrl": "http://localhost:8080/realms/upstream-idp/protocol/openid-connect/certs",
+        "userInfoUrl": "http://localhost:8080/realms/upstream-idp/protocol/openid-connect/userinfo",
+        "issuer": "http://localhost:${KEYCLOAK_PORT:8081}/realms/upstream-idp",
+        "validateSignature": "true",
+        "useJwksUrl": "true",
+        "pkceEnabled": "true",
+        "pkceMethod": "S256",
+        "defaultScope": "openid profile email",
+        "syncMode": "FORCE"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "affiliation",
+      "identityProviderAlias": "upstream-idp",
+      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "affiliation",
+        "user.attribute": "affiliation"
+      }
+    },
+    {
+      "name": "members are students",
+      "identityProviderAlias": "upstream-idp",
+      "identityProviderMapper": "oidc-advanced-group-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claims": "[{\"key\": \"affiliation\", \"value\": \"member@example.org\"}]",
+        "are.claim.values.regex": "false",
+        "group": "/students"
+      }
     }
   ]
 }

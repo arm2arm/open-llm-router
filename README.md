@@ -52,7 +52,7 @@ empty volume, so changing them later also requires updating the database or recr
 | `postgres` | `localhost:5432` | database `olr`, user `olr`, public dev password `olr-dev-only` |
 | `mock-llm-a` | `http://localhost:8001` | `chat-model`, 20 ms per token |
 | `mock-llm-b` | `http://localhost:8002` | `chat-model`, 40 ms per token |
-| `keycloak` | `http://localhost:8081` | imported `olr-dev` realm, portal login, dev admin console |
+| `keycloak` | `http://localhost:8081` | realms `olr-dev` (users `staff`, `student`, `admin`; password `<user>-dev-only`) and `upstream-idp` brokered into it; dev admin console |
 
 The pool URLs in `config.example.yaml` use service names and container ports. The differing
 delays match its 2:1 weights, used by weighted least-outstanding balancing. To try a stream through the router:
