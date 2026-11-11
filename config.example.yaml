@@ -16,6 +16,13 @@ auth:
 limits:
   timezone: UTC                    # default; e.g. Europe/Berlin
 
+# How long usage records are kept. A job deletes older rows at startup and
+# daily at run_at (limits.timezone). State these periods in the privacy notice.
+retention:
+  usage_days: 90                   # per-request records (default 90)
+  usage_daily_days: 400            # daily totals for quotas/accounting (default 400, min 62)
+  run_at: "03:00"                  # default
+
 # Portal login. Leave the section out to run without a portal (API keys only).
 oidc:
   issuer: ${OIDC_ISSUER}            # dev public issuer: http://localhost:8081/realms/olr-dev

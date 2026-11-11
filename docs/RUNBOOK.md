@@ -16,6 +16,31 @@ A user who signs in again afterwards gets a new, empty account. To block access 
 `olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the
 database; see [PRIVACY.md](PRIVACY.md).
 
+## Usage retention
+
+The router deletes per-request records older than `retention.usage_days` (default 90) and
+daily totals older than `retention.usage_daily_days` (default 400, at least 62 so that quotas
+keep the current month) once at startup and every night at `retention.run_at` in
+`limits.timezone`. Deletion runs in batches of 10,000 rows; with several routers, one deletes
+while the others skip. Each run logs `msg=retention` with the number of deleted rows, or
+`retention job failed`. To run it by hand:
+
+```sh
+docker compose exec -T router olr admin retention run   # prints {"usage":N,"usage_daily":M}
+```
+
+`usage` is one table indexed by time. Monthly partitions are not needed at pilot volume
+(roughly 3 GB with indexes per 10 million requests); they can be added by a later migration if the table
+grows too large to prune by index.
+
+## Database migrations
+
+Migrations in `internal/db/migrations` run at startup inside one transaction under an advisory
+lock, so concurrent routers are safe and a failed migration changes nothing. `olr migrate`
+applies them and prints the schema version, for a job that runs before the routers start.
+Take a backup before upgrading; a router refuses a database with a newer schema, so roll back
+by restoring the backup together with the previous image.
+
 ## Streaming load test
 
 `cmd/olr-loadtest` compares identical synthetic streaming workloads directly against
