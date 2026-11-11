@@ -270,11 +270,15 @@ function Keys() {
   const [secret, setSecret] = useState('')
   const [label, setLabel] = useState('')
   const [expiry, setExpiry] = useState('')
+  const [keyClass, setKeyClass] = useState<'interactive' | 'batch'>(
+    'interactive',
+  )
   const [selected, setSelected] = useState<Key | null>(null)
   const create = useMutation({
     mutationFn: async () => {
       const result = await api<{ key: string }>('keys', 'POST', {
         label,
+        class: keyClass,
         ...(expiry ? { expires_in_days: Number(expiry) } : {}),
       })
       setSecret(result.key) // The mutation cache receives no plaintext key.
@@ -296,6 +300,7 @@ function Keys() {
     setSecret('')
     setLabel('')
     setExpiry('')
+    setKeyClass('interactive')
     create.reset()
   }
   function submit(event: FormEvent) {
@@ -391,6 +396,9 @@ function Keys() {
                         <code className="text-xs text-muted-foreground">
                           {key.prefix}…
                         </code>
+                        {key.class === 'batch' && (
+                          <span className="badge inactive ml-2">batch</span>
+                        )}
                       </td>
                       <td>{date(key.created)}</td>
                       <td>{date(key.last_used)}</td>
@@ -507,6 +515,23 @@ function Keys() {
                       {days} days
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className="field">
+                Use
+                <select
+                  className="select"
+                  value={keyClass}
+                  onChange={(e) =>
+                    setKeyClass(e.target.value as 'interactive' | 'batch')
+                  }
+                >
+                  <option value="interactive">
+                    Interactive: chat, coding tools
+                  </option>
+                  <option value="batch">
+                    Batch: scripts and bulk jobs (own concurrency limit)
+                  </option>
                 </select>
               </label>
               <DialogFooter>
@@ -698,9 +723,24 @@ function UsagePage() {
                     : `${number(data.quota.remaining.rpm)} requests remaining`}
                 </p>
                 <p className="text-xs text-muted-foreground mt-3">
-                  {data.quota.in_flight} /{' '}
+                  {data.quota.in_flight - data.quota.in_flight_batch} /{' '}
                   {data.quota.limits.max_concurrent ?? '∞'} concurrent requests
+                  · batch {data.quota.in_flight_batch} /{' '}
+                  {data.quota.limits.max_concurrent_batch ?? '∞'}
                 </p>
+                {data.quota.limits.tpm !== null && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {number(data.quota.remaining.tpm ?? 0)} of{' '}
+                    {number(data.quota.limits.tpm)} tokens per minute available
+                  </p>
+                )}
+                {data.quota.limits.strict_quota && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Strict quota: each request reserves its max_tokens plus its
+                    size until it ends ({number(data.quota.reserved_tokens)}{' '}
+                    reserved).
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground mt-2">
                   Next request reset {reset(data.quota.reset_at.rpm)}
                 </p>

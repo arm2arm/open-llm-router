@@ -252,3 +252,116 @@ func TestCalendarAutumnDST(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestTPMBucketRejectsWithResetAndRefills(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	p := policy.Policy{TPM: ptr(int64(600))} // 10 tokens per second
+	l := acquire(t, m, "u", p)
+	// Admission needs one token; a call may use more and leave a debt.
+	l.Complete(usage.Record{StartedAt: c.Now(), Model: "m", InputTokens: 400, OutputTokens: 400})
+	if s := snapshot(t, m, "u", p); *s.Remaining.TPM != 0 {
+		t.Fatal("remaining tpm", *s.Remaining.TPM)
+	}
+	// Level is -200: (1 - -200) / 10 per second = 20.1 s.
+	r := rejected(t, m, "u", p, "tpm", 21)
+	if !r.ResetAt.Equal(c.Now().Add(20100 * time.Millisecond)) {
+		t.Fatal("reset", r.ResetAt)
+	}
+	c.Add(20 * time.Second)
+	rejected(t, m, "u", p, "tpm", 1)
+	c.Add(200 * time.Millisecond)
+	acquire(t, m, "u", p).Release()
+	// The bucket never fills beyond one minute of tokens.
+	c.Add(time.Hour)
+	if s := snapshot(t, m, "u", p); *s.Remaining.TPM != 600 {
+		t.Fatal("refill cap", *s.Remaining.TPM)
+	}
+	// A rejected call consumes no concurrency slot.
+	if s := snapshot(t, m, "u", p); s.InFlight != 0 {
+		t.Fatal("slot leaked")
+	}
+}
+
+func TestBatchAndInteractiveConcurrencyAreSeparate(t *testing.T) {
+	m, _ := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	p := policy.Policy{MaxConcurrent: ptr(1), MaxConcurrentBatch: ptr(2)}
+	batch := Admission{User: "u", Class: ClassBatch}
+	i := acquire(t, m, "u", p)
+	rejected(t, m, "u", p, "max_concurrent", 1)
+	b1, err := m.AcquireFor(t.Context(), batch, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := m.AcquireFor(t.Context(), batch, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r *Rejection
+	if _, err := m.AcquireFor(t.Context(), batch, p); !errors.As(err, &r) || r.Limit != "max_concurrent_batch" {
+		t.Fatal("batch limit", err)
+	}
+	if s := snapshot(t, m, "u", p); s.InFlight != 3 || s.Batch != 2 {
+		t.Fatalf("in flight %d batch %d", s.InFlight, s.Batch)
+	}
+	i.Release()
+	b1.Release()
+	b2.Release()
+	if s := snapshot(t, m, "u", p); s.InFlight != 0 || s.Batch != 0 {
+		t.Fatal("slots leaked")
+	}
+}
+
+func TestStrictQuotaReservesBeforeForwarding(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	strict := policy.Policy{TokensPerDay: ptr(int64(100)), StrictQuota: true}
+	reserve := func(n int64) (*Lease, error) {
+		return m.AcquireFor(t.Context(), Admission{User: "u", Reserve: n}, strict)
+	}
+	// Concurrent calls: the third reservation would exceed the quota.
+	var leases []*Lease
+	var admitted, refused atomic.Int64
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for range 10 {
+		wg.Go(func() {
+			l, err := reserve(40)
+			if err != nil {
+				refused.Add(1)
+				return
+			}
+			admitted.Add(1)
+			mu.Lock()
+			leases = append(leases, l)
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	if admitted.Load() != 2 || refused.Load() != 8 {
+		t.Fatalf("admitted %d refused %d", admitted.Load(), refused.Load())
+	}
+	if s := snapshot(t, m, "u", strict); s.Reserved != 80 {
+		t.Fatal("reserved", s.Reserved)
+	}
+	// Settling with the actual usage frees the unused part of a reservation.
+	leases[0].Complete(usage.Record{StartedAt: c.Now(), Model: "m", InputTokens: 5, OutputTokens: 15})
+	leases[1].Complete(usage.Record{StartedAt: c.Now(), Model: "m", InputTokens: 10, OutputTokens: 10})
+	if s := snapshot(t, m, "u", strict); s.Reserved != 0 || s.Used.Today != 40 {
+		t.Fatalf("settled: reserved %d used %d", s.Reserved, s.Used.Today)
+	}
+	l, err := reserve(60)
+	if err != nil {
+		t.Fatal("a reservation that fits exactly was refused:", err)
+	}
+	l.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 60})
+	r := rejected(t, m, "u", strict, "tokens_per_day", int((12 * time.Hour).Seconds()))
+	if !r.ResetAt.Equal(time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC)) {
+		t.Fatal(r.ResetAt)
+	}
+	// Without strict mode the reservation is ignored.
+	loose := policy.Policy{TokensPerDay: ptr(int64(1000))}
+	l, err = m.AcquireFor(t.Context(), Admission{User: "v", Reserve: 5000}, loose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+}

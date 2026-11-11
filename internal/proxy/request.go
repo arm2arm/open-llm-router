@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -14,13 +15,17 @@ import (
 // exact key or the first duplicate. A body such as
 // {"model":"secret","MODEL":"allowed"} would otherwise be authorized as one
 // model and served as another by a backend that serves both.
-var routingFields = []string{"model", "stream"}
+// max_tokens and max_completion_tokens size strict-quota reservations.
+var routingFields = []string{"model", "stream", "max_tokens", "max_completion_tokens"}
 
 var errAmbiguousField = errors.New("ambiguous routing field")
 
 type requestMeta struct {
 	Model  string
 	Stream bool
+	// MaxTokens is the larger of max_tokens and max_completion_tokens; 0 if
+	// neither is set.
+	MaxTokens int64
 }
 
 // parseRequest reads the routing fields from a JSON object in one pass. It
@@ -64,6 +69,15 @@ func parseRequest(body []byte) (requestMeta, error) {
 			var stream *bool
 			err = decoder.Decode(&stream)
 			meta.Stream = stream != nil && *stream
+		case "max_tokens", "max_completion_tokens":
+			// Lenient: the backend validates the value; only a usable
+			// number sizes a reservation.
+			var raw json.RawMessage
+			err = decoder.Decode(&raw)
+			var limit float64
+			if err == nil && json.Unmarshal(raw, &limit) == nil && limit > 0 && limit < 1<<53 {
+				meta.MaxTokens = max(meta.MaxTokens, int64(math.Ceil(limit)))
+			}
 		}
 		if err != nil {
 			return meta, err

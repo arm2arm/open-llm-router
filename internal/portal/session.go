@@ -10,10 +10,11 @@ import (
 )
 
 type user struct {
-	ID       string   `json:"id"`
-	Username string   `json:"username"`
-	Email    string   `json:"email"`
-	Groups   []string `json:"groups"`
+	ID        string            `json:"id"`
+	Username  string            `json:"username"`
+	Email     string            `json:"email"`
+	Groups    []string          `json:"groups"`
+	Overrides map[string]*int64 `json:"overrides"`
 }
 
 func (h *Handler) authenticated(next func(http.ResponseWriter, *http.Request, user)) http.HandlerFunc {
@@ -24,8 +25,10 @@ func (h *Handler) authenticated(next func(http.ResponseWriter, *http.Request, us
 			return
 		}
 		var u user
-		err := h.pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.email,u.groups FROM sessions s JOIN users u ON u.id=s.user_id
-			WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled`, hash[:]).Scan(&u.ID, &u.Username, &u.Email, &u.Groups)
+		err := h.pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.email,u.groups,
+			(SELECT jsonb_object_agg(o.field,o.value) FROM quota_overrides o WHERE o.user_id=u.id)
+			FROM sessions s JOIN users u ON u.id=s.user_id
+			WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled`, hash[:]).Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.Overrides)
 		if errors.Is(err, pgx.ErrNoRows) {
 			h.cookie(w, sessionCookie, "", -1)
 			fail(w, 401, "authentication_error", "authentication required")
@@ -37,6 +40,9 @@ func (h *Handler) authenticated(next func(http.ResponseWriter, *http.Request, us
 		}
 		if u.Groups == nil {
 			u.Groups = []string{}
+		}
+		if u.Overrides == nil {
+			u.Overrides = map[string]*int64{}
 		}
 		next(w, r, u)
 	}

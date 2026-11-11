@@ -36,11 +36,15 @@ The UI can use `fetch(url, {method, headers: {'Content-Type': 'application/json'
 ```json
 {
   "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"]},
-  "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"max_concurrent":4}
+  "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"tpm":null,
+             "max_concurrent":4,"max_concurrent_batch":8,"strict_quota":false}
 }
 ```
 
-Limits resolve from the current stored groups; null means unlimited. An empty group list
+Limits resolve from the current stored groups, then the user's overrides (`olr admin
+override`); null means unlimited. `max_concurrent` applies to interactive keys and
+`max_concurrent_batch` to batch keys; with `strict_quota` every call reserves its
+`max_tokens` plus its request size until it ends. An empty group list
 is an empty JSON array and grants no models unless a matching configured group exists.
 
 ## API keys
@@ -48,7 +52,8 @@ is an empty JSON array and grants no models unless a matching configured group e
 - `GET /portal/api/keys`: `{"keys":[{"id":"uuid","prefix":"olr-...","label":"laptop",
   "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}]}`.
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
-- `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7}` (label: 1–100 bytes after trimming).
+- `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7,"class":"batch"}` (label: 1–100 bytes after trimming).
+  `class` is `interactive` (default) or `batch`; the list returns it for every key.
   `expires_in_days` is optional, an integer from 1 to 36500. Omission uses
   `auth.default_key_lifetime_days`. Returns 201 `{"key":"olr-..."}` exactly once.
   Refresh the key list for metadata after creating a key. Unknown fields are rejected.
@@ -79,6 +84,9 @@ is an empty JSON array and grants no models unless a matching configured group e
 }
 ```
 
+`quota.limits` has the fields of `/portal/api/me`; `remaining.tpm` is the token bucket's
+current level, `in_flight_batch` the calls of batch keys within `in_flight`, and
+`reserved_tokens` the strict-quota reservations of calls in flight.
 `quota` has the same contract as `/v1/me/usage`, including live in-memory charges. `today`
 and `month` are sorted per-model database aggregates, empty arrays without usage, and may
 lag live charges while the asynchronous writer drains. Requests include recorded failures.

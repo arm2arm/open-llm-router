@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"maps"
 	"math/big"
 	"net/http"
 	"slices"
@@ -29,24 +30,30 @@ var errCacheChanged = errors.New("authentication cache changed during lookup")
 
 // Principal identifies the caller for authorization and usage accounting.
 type Principal struct {
-	UserID   string
-	Username string
-	Groups   []string
-	KeyID    string
+	UserID    string
+	Username  string
+	Groups    []string
+	KeyID     string
+	KeyClass  string            // "interactive" or "batch"
+	Overrides map[string]*int64 // per-user limits; treat as read-only
 }
 
 type contextKey struct{}
 
 // NewContext carries a trusted, authenticated principal to downstream handlers.
 func NewContext(ctx context.Context, p Principal) context.Context {
-	p.Groups = slices.Clone(p.Groups)
-	return context.WithValue(ctx, contextKey{}, p)
+	return context.WithValue(ctx, contextKey{}, p.clone())
 }
 
 func FromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(contextKey{}).(Principal)
+	return p.clone(), ok
+}
+
+func (p Principal) clone() Principal {
 	p.Groups = slices.Clone(p.Groups)
-	return p, ok
+	p.Overrides = maps.Clone(p.Overrides)
+	return p
 }
 
 // Generate returns a new plaintext key. Only its SHA-256 digest and display
@@ -126,8 +133,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, key string) (Principal
 		entry, ok := a.cache[hash]
 		if ok && a.listening && a.now().Before(entry.until) {
 			a.mu.Unlock()
-			entry.principal.Groups = slices.Clone(entry.principal.Groups)
-			return entry.principal, nil
+			return entry.principal.clone(), nil
 		}
 		delete(a.cache, hash)
 		var refresh chan struct{}
@@ -194,8 +200,7 @@ func (a *Authenticator) refresh(ctx context.Context, hash [32]byte, generation u
 		}
 		a.cache[hash] = cacheEntry{principal: record.Principal, until: until}
 	}
-	record.Groups = slices.Clone(record.Groups)
-	return record.Principal, nil
+	return record.Principal.clone(), nil
 }
 
 // Middleware authenticates the entire /v1 namespace, including unknown routes

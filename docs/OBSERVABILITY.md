@@ -30,7 +30,7 @@ policy/limit rejections. They do not count portal, health, model-list or usage A
 | `olr_output_tokens_per_second` | histogram of measured streaming throughput |
 | `olr_replica_in_flight` | gauge of current replica leases, including failed attempts until release |
 | `olr_replica_healthy` | gauge: 1 for healthy/outside cooldown, otherwise 0 |
-| `olr_limit_rejections_total` | rejections by `max_concurrent`, `rpm`, `tokens_per_day`, `tokens_per_month` |
+| `olr_limit_rejections_total` | rejections by `max_concurrent`, `max_concurrent_batch`, `rpm`, `tpm`, `tokens_per_day`, `tokens_per_month` |
 | `olr_usage_write_failures_total`, `olr_usage_dropped_total` | failed database transactions and dropped queued records |
 
 Call metrics have only canonical configured `model`, configured replica origin,
