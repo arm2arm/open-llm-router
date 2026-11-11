@@ -16,6 +16,34 @@ A user who signs in again afterwards gets a new, empty account. To block access 
 `olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the
 database; see [PRIVACY.md](PRIVACY.md).
 
+## Service tokens and group sync (Keycloak)
+
+**Access tokens on `/v1/*`.** With `oidc.audience` (`OIDC_AUDIENCE`, e.g. `olr-api`) set, a
+bearer that is not an API key is checked as an access token of the issuer: signature against
+the JWKS (refetched when a token names an unknown key), `iss`, `aud` containing the audience,
+`exp`. The token's subject becomes a router user (issuer + `sub`) with the token's groups, so
+quotas and usage apply as for any user. A service obtains tokens with client credentials:
+
+```sh
+curl -s "$OIDC_ISSUER/protocol/openid-connect/token" -d grant_type=client_credentials \
+  -d client_id=olr-service -d client_secret=... | jq -r .access_token
+```
+
+In Keycloak create a client `olr-api` (no flows; it is only the audience) and give each service
+client an *audience* mapper that adds `olr-api` to access tokens, plus the groups mapper. The
+dev realm has `olr-service` as an example. A user disabled in the router is refused within a
+minute (verified tokens are cached for at most a minute).
+
+**Group sync.** A confidential client `olr-sync` with *service accounts* enabled, the
+`realm-management` role `view-users`, and on Keycloak 26.8 or later the `kc-admin-api`
+client scope (its tokens must carry the admin-API audience). Set its secret in
+`OIDC_SYNC_CLIENT_SECRET`. At startup and every `oidc.sync_interval_s` (default 900) one
+router checks every enabled user of the issuer: removed or disabled in Keycloak → disabled here
+with their keys and sessions; changed groups → stored, effective for existing keys at once.
+Users are not re-enabled automatically: use `olr admin user list` and the portal's admin page,
+or `PUT /portal/api/admin/users/{id}/enabled`. Each run logs `msg="group sync"` with counts, or
+`group sync failed`.
+
 ## Open WebUI and other trusted forwarders
 
 An application that serves many users with one key can attribute each call to its user:

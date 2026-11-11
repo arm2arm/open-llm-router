@@ -108,6 +108,9 @@ type cacheEntry struct {
 type Authenticator struct {
 	// Forwarders is installed before serving; see config.Forwarders.
 	Forwarders config.Forwarders
+	// Tokens, if set before serving, authenticates a bearer token that is
+	// not an API key, such as an identity-provider access token.
+	Tokens     func(context.Context, string) (Principal, error)
 	pool       *pgxpool.Pool
 	endUsers   map[string]endUserEntry
 	store      keyStore
@@ -226,9 +229,14 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		if r.URL.Path == "/v1/messages" || strings.HasPrefix(r.URL.Path, "/v1/messages/") || r.Header.Get("Anthropic-Version") != "" {
 			protocol = config.ProtocolAnthropic
 		}
-		key, err := requestKey(r)
 		var p Principal
-		if err == nil {
+		key, err := requestKey(r)
+		if token := bearerToken(r); err != nil && a.Tokens != nil && token != "" {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			p, err = a.Tokens(ctx, token)
+			cancel()
+			key = "token-------" // a display prefix for the request log
+		} else if err == nil {
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			p, err = a.Authenticate(ctx, key)
 			cancel()
@@ -260,6 +268,20 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(NewContext(r.Context(), p)))
 	})
+}
+
+// bearerToken returns the single bearer credential when it is not shaped
+// like an API key and no X-Api-Key accompanies it.
+func bearerToken(r *http.Request) string {
+	auth := r.Header.Values("Authorization")
+	if len(auth) != 1 || len(r.Header.Values("X-Api-Key")) != 0 {
+		return ""
+	}
+	parts := strings.Split(auth[0], " ")
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.HasPrefix(parts[1], "olr-") || len(parts[1]) > 16384 {
+		return ""
+	}
+	return parts[1]
 }
 
 func requestKey(r *http.Request) (string, error) {

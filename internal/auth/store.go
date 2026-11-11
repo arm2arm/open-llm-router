@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -221,6 +222,37 @@ func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) 
 		return nil, errors.New("list users failed")
 	}
 	return users, nil
+}
+
+// EnsureIdentity returns the user for (issuer, sub), creating it or
+// refreshing its claims only when they changed, so that frequent callers such
+// as API tokens do not clear every router's caches. Disabled users give
+// ErrNotFound.
+func (a Admin) EnsureIdentity(ctx context.Context, issuer, sub, username, email string, groups []string) (string, error) {
+	var id, oldName, oldEmail string
+	var oldGroups []string
+	var enabled bool
+	err := a.Pool.QueryRow(ctx, `SELECT id, username, email, groups, enabled FROM users WHERE issuer = $1 AND sub = $2`, issuer, sub).
+		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return "", errors.New("user lookup failed")
+	case !enabled:
+		return "", ErrNotFound
+	case oldName == username && oldEmail == email && slices.Equal(oldGroups, groups):
+		return id, nil
+	}
+	return a.SyncIdentity(ctx, issuer, sub, username, email, groups)
+}
+
+// SetGroups replaces a user's groups; API-key caches observe it before this
+// returns.
+func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) error {
+	if groups == nil {
+		groups = []string{}
+	}
+	return a.change(ctx, `UPDATE users SET groups = $2, synced_at = clock_timestamp() WHERE id = $1`, userID, groups)
 }
 
 // SyncIdentity refreshes claims without re-enabling disabled accounts or linking
