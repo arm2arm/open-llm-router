@@ -59,6 +59,8 @@ models:
     timeout_s: 5
     pool:
       - {url: %s, weight: 1, max_inflight: 4}
+groups:
+  staff: {models: [chat-model]}
 `, backend.URL), 0600); err != nil {
 		t.Fatal(err)
 	}

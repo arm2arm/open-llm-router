@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/apierr"
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
 )
@@ -58,11 +60,24 @@ func (h *Handler) Register(handle func(string, http.Handler)) {
 	handle("GET /v1/models", http.HandlerFunc(h.models))
 }
 
-func (h *Handler) models(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) callerPolicy(r *http.Request) policy.Policy {
+	p, _ := auth.FromContext(r.Context())
+	return policy.Resolve(h.cfg.Groups, p.Groups)
+}
+
+func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
+	access := h.callerPolicy(r)
 	names := slices.AppendSeq(slices.Collect(maps.Keys(h.cfg.Models)), maps.Keys(h.cfg.Aliases))
 	slices.Sort(names)
 	data := make([]map[string]any, 0, len(names))
 	for _, name := range names {
+		target := name
+		if model, ok := h.cfg.Aliases[name]; ok {
+			target = model
+		}
+		if !access.AllowsModel(target) {
+			continue
+		}
 		data = append(data, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router"})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -93,7 +108,15 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		name = target
 	}
 	model, ok := h.cfg.Models[name]
-	if !ok || !slices.Contains(model.Protocols, protocol) {
+	if !ok {
+		apierr.Write(w, protocol, 404, "not_found_error", "model is unavailable for this protocol")
+		return
+	}
+	if !h.callerPolicy(r).AllowsModel(name) {
+		apierr.Write(w, protocol, 403, "permission_error", "access to this model is forbidden")
+		return
+	}
+	if !slices.Contains(model.Protocols, protocol) {
 		apierr.Write(w, protocol, 404, "not_found_error", "model is unavailable for this protocol")
 		return
 	}

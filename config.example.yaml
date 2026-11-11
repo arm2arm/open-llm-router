@@ -34,7 +34,10 @@ models:
       # to its replica and export that variable in the router's environment.
       # health_path defaults to /health (vLLM/SGLang); use / for Ollama.
 
-# Policy per identity-provider group. A limit that is left out is not enforced.
+# Policy per group: model access is the union over matching memberships; no
+# matching group means no access. Aliases inherit access to their target model.
+# Limits take the largest value per field; an omitted limit in any matching
+# group means unlimited. Numeric enforcement follows in #13.
 groups:
   staff:    {models: ["*"], tokens_per_day: 2000000, rpm: 60, max_concurrent: 4}
   students: {models: [chat-model], tokens_per_day: 300000, rpm: 20, max_concurrent: 2}

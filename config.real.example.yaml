@@ -16,6 +16,9 @@ models:
         # Export OLR_DIRECT_API_KEY; use a nonempty placeholder without backend auth.
         bearer_token_env: OLR_DIRECT_API_KEY
 
+groups:
+  staff: {models: [chat-model]}
+
 # Explicit client defaults; set all Claude Code model overrides to these aliases.
 aliases:
   claude-sonnet-4-5: chat-model

@@ -31,7 +31,7 @@ up:
 
 # Resolve actual published ports so .env overrides work here too.
 smoke:
-	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username smoke-$$(date +%s)-$$$$)" || exit $$?; \
+	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username smoke-$$(date +%s)-$$$$ -groups staff)" || exit $$?; \
 	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
 	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label smoke)" || exit $$?; \
 	for probe in "router 8080 /healthz" "router 8080 /readyz" "router 8080 /v1/models" "mock-llm-a 8000 /health" "mock-llm-b 8000 /health"; do \
@@ -45,7 +45,7 @@ smoke:
 # The official SDK scripts run through the router and directly against each mock.
 # Locally uv supplies their pinned dependencies; CI provides a Python venv.
 sdk:
-	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username sdk-$$(date +%s)-$$$$)" || exit $$?; \
+	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username sdk-$$(date +%s)-$$$$ -groups staff)" || exit $$?; \
 	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
 	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label sdk)" || exit $$?; \
 	stats_a="$$($(COMPOSE) port mock-llm-a 8000)" || exit $$?; \
