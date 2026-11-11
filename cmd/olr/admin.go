@@ -26,7 +26,7 @@ const adminUsage = `usage:
   olr admin user disable -id USER_UUID
   olr admin user delete -id USER_UUID
   olr admin user list [-match TEXT]
-  olr admin key create -user USER_UUID [-label LABEL] [-class interactive|batch] [-lifetime 2160h] [-config FILE]
+  olr admin key create -user USER_UUID [-label LABEL] [-class interactive|batch] [-trusted-forwarder] [-lifetime 2160h] [-config FILE]
   olr admin key list -user USER_UUID
   olr admin key revoke -id KEY_UUID
   olr admin retention run [-config FILE]
@@ -61,6 +61,7 @@ func admin(args []string, out, errout io.Writer) error {
 	fs.SetOutput(errout)
 	var username, email, groups, userID, id, label, configPath, match, class, field, value, reason, by string
 	var lifetime time.Duration
+	var trusted bool
 	switch command {
 	case "user add":
 		fs.StringVar(&username, "username", "", "local username (required)")
@@ -74,6 +75,7 @@ func admin(args []string, out, errout io.Writer) error {
 		fs.StringVar(&userID, "user", "", "owner's UUID (required)")
 		fs.StringVar(&label, "label", "", "display label")
 		fs.StringVar(&class, "class", "interactive", "interactive or batch (separate concurrency limits)")
+		fs.BoolVar(&trusted, "trusted-forwarder", false, "the key may name end users (forwarders.header_map), e.g. for Open WebUI")
 		fs.DurationVar(&lifetime, "lifetime", 0, "key lifetime, e.g. 720h (default from config, or 2160h)")
 		fs.StringVar(&configPath, "config", os.Getenv("OLR_CONFIG"), "YAML config file (default: $OLR_CONFIG)")
 	case "key list":
@@ -207,7 +209,11 @@ func admin(args []string, out, errout io.Writer) error {
 		}
 		return json.NewEncoder(out).Encode(users)
 	case "key create":
-		key, err := manager.CreateKeyOfClass(ctx, userID, label, class, lifetime)
+		create := manager.CreateKeyOfClass
+		if trusted {
+			create = manager.CreateForwarderKey
+		}
+		key, err := create(ctx, userID, label, class, lifetime)
 		if err != nil {
 			return err
 		}

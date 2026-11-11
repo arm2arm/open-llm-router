@@ -37,7 +37,7 @@ func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol strin
 	}
 	if p, ok := auth.FromContext(r.Context()); ok && r.URL.Path != "/v1/messages/count_tokens" {
 		a.sink = h.Usage
-		a.record.UserID, a.record.KeyID = p.UserID, p.KeyID
+		a.record.UserID, a.record.KeyID, a.record.ForwardedBy = p.UserID, p.KeyID, p.ForwardedBy
 	}
 	return a
 }
