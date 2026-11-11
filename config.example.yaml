@@ -29,6 +29,14 @@ oidc:
   portal_client_id: olr-portal
   groups_claim: groups              # default
   username_claim: preferred_username # default
+  # Identity-provider access tokens on /v1/* (client credentials): they must
+  # name this audience. Leave empty for API keys only. Env: OIDC_AUDIENCE.
+  audience: olr-api
+  # Group sync: a read-only service account refreshes groups and disables
+  # users removed or disabled in Keycloak. Runs only when its secret is set
+  # in OIDC_SYNC_CLIENT_SECRET.
+  sync_client_id: olr-sync          # default
+  sync_interval_s: 900              # default
 
 models:
   chat-model:
