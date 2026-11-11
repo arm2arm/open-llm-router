@@ -6,6 +6,7 @@ import os
 import re
 import statistics
 import time
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 
@@ -89,8 +90,16 @@ class CancellationProbe:
     def __init__(self):
         self.mock_urls = [url for url in os.environ.get("OLR_CANCEL_STATS_URLS", "").split(",") if url]
         self.metrics_url = os.environ.get("OLR_VLLM_METRICS_URL")
+        self.log_path = os.environ.get("OLR_VLLM_LOG_PATH")
         if self.mock_urls and self.metrics_url:
             raise ValueError("set only one of OLR_CANCEL_STATS_URLS and OLR_VLLM_METRICS_URL")
+        if self.log_path and not self.metrics_url:
+            raise ValueError("OLR_VLLM_LOG_PATH also requires OLR_VLLM_METRICS_URL")
+        if self.log_path:
+            self.log_path = Path(self.log_path)
+            with self.log_path.open("rb") as log:
+                self.log_offset = log.seek(0, 2)
+            self.log_identity = self.log_path.stat().st_ino
         self.model = os.environ.get("OLR_UPSTREAM_MODEL", "")
         if self.metrics_url and not self.model:
             raise ValueError("OLR_UPSTREAM_MODEL is required for vLLM cancellation evidence")
@@ -119,9 +128,22 @@ class CancellationProbe:
             inflight += active
         return aborted, inflight
 
-    def verify(self):
+    def logged_abort(self, request_id):
+        stat = self.log_path.stat()
+        if stat.st_ino != self.log_identity or stat.st_size < self.log_offset:
+            raise RuntimeError("backend log was replaced or truncated during cancellation check")
+        with self.log_path.open("rb") as log:
+            log.seek(self.log_offset)
+            text = log.read().decode("utf-8", errors="replace")
+        # vLLM can append a child-request suffix. Match the response ID exactly
+        # before that suffix or the log punctuation, never an unrelated abort.
+        return re.search(r"Aborted request\(s\) " + re.escape(request_id) + r"(?:-|[.,\s]|$)", text) is not None
+
+    def verify(self, request_id=None):
         if self.before is None:
             return "client closed; backend cancellation UNVERIFIED (no evidence URL)"
+        if self.log_path and not request_id:
+            raise ValueError("the stream response ID is required for backend log evidence")
         deadline = time.monotonic() + positive_int("OLR_CANCEL_TIMEOUT_S", 30)
         while True:
             aborted, inflight = self.snapshot()
@@ -129,6 +151,8 @@ class CancellationProbe:
                 raise RuntimeError("backend counters reset during cancellation check")
             if aborted > self.before and inflight == 0:
                 return "backend abort counter increased and no requests remain in flight"
+            if self.log_path and self.logged_abort(request_id) and inflight == 0:
+                return "backend abort log matched this response ID and no requests remain in flight"
             if time.monotonic() >= deadline:
                 raise RuntimeError("backend did not confirm an abort with zero in-flight requests")
             time.sleep(0.25)

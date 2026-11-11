@@ -175,11 +175,14 @@ def cancel_stream():
         return None
     probe = CancellationProbe()
     pieces = 0
+    request_id = None
     with client.messages.stream(
         model=MODEL, max_tokens=4096, messages=[{"role": "user", "content": LONG_PROMPT}],
         extra_headers=mock_headers(4096), **MESSAGE_OPTIONS,
     ) as stream:
         for event in stream:
+            if event.type == "message_start":
+                request_id = event.message.id
             assert event.type not in ("message_stop", "message_delta"), "generation finished before cancellation"
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 pieces += bool(event.delta.text)
@@ -187,7 +190,7 @@ def cancel_stream():
                 break
         else:
             raise AssertionError("stream ended before cancellation")
-    return probe.verify()
+    return probe.verify(request_id)
 
 
 def main():

@@ -258,7 +258,9 @@ copy a working client snippet and see your own usage without bootstrap administr
 For real Ollama, vLLM or SGLang backends, see [docs/CLIENTS.md](docs/CLIENTS.md) and
 [config.real.example.yaml](config.real.example.yaml). The runbook includes the recorded laptop
 results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `make sdk-real`
-/ `make bench-real`. The deployed vLLM/SGLang acceptance run remains pending.
+/ `make bench-real`. Against local vLLM 0.33.0, the SDK, cancellation and timing checks pass
+and Claude Code and OpenCode complete a tool session with Qwen3 8B. The same checks on the
+deployed GPU backend remain pending.
 
 ## Keycloak and portal login
 
