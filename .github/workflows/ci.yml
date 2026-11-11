@@ -74,6 +74,8 @@ jobs:
         run: cd web && npm run test:e2e
       - name: Keycloak login, portal API and SSO logout
         run: make portal-check
+      - name: Brokered login and required claim
+        run: make brokered-check
       - name: Official OpenAI and Anthropic SDKs against router and mocks
         run: |
           python3 -m venv /tmp/olr-sdk
