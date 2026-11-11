@@ -1,0 +1,58 @@
+# Optional real vLLM backend for local ARM64 protocol checks; no GPU required.
+# docker compose -f deploy/compose/vllm-cpu.yml up -d --wait
+# Use config.real.example.yaml for the router and docs/CLIENTS.md for clients.
+name: olr-vllm-cpu
+
+services:
+  vllm:
+    # Official vLLM 0.33.0 ARM CPU image, pinned to the tested artifact.
+    image: vllm/vllm-openai-cpu@sha256:06e9c5ee1c04c9629bf5ce570f2995338ac02a704d9db6f68adc909855111fe1
+    platform: linux/arm64
+    ports:
+      - "127.0.0.1:${OLR_VLLM_PORT:-18000}:8000"
+    cpuset: "${OLR_VLLM_CPU_BIND:-0-7}"
+    mem_limit: 14g
+    shm_size: 2g
+    environment:
+      VLLM_CPU_KVCACHE_SPACE: "4"
+      VLLM_CPU_OMP_THREADS_BIND: "${OLR_VLLM_CPU_BIND:-0-7}"
+    volumes:
+      - models:/root/.cache/huggingface
+    command:
+      - Qwen/Qwen3-0.6B
+      - --revision
+      - c1899de289a04d12100db370d81485cdf75e47ca
+      - --served-model-name
+      - tiny-qwen
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - float32
+      - --max-model-len
+      - "16384"
+      - --max-num-seqs
+      - "2"
+      - --max-num-batched-tokens
+      - "2048"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      - --reasoning-parser
+      - qwen3
+      - --generation-config
+      - vllm
+      - --enable-log-requests
+      - --max-log-len
+      - "0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      start_period: 120s
+      retries: 45
+
+volumes:
+  models:
+    name: olr-issue8-vllm-models

@@ -58,10 +58,10 @@ sdk:
 		api_key=olr-not-checked; \
 		if [ "$$service" = router ]; then stats="http://$$stats_a/_mock/stats,http://$$stats_b/_mock/stats"; api_key="$$key"; fi; \
 		OLR_BASE_URL="http://$$address" OLR_API_KEY="$$api_key" OLR_EMBEDDING_MODEL=chat-model OLR_TEST_MOCK=1 \
-			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
+			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= OLR_VLLM_LOG_PATH= \
 			$(SDK_RUN) tests/clients/check_openai.py || exit $$?; \
 		OLR_BASE_URL="http://$$address" OLR_API_KEY="$$api_key" OLR_CHECK_THINKING=1 OLR_TEST_MOCK=1 \
-			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= \
+			OLR_CHECK_EXTENDED=1 OLR_REQUIRE_CANCEL_EVIDENCE=1 OLR_CANCEL_STATS_URLS="$$stats" OLR_VLLM_METRICS_URL= OLR_VLLM_LOG_PATH= \
 			$(SDK_RUN) tests/clients/check_anthropic.py || exit $$?; \
 	done
 

@@ -1,5 +1,7 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from client_checks import CancellationProbe, comparison, long_limits, vllm_snapshot
@@ -58,6 +60,60 @@ class ClientChecksTest(unittest.TestCase):
         with patch.object(CancellationProbe, "snapshot", return_value=(5, 0)), patch("client_checks.time.monotonic", side_effect=[0, 31]):
             with self.assertRaisesRegex(RuntimeError, "did not confirm"):
                 CancellationProbe().verify()
+
+    @patch.dict(os.environ, {"OLR_VLLM_METRICS_URL": "http://vllm/metrics", "OLR_UPSTREAM_MODEL": "served"}, clear=True)
+    def test_log_evidence_matches_response_and_requires_idle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "vllm.log"
+            log.write_text("")
+            with patch.dict(os.environ, {"OLR_VLLM_LOG_PATH": str(log)}), patch.object(
+                CancellationProbe, "snapshot", side_effect=[(0, 0), (0, 0), (0, 1), (0, 0)]
+            ):
+                probe = CancellationProbe()
+                log.write_text("Aborted request(s) chatcmpl-other.\n")
+                def append_match():
+                    with log.open("a") as output:
+                        output.write("Aborted request(s) chatcmpl-target-0.\n")
+                with patch("client_checks.time.sleep", side_effect=lambda _: append_match()) as sleep:
+                    self.assertIn("matched this response ID", probe.verify("chatcmpl-target"))
+                    self.assertEqual(sleep.call_count, 2)
+
+    @patch.dict(os.environ, {"OLR_VLLM_METRICS_URL": "http://vllm/metrics", "OLR_UPSTREAM_MODEL": "served"}, clear=True)
+    def test_stale_and_other_request_logs_are_not_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "vllm.log"
+            log.write_text("Aborted request(s) chatcmpl-target.\n")
+            with patch.dict(os.environ, {"OLR_VLLM_LOG_PATH": str(log)}), patch.object(
+                CancellationProbe, "snapshot", return_value=(0, 0)
+            ):
+                probe = CancellationProbe()
+                with log.open("a") as output:
+                    output.write("Aborted request(s) chatcmpl-target2.\n")
+                with patch("client_checks.time.monotonic", side_effect=[0, 31]):
+                    with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+                        probe.verify("chatcmpl-target")
+
+    @patch.dict(os.environ, {"OLR_VLLM_METRICS_URL": "http://vllm/metrics", "OLR_UPSTREAM_MODEL": "served"}, clear=True)
+    def test_log_rotation_and_missing_response_id_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "vllm.log"
+            log.write_text("initial log\n")
+            with patch.dict(os.environ, {"OLR_VLLM_LOG_PATH": str(log)}), patch.object(
+                CancellationProbe, "snapshot", return_value=(0, 0)
+            ):
+                probe = CancellationProbe()
+                with self.assertRaisesRegex(ValueError, "response ID"):
+                    probe.verify()
+                replacement = Path(directory) / "replacement.log"
+                replacement.write_text("Aborted request(s) chatcmpl-target.\n")
+                replacement.replace(log)
+                with self.assertRaisesRegex(RuntimeError, "replaced or truncated"):
+                    probe.verify("chatcmpl-target")
+
+    @patch.dict(os.environ, {"OLR_VLLM_LOG_PATH": "/unused"}, clear=True)
+    def test_abort_log_alone_does_not_prove_engine_idle(self):
+        with self.assertRaisesRegex(ValueError, "also requires"):
+            CancellationProbe()
 
     @patch.dict(os.environ, {"OLR_LONG_MIN_TOKENS": "600"}, clear=True)
     def test_long_output_bounds(self):

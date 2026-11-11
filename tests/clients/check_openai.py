@@ -184,11 +184,13 @@ def cancel_stream():
         return None
     probe = CancellationProbe()
     pieces = 0
+    request_id = None
     with client.chat.completions.create(
         model=MODEL, messages=[{"role": "user", "content": LONG_PROMPT}],
         max_tokens=4096, stream=True, extra_headers=mock_headers(4096), **CHAT_OPTIONS,
     ) as stream:
         for chunk in stream:
+            request_id = chunk.id
             for choice in chunk.choices:
                 assert choice.finish_reason is None, "generation finished before cancellation"
                 pieces += bool(choice.delta.content)
@@ -196,7 +198,7 @@ def cancel_stream():
                 break
         else:
             raise AssertionError("stream ended before cancellation")
-    return probe.verify()
+    return probe.verify(request_id)
 
 
 def main():
