@@ -1,0 +1,18 @@
+# Weekly update proposals for every pinned dependency: Go modules, the portal's
+# npm lockfile, Docker base-image digests and GitHub Actions commit SHAs.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: npm
+    directory: /web
+    schedule: {interval: weekly}
+    groups:
+      portal: {patterns: ["*"]}
+  - package-ecosystem: docker
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}

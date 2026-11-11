@@ -26,6 +26,14 @@ const (
 	readinessTimeout = 2 * time.Second
 )
 
+// RequestBodyTimeout bounds the upload of a request body. A handler that
+// streams a long response clears the deadline once it has read the body
+// (http.ResponseController.SetReadDeadline with the zero time); one that
+// leaves the body unread keeps it, so a slow body cannot hold the connection.
+// It is not a server ReadTimeout, which would also cut off the connection's
+// background read while a response streams. Tests may shorten it.
+var RequestBodyTimeout = 2 * time.Minute
+
 // Server is the router's HTTP server.
 type Server struct {
 	log           *slog.Logger
@@ -92,6 +100,10 @@ func (s *Server) Handler() http.Handler {
 		details := reqid.DetailsFromContext(r.Context())
 		w.Header().Set("X-Request-Id", id)
 		rec := &recorder{ResponseWriter: w}
+		if r.Body != nil && r.Body != http.NoBody {
+			// Requests without a body already have the background read running.
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(RequestBodyTimeout))
+		}
 
 		defer func() {
 			p := recover()

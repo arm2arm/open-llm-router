@@ -15,6 +15,11 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// MaxPendingLogins caps unfinished login attempts; each expires after ten minutes.
+var MaxPendingLogins = 10000
+
+var errTooManyLogins = errors.New("too many pending logins")
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	state, nonce, browser, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
 	idHash, stateHash := sha256.Sum256([]byte(browser)), sha256.Sum256([]byte(state))
@@ -27,9 +32,21 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		_, err := tx.Exec(r.Context(), `INSERT INTO portal_login_attempts(id_hash,state_hash,nonce,verifier,expires) VALUES($1,$2,$3,$4,clock_timestamp()+interval '10 minutes')`, idHash[:], stateHash[:], nonce, verifier)
+		// The login route is public: bound the rows it can create. The count
+		// is not serialized across concurrent logins, so the cap is approximate.
+		result, err := tx.Exec(r.Context(), `INSERT INTO portal_login_attempts(id_hash,state_hash,nonce,verifier,expires)
+			SELECT $1,$2,$3,$4,clock_timestamp()+interval '10 minutes'
+			WHERE (SELECT count(*) FROM portal_login_attempts) < $5`, idHash[:], stateHash[:], nonce, verifier, MaxPendingLogins)
+		if err == nil && result.RowsAffected() == 0 {
+			return errTooManyLogins
+		}
 		return err
 	})
+	if errors.Is(err, errTooManyLogins) {
+		w.Header().Set("Retry-After", "60")
+		fail(w, 503, "overloaded_error", "too many logins in progress; try again shortly")
+		return
+	}
 	if err != nil {
 		unavailable(w)
 		return
