@@ -134,9 +134,8 @@ curl --fail --silent --show-error -N "$base/v1/chat/completions" \
   -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
   -d '{"model":"chat-model","messages":[],"stream":true}' > "$work/stream.sse"
 python3 -c 'import sys; assert "data: [DONE]" in open(sys.argv[1]).read()' "$work/stream.sse"
-# A removed extra token must not be retained from the previous Secret contents.
-kubectl -n olr patch secret olr-open-llm-router-credentials --type merge \
-  -p '{"data":{"HELM_EXTRA_TOKEN":"dGVzdC1vbmx5"}}' > /dev/null
+# A removed extra token must not be retained from the previous Helm values.
+install --set secrets.env.HELM_EXTRA_TOKEN=test-only
 install --set config.models.chat-model.idle_timeout_s=121
 [ "$(secret_data)" = "$first_secret" ]
 [ "$(checksum)" != "$first_checksum" ]
