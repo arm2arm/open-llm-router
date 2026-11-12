@@ -400,6 +400,29 @@ URL), never follow redirects, and refuse link-local, metadata, multicast and
 unspecified addresses at connection time. Loopback and private networks are
 allowed for internal identity providers.
 
+## Admin routing settings
+
+These routes require an admin session. Bodies use the normal JSON and same-origin
+checks; drafts accept up to 256 KiB.
+
+- `GET /portal/api/admin/settings/routing` returns `settings` (the managed view for
+  the routing domain: `managed`, `version`, effective `models` and `aliases`,
+  `active`/`draft` revisions with `document` `{models, aliases}`, `validation` and
+  `checks`, informational file `conflicts` and `history`), `runtime.revision` (the
+  revision this process runs; `0` for file and per-model endpoint revisions),
+  `credential_references` and `allowed_private_networks`.
+- `POST …/import` with `{}`; afterwards `PUT /portal/api/admin/endpoints` returns 409.
+- `PUT …/draft` with `{"version":N,"document":{"models":{…},"aliases":{…}}}`. Model
+  objects use the YAML field names (`protocols`, `upstream_model`, `timeout_s`, `pool`
+  with `url`, `health_path`, `weight`, `max_inflight`, `bearer_token_env`, …).
+- `POST …/discard` with `{"version":N}`.
+- `POST …/checks` with `{"revision":R}` (0: the current routing) returns `{revision,
+  results}` with one `models.<name>.pool[<i>]` result per probed replica, or
+  `destination` failures without probing.
+- `POST …/activate`, `POST …/rollback` with `{"version":N,"revision":R}` and
+  `POST …/apply` with `{}` publish to this router at once; activation needs the
+  changed models' replicas to pass health checks.
+
 ## Models and client URLs
 
 `GET /portal/api/models`:

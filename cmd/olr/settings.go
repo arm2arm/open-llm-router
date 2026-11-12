@@ -12,21 +12,25 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/endpoints"
 	"github.com/arm2arm/open-llm-router/internal/settings"
 )
 
 const settingsUsage = `usage:
-  olr admin settings show     [-domain authentication] [-config FILE]
-  olr admin settings import   [-domain authentication] [-config FILE]
-  olr admin settings draft    -expect-version N -document FILE [-secret NAME=FILE]... [-domain authentication] [-config FILE]
-  olr admin settings discard  -expect-version N [-domain authentication] [-config FILE]
-  olr admin settings activate -expect-version N -revision ID [-domain authentication] [-config FILE]
-  olr admin settings rollback -expect-version N -revision ID [-domain authentication] [-config FILE]
+  olr admin settings show     [-domain authentication|routing] [-config FILE]
+  olr admin settings import   [-domain authentication|routing] [-config FILE]
+  olr admin settings draft    -expect-version N -document FILE [-secret NAME=FILE]... [-domain ...] [-config FILE]
+  olr admin settings discard  -expect-version N [-domain ...] [-config FILE]
+  olr admin settings activate -expect-version N -revision ID [-domain ...] [-config FILE]
+  olr admin settings rollback -expect-version N -revision ID [-domain ...] [-config FILE]
 
 Managed settings move a domain from the config file and environment into
-PostgreSQL revisions. Import is explicit and keeps the current behavior; after
+PostgreSQL revisions. Domains: authentication (the SSO connection, default)
+and routing (logical models with endpoint pools, and aliases; group policies
+stay in the file). Import is explicit and keeps the current behavior; after
 it, the active revision is the only authority for the domain. Each command
 prints the domain view as JSON: effective values and sources, active and draft
 revisions with their checks, conflicts and history. Secrets are shown as
@@ -93,7 +97,7 @@ func settingsCommand(args []string, out, errout io.Writer) error {
 	if fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags shown by -h")
 	}
-	if *domain != settings.DomainAuthentication {
+	if *domain != settings.DomainAuthentication && *domain != settings.DomainRouting {
 		return settings.ErrUnknownDomain
 	}
 	if command != "show" && command != "import" && expected <= 0 {
@@ -142,40 +146,94 @@ func settingsCommand(args []string, out, errout io.Writer) error {
 		return err
 	}
 	defer pool.Close()
-	service := &settings.Service{DB: pool, File: file, Cipher: cipher}
-	actor := audit.OperatorCLI()
-	var view settings.View
-	switch command {
-	case "show":
-		view, err = service.View(ctx, *domain)
-	case "import":
-		view, err = service.Import(ctx, *domain, actor)
-	case "draft":
-		view, err = service.SaveDraft(ctx, *domain, expected, document, secretValues, actor)
-	case "discard":
-		view, err = service.Discard(ctx, *domain, expected, actor)
-	case "activate":
-		view, err = service.Activate(ctx, *domain, expected, revision, actor, false)
-	case "rollback":
-		view, err = service.Rollback(ctx, *domain, expected, revision, actor)
-	}
-	if err != nil {
-		return err
-	}
-	encoder := json.NewEncoder(out)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(view); err != nil {
-		return err
+	request := settingsRequest{command: command, domain: *domain, expected: expected, revision: revision, document: document, secrets: secretValues, actor: audit.OperatorCLI()}
+	var active, draft int64
+	var draftValid bool
+	if *domain == settings.DomainRouting {
+		// The import baseline is the routing in use, including Admin endpoint
+		// revisions; credentials resolve through the backend token policy.
+		destinations, err := backendpolicy.New(file, os.LookupEnv)
+		if err != nil {
+			return err
+		}
+		current, err := endpoints.Load(ctx, pool, file, destinations)
+		if err != nil {
+			return err
+		}
+		service := &settings.RoutingService{DB: pool, File: file, Cipher: cipher, Tokens: destinations.Token,
+			Current: func() *config.Config { return current }, Verify: endpoints.VerifyDestinations(destinations)}
+		view, err := runSettings[settings.RoutingView](ctx, service, request)
+		if err != nil {
+			return err
+		}
+		active, draft, draftValid = view.Summary()
+		err = printView(out, view)
+		if err != nil {
+			return err
+		}
+	} else {
+		service := &settings.AuthenticationService{DB: pool, File: file, Cipher: cipher}
+		view, err := runSettings[settings.AuthenticationView](ctx, service, request)
+		if err != nil {
+			return err
+		}
+		active, draft, draftValid = view.Summary()
+		if err := printView(out, view); err != nil {
+			return err
+		}
 	}
 	switch command {
 	case "import", "activate", "rollback":
-		fmt.Fprintf(errout, "olr: revision %d is active; routers apply it when they next start\n", view.Active.ID)
+		fmt.Fprintf(errout, "olr: revision %d is active; routers apply it when they next start or on Apply in Admin\n", active)
 	case "draft":
-		if d := view.Draft; d != nil && (d.Validation == nil || !d.Validation.Valid) {
-			fmt.Fprintf(errout, "olr: draft %d was saved but cannot be activated yet; see draft.validation.problems\n", d.ID)
+		if draft != 0 && !draftValid {
+			fmt.Fprintf(errout, "olr: draft %d was saved but cannot be activated yet; see draft.validation.problems\n", draft)
 		}
 	}
 	return nil
+}
+
+type settingsRequest struct {
+	command, domain    string
+	expected, revision int64
+	document           []byte
+	secrets            map[string][]byte
+	actor              audit.Actor
+}
+
+// settingsOps is what every managed settings service offers.
+type settingsOps[V any] interface {
+	View(context.Context, string) (V, error)
+	Import(context.Context, string, audit.Actor) (V, error)
+	SaveDraft(context.Context, string, int64, []byte, map[string][]byte, audit.Actor) (V, error)
+	Discard(context.Context, string, int64, audit.Actor) (V, error)
+	Activate(context.Context, string, int64, int64, audit.Actor, bool) (V, error)
+	Rollback(context.Context, string, int64, int64, audit.Actor) (V, error)
+}
+
+// runSettings performs one command. CLI activation is an operator path and
+// does not require the Admin page's stored checks.
+func runSettings[V any](ctx context.Context, ops settingsOps[V], r settingsRequest) (V, error) {
+	switch r.command {
+	case "import":
+		return ops.Import(ctx, r.domain, r.actor)
+	case "draft":
+		return ops.SaveDraft(ctx, r.domain, r.expected, r.document, r.secrets, r.actor)
+	case "discard":
+		return ops.Discard(ctx, r.domain, r.expected, r.actor)
+	case "activate":
+		return ops.Activate(ctx, r.domain, r.expected, r.revision, r.actor, false)
+	case "rollback":
+		return ops.Rollback(ctx, r.domain, r.expected, r.revision, r.actor)
+	default:
+		return ops.View(ctx, r.domain)
+	}
+}
+
+func printView(out io.Writer, view any) error {
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(view)
 }
 
 func readDocument(path string) ([]byte, error) {

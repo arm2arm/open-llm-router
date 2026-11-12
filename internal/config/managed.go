@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -11,6 +12,14 @@ import (
 // WithModels validates an immutable routing copy against the file-owned group
 // and alias policies. Resolved tokens are reconstructed, never accepted in JSON.
 func WithModels(base *Config, models map[string]Model, lookup func(string) (string, bool)) (*Config, error) {
+	return WithRouting(base, models, base.Aliases, lookup)
+}
+
+// WithRouting validates an immutable copy of base with these models and
+// aliases. Aliases and group policies must name configured models, so a model
+// still in use cannot be removed. Backend credentials are resolved through
+// lookup from bearer_token_env references.
+func WithRouting(base *Config, models map[string]Model, aliases map[string]string, lookup func(string) (string, bool)) (*Config, error) {
 	data, err := json.Marshal(models)
 	if err != nil {
 		return nil, Problems{"invalid model configuration"}
@@ -21,6 +30,10 @@ func WithModels(base *Config, models map[string]Model, lookup func(string) (stri
 	}
 	cfg := *base
 	cfg.Models = copied
+	cfg.Aliases = maps.Clone(aliases)
+	if cfg.Aliases == nil {
+		cfg.Aliases = map[string]string{}
+	}
 	var problems Problems
 	for name, model := range cfg.Models {
 		if model.IdleTimeoutS == 0 {

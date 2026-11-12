@@ -39,6 +39,7 @@ commands:
   serve    run the router
   admin    manage local users and API keys
   migrate  apply database migrations and exit
+  config   check a config file without starting the router
 
 Run "olr <command> -h" for the flags of a command.
 `
@@ -56,6 +57,8 @@ func main() {
 		err = admin(args, os.Stdout, os.Stderr)
 	case "migrate":
 		err = migrateCommand(args, os.Stdout)
+	case "config":
+		err = configCommand(args, os.Stdout, os.Stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:
@@ -130,8 +133,20 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Routing revisions apply first (an unappliable one fails startup with a
+	// rollback command); authentication applies on top (an unappliable one
+	// turns SSO off). Per-model endpoint revisions apply only while routing
+	// is file-managed.
+	routingSettings := &settings.RoutingService{DB: database, File: fileConfig, Cipher: settingsCipher, Tokens: destinations.Token,
+		Verify: endpoints.VerifyDestinations(destinations)}
+	authSettings := &settings.AuthenticationService{DB: database, File: fileConfig, Cipher: settingsCipher, Lookup: os.LookupEnv}
 	settingsCtx, cancelSettings := context.WithTimeout(ctx, 10*time.Second)
-	managed, err := settings.Apply(settingsCtx, database, fileConfig, settingsCipher, os.LookupEnv, log)
+	routed, err := routingSettings.Apply(settingsCtx, fileConfig, log)
+	if err != nil {
+		cancelSettings()
+		return err
+	}
+	managed, err := authSettings.Apply(settingsCtx, routed.Config, log)
 	cancelSettings()
 	if err != nil {
 		return err
@@ -239,7 +254,10 @@ func serve(args []string) error {
 	portalHandler.Activity = live
 	portalHandler.Pools = forwarder.Pools
 	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: baseConfig, Policy: destinations, Runtime: forwarder}
-	portalHandler.Settings = &settings.Service{DB: database, File: fileConfig, Cipher: settingsCipher, Lookup: os.LookupEnv}
+	portalHandler.Settings = authSettings
+	routingSettings.Current = func() *config.Config { cfg, _ := forwarder.Snapshot(); return cfg }
+	portalHandler.Routing, portalHandler.RoutingRuntime = routingSettings, forwarder
+	portalHandler.SetRoutingRuntime(routed)
 	portalHandler.SetSettingsRuntime(managed)
 	portalHandler.AuthServices = ssoServices
 	srv.Handle("/portal", portalHandler)

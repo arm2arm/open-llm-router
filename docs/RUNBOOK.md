@@ -224,6 +224,17 @@ Keycloak passwords/memberships remain IdP-managed. These actions cannot reset or
 reassign the protected administrator. See the
 [administrator guide](ADMIN_GUIDE.md#manage-local-users-in-admin) for the full workflow.
 
+### Check a config file
+
+```sh
+olr config check -config /etc/olr/config.yaml   # or $OLR_CONFIG
+docker compose exec -T router olr config check
+```
+
+It runs the router's strict parser (unknown keys, missing `${VAR}`/`bearer_token_env`
+variables, invalid values) without starting, migrating or using the database or
+network, and prints `{"valid":true,…}` or the problems with exit status 1.
+
 ### Add a model or a replica
 
 Edit the config file — a new entry under `models` or a new `pool` replica with its `weight`

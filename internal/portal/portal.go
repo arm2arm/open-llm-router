@@ -47,11 +47,17 @@ type Handler struct {
 	Endpoints *endpoints.Service
 	// Settings manages authentication settings; SettingsRuntime is what this
 	// process loaded at startup.
-	Settings     *settings.Service
+	Settings     *settings.AuthenticationService
 	AuthServices AuthServices
 	runtime      atomic.Pointer[settings.Snapshot]
 	authMu       sync.Mutex // serializes authentication activation
-	keyCipher    *auth.KeyCipher
+	// Routing manages models, endpoints and aliases as revisions;
+	// RoutingRuntime is the proxy that publishes them.
+	Routing        *settings.RoutingService
+	RoutingRuntime RoutingRuntime
+	routingRuntime atomic.Pointer[settings.Snapshot]
+	routingMu      sync.Mutex
+	keyCipher      *auth.KeyCipher
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
@@ -117,6 +123,14 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/activate", h.settingsAdmin(h.activateAuthentication))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/rollback", h.settingsAdmin(h.rollbackAuthentication))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/apply", h.settingsAdmin(h.applyAuthentication))
+	h.mux.HandleFunc("GET /portal/api/admin/settings/routing", h.routingAdmin(h.routingSettings))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/import", h.routingAdmin(h.importRouting))
+	h.mux.HandleFunc("PUT /portal/api/admin/settings/routing/draft", h.routingAdmin(h.saveRoutingDraft))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/discard", h.routingAdmin(h.discardRoutingDraft))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/checks", h.routingAdmin(h.checkRouting))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/activate", h.routingAdmin(h.activateRouting))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/rollback", h.routingAdmin(h.rollbackRouting))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/apply", h.routingAdmin(h.applyRouting))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {
@@ -182,6 +196,12 @@ func fail(w http.ResponseWriter, status int, kind, message string) {
 func unavailable(w http.ResponseWriter) { fail(w, 503, "api_error", "portal temporarily unavailable") }
 
 func (h *Handler) jsonBody(w http.ResponseWriter, r *http.Request, value any) bool {
+	return h.jsonBodyLimit(w, r, value, 8192)
+}
+
+// jsonBodyLimit is jsonBody with a larger limit, for documents such as a
+// complete routing configuration.
+func (h *Handler) jsonBodyLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
 	origins := r.Header.Values("Origin")
 	if len(origins) != 1 || origins[0] != h.cfg.Portal.BaseURL || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin") {
 		fail(w, 403, "permission_error", "request origin is forbidden")
@@ -192,7 +212,7 @@ func (h *Handler) jsonBody(w http.ResponseWriter, r *http.Request, value any) bo
 		fail(w, 400, "invalid_request_error", "application/json is required")
 		return false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	var raw json.RawMessage
 	if err := decoder.Decode(&raw); err != nil || len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '{' {
 		fail(w, 400, "invalid_request_error", "invalid JSON body")

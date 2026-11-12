@@ -10,6 +10,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/portal"
+	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/settings"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -32,7 +33,7 @@ func signInLocalAdmin(t *testing.T, f *portalFixture) *portalBrowser {
 }
 
 type authenticationResponse struct {
-	Settings settings.View `json:"settings"`
+	Settings settings.AuthenticationView `json:"settings"`
 	URLs     struct {
 		Redirect   string `json:"redirect_uri"`
 		PostLogout string `json:"post_logout_redirect_uri"`
@@ -43,7 +44,7 @@ type authenticationResponse struct {
 func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 	const syncSecret = "sync-secret"
 	environment := map[string]string{config.EnvOIDCClientSecret: "test-secret"}
-	f := startPortal(t, usageOptions{portal: func(h *portal.Handler, cfg *config.Config, pool *pgxpool.Pool) {
+	f := startPortal(t, usageOptions{portal: func(h *portal.Handler, cfg *config.Config, pool *pgxpool.Pool, _ *proxy.Handler) {
 		// The fixture's portal secret comes "from the environment".
 		cfg.OIDC.SyncClientID, cfg.OIDC.SyncIntervalS, cfg.OIDC.DefaultSignIn = "olr-sync", 900, "keycloak"
 		// The fixture is built by hand; give it the defaults Parse would.
@@ -58,7 +59,7 @@ func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		h.Settings = &settings.Service{DB: pool, File: cfg, Cipher: cipher,
+		h.Settings = &settings.AuthenticationService{DB: pool, File: cfg, Cipher: cipher,
 			Lookup: func(name string) (string, bool) { value, ok := environment[name]; return value, ok }}
 	}})
 	base := f.cfg.Portal.BaseURL

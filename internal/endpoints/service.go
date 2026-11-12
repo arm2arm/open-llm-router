@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -14,7 +15,9 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/pool"
+	"github.com/arm2arm/open-llm-router/internal/settings"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +25,10 @@ var ErrConflict = errors.New("endpoint configuration changed; reload before appl
 var ErrModel = errors.New("choose an existing configured model")
 var ErrRevision = errors.New("revision does not belong to this model")
 var ErrStorage = errors.New("endpoint configuration storage is unavailable")
+
+// ErrRoutingManaged refuses per-model edits once routing is managed as
+// complete revisions (Admin routing settings).
+var ErrRoutingManaged = errors.New("routing is managed as revisions; change models and endpoints in a routing draft")
 
 type ValidationError struct{ Message string }
 
@@ -56,10 +63,35 @@ type Entry struct {
 }
 
 type querier interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// VerifyDestinations checks every replica of a configuration against the
+// outbound policy that proxy traffic also uses.
+func VerifyDestinations(policy *backendpolicy.Policy) func(context.Context, *config.Config) []string {
+	return func(ctx context.Context, cfg *config.Config) []string {
+		var problems []string
+		for _, name := range slices.Sorted(maps.Keys(cfg.Models)) {
+			for i, r := range cfg.Models[name].Pool {
+				if err := policy.Check(ctx, r.URL); err != nil {
+					problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: %s", name, i, err))
+				}
+			}
+		}
+		return problems
+	}
 }
 
 func loaded(ctx context.Context, db querier, base *config.Config, policy *backendpolicy.Policy) (*config.Config, map[string]int64, error) {
+	// Managed routing already contains every model; per-model revisions no
+	// longer apply on top of it.
+	if managed, err := settings.Managed(ctx, db, settings.DomainRouting); err != nil {
+		return nil, nil, ErrStorage
+	} else if managed {
+		return base, map[string]int64{}, nil
+	}
 	models := maps.Clone(base.Models)
 	revisions := map[string]int64{}
 	rows, err := db.Query(ctx, `SELECT a.model_name,a.revision_id,r.configuration FROM endpoint_active a JOIN endpoint_revisions r ON r.id=a.revision_id`)
@@ -204,6 +236,11 @@ func (s *Service) Save(ctx context.Context, name string, expected int64, model c
 		if err != nil {
 			return err
 		}
+		if managed, err := settings.Managed(ctx, tx, settings.DomainRouting); err != nil {
+			return ErrStorage
+		} else if managed {
+			return ErrRoutingManaged
+		}
 		if _, ok := s.Base.Models[name]; !ok {
 			return ErrModel
 		}
@@ -254,7 +291,7 @@ func (s *Service) Save(ctx context.Context, name string, expected int64, model c
 	if err != nil {
 		var validation *ValidationError
 		var problems config.Problems
-		if !errors.As(err, &validation) && !errors.As(err, &problems) && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrModel) && !errors.Is(err, ErrRevision) {
+		if !errors.As(err, &validation) && !errors.As(err, &problems) && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrModel) && !errors.Is(err, ErrRevision) && !errors.Is(err, ErrRoutingManaged) {
 			return nil, ErrStorage
 		}
 		return nil, err

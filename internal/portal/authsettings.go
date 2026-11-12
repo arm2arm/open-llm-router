@@ -73,7 +73,7 @@ func settingsError(w http.ResponseWriter, err error) bool {
 }
 
 type authenticationView struct {
-	Settings settings.View `json:"settings"`
+	Settings settings.AuthenticationView `json:"settings"`
 	// URLs to register on the identity provider's portal client.
 	URLs struct {
 		Redirect   string `json:"redirect_uri"`
@@ -440,7 +440,13 @@ func (h *Handler) switchAuthentication(w http.ResponseWriter, r *http.Request, u
 	h.authMu.Lock()
 	defer h.authMu.Unlock()
 	commit, abort, err := h.prepareAuthentication(r, body.Revision, activate)
-	if settingsError(w, err) {
+	if err != nil {
+		kind := "rollback"
+		if activate {
+			kind = "activate"
+		}
+		h.auditRefusal(r, u, settings.DomainAuthentication, kind, body.Revision, err)
+		settingsError(w, err)
 		return
 	}
 	if activate {

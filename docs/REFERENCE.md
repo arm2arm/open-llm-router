@@ -29,9 +29,11 @@ These limits apply per user, across all keys, protocols, models and replicas.
 
 The bootstrap commands use `OLR_DATABASE_URL` and work without a running HTTP server. Under
 Compose, run them as `docker compose exec -T router olr admin ...`; on the host use `bin/olr admin ...`.
-`olr admin settings` imports the SSO connection into database revisions and
+`olr admin settings` imports the SSO connection (`-domain authentication`) or the
+routing (`-domain routing`: models, endpoints and aliases) into database revisions and
 manages drafts, activation, rollback and encrypted secrets; see the
 [administrator guide](ADMIN_GUIDE.md#manage-authentication-settings-in-the-database).
+`olr config check` validates a config file without a database or network.
 `olr admin recover` resets the protected local administrator's password from a private
 file or redirected stdin, without Keycloak or the current password; see the
 [administrator guide](ADMIN_GUIDE.md#recover-the-protected-local-administrator).
