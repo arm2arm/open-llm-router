@@ -130,6 +130,12 @@ func TestPersonalRequestTraces(t *testing.T) {
 	}
 	id := call(true)
 	waitFor(t, func() bool { return count() == 1 })
+	// The requests list reads usage rows, which the accounting writer stores
+	// asynchronously and independently of the trace.
+	waitFor(t, func() bool {
+		var n int
+		return f.pool.QueryRow(t.Context(), `SELECT count(*) FROM usage WHERE request_id=$1`, id).Scan(&n) == nil && n == 1
+	})
 	resp, data = a.call(t, "GET", "/portal/api/requests/"+id, "", "")
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "trace-private-input") || !strings.Contains(string(data), `"events":[{`) || strings.Contains(string(data), key) || strings.Contains(string(data), "secret-header-never-stored") {
 		t.Fatalf("trace: %d %s", resp.StatusCode, data)
