@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
@@ -22,9 +24,21 @@ var MaxPendingLogins = 10000
 var errTooManyLogins = errors.New("too many pending logins")
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	base, err := url.Parse(h.cfg.Portal.BaseURL)
+	if err != nil {
+		unavailable(w)
+		return
+	}
+	// The login cookie must be issued on the callback's host. A home page
+	// opened through an alias (such as 127.0.0.1 instead of localhost) would
+	// otherwise lose its browser binding when the provider redirects back.
+	if !strings.EqualFold(r.Host, base.Host) {
+		http.Redirect(w, r, h.cfg.Portal.BaseURL+"/portal/login", http.StatusSeeOther)
+		return
+	}
 	state, nonce, browser, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
 	idHash, stateHash := sha256.Sum256([]byte(browser)), sha256.Sum256([]byte(state))
-	err := pgx.BeginFunc(r.Context(), h.pool, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(r.Context(), h.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `DELETE FROM portal_login_attempts WHERE expires<=clock_timestamp()`); err != nil {
 			return err
 		}

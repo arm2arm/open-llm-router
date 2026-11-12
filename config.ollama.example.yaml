@@ -1,0 +1,51 @@
+# Local Compose stack using the laptop's Ollama server.
+# Select this file with OLR_CONFIG_FILE=../../config.ollama.example.yaml in .env.
+# OLLAMA_BASE_URL and OLLAMA_MODEL are passed to the router by Compose.
+auth:
+  default_key_lifetime_days: 90
+
+limits:
+  timezone: UTC
+
+retention:
+  usage_days: 90
+  usage_daily_days: 400
+  run_at: "03:00"
+
+oidc:
+  issuer: ${OIDC_ISSUER}
+  portal_client_id: olr-portal
+  groups_claim: groups
+  username_claim: preferred_username
+  audience: olr-api
+  sync_client_id: olr-sync
+  sync_interval_s: 900
+
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    upstream_model: ${OLLAMA_MODEL}
+    timeout_s: 900
+    idle_timeout_s: 120
+    queue_timeout_s: 30
+    session_affinity: true
+    pool:
+      - url: ${OLLAMA_BASE_URL}
+        health_path: /
+        weight: 1
+        max_inflight: 1
+
+groups:
+  staff: {models: ["*"], tokens_per_day: 2000000, rpm: 60, max_concurrent: 4, max_concurrent_batch: 8}
+  students: {models: [chat-model], tokens_per_day: 300000, rpm: 20, tpm: 20000, max_concurrent: 2}
+  admins: {models: ["*"], admin: true}
+
+forwarders:
+  header_map: {X-OpenWebUI-User-Email: email}
+  unknown_user: reject
+
+aliases:
+  "${OLLAMA_MODEL}": chat-model
+  claude-sonnet-4-5: chat-model
+  claude-haiku-4-5: chat-model
+  claude-opus-4-1: chat-model
