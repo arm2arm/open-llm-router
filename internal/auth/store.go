@@ -18,10 +18,11 @@ type postgresStore struct{ pool *pgxpool.Pool }
 
 func (s postgresStore) lookup(ctx context.Context, hash [32]byte) (keyRecord, error) {
 	var r keyRecord
-	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.trusted_forwarder, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,
+	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.trusted_forwarder, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,u.protected_admin,
+		EXISTS(SELECT 1 FROM local_credentials c WHERE c.user_id=u.id AND c.must_change_password),
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = u.id)
 		FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.hash = $1`, hash[:]).
-		Scan(&r.KeyID, &r.KeyClass, &r.TrustedForwarder, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.Overrides)
+		Scan(&r.KeyID, &r.KeyClass, &r.TrustedForwarder, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.ProtectedAdmin, &r.passwordChangeRequired, &r.Overrides)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrInvalidKey
 	}
@@ -121,12 +122,13 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 	hash := sha256.Sum256([]byte(key))
 	result, err := a.Pool.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
 		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
-		FROM users WHERE id = $1 AND enabled`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
+		FROM users WHERE id = $1 AND enabled AND NOT EXISTS
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
 	if err != nil {
 		return "", errors.New("create API key failed")
 	}
 	if result.RowsAffected() == 0 {
-		return "", errors.New("user not found or disabled")
+		return "", errors.New("user not found, disabled, or password change required")
 	}
 	return key, nil
 }
@@ -190,20 +192,21 @@ func (a Admin) DeleteUser(ctx context.Context, userID string) error {
 
 // UserInfo is what operators need to find a user; it holds no credentials.
 type UserInfo struct {
-	ID       string    `json:"id"`
-	Issuer   string    `json:"issuer"`
-	Subject  string    `json:"sub"`
-	Username string    `json:"username"`
-	Email    string    `json:"email"`
-	Groups   []string  `json:"groups"`
-	Enabled  bool      `json:"enabled"`
-	SyncedAt time.Time `json:"synced_at"`
+	ID             string    `json:"id"`
+	Issuer         string    `json:"issuer"`
+	Subject        string    `json:"sub"`
+	Username       string    `json:"username"`
+	Email          string    `json:"email"`
+	Groups         []string  `json:"groups"`
+	Enabled        bool      `json:"enabled"`
+	SyncedAt       time.Time `json:"synced_at"`
+	ProtectedAdmin bool      `json:"protected_admin"`
 }
 
 // ListUsers returns users whose username or email contains match, ignoring
 // case; an empty match lists everyone.
 func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at FROM users
+	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin FROM users
 		WHERE $1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0
 		ORDER BY username, issuer, sub`, match)
 	if err != nil {
@@ -213,7 +216,7 @@ func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) 
 	users := []UserInfo{}
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin); err != nil {
 			return nil, errors.New("read user failed")
 		}
 		users = append(users, u)

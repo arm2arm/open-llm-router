@@ -112,6 +112,9 @@ func (a Admin) change(ctx context.Context, sql string, args ...any) error {
 	return a.changeWith(ctx, func(tx pgx.Tx) error {
 		result, err := tx.Exec(ctx, sql, args...)
 		if err != nil {
+			if protectedAdminError(err) {
+				return ErrProtectedAdmin
+			}
 			return errors.New("update authentication record failed")
 		}
 		if result.RowsAffected() == 0 {
@@ -160,6 +163,12 @@ func (a Admin) changeWith(ctx context.Context, mutate func(pgx.Tx) error) error 
 	})
 	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
+	}
+	if errors.Is(err, ErrProtectedAdmin) || protectedAdminError(err) {
+		return ErrProtectedAdmin
+	}
+	if errors.Is(err, ErrInvalidPassword) {
+		return ErrInvalidPassword
 	}
 	if err != nil {
 		return errors.New("authentication change transaction failed")

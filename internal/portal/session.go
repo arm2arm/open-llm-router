@@ -10,11 +10,12 @@ import (
 )
 
 type user struct {
-	ID        string            `json:"id"`
-	Username  string            `json:"username"`
-	Email     string            `json:"email"`
-	Groups    []string          `json:"groups"`
-	Overrides map[string]*int64 `json:"overrides"`
+	ID             string            `json:"id"`
+	Username       string            `json:"username"`
+	Email          string            `json:"email"`
+	Groups         []string          `json:"groups"`
+	Overrides      map[string]*int64 `json:"overrides"`
+	ProtectedAdmin bool              `json:"protected_admin"`
 }
 
 func (h *Handler) authenticated(next func(http.ResponseWriter, *http.Request, user)) http.HandlerFunc {
@@ -25,10 +26,11 @@ func (h *Handler) authenticated(next func(http.ResponseWriter, *http.Request, us
 			return
 		}
 		var u user
-		err := h.pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.email,u.groups,
+		err := h.pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.email,u.groups,u.protected_admin,
 			(SELECT jsonb_object_agg(o.field,o.value) FROM quota_overrides o WHERE o.user_id=u.id)
 			FROM sessions s JOIN users u ON u.id=s.user_id
-			WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled`, hash[:]).Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.Overrides)
+			WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled AND NOT EXISTS
+			(SELECT 1 FROM local_credentials c WHERE c.user_id=u.id AND c.must_change_password)`, hash[:]).Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.ProtectedAdmin, &u.Overrides)
 		if errors.Is(err, pgx.ErrNoRows) {
 			h.cookie(w, sessionCookie, "", -1)
 			fail(w, 401, "authentication_error", "authentication required")
@@ -87,7 +89,8 @@ func (h *Handler) establish(r *http.Request, id string) (string, error) {
 		if err != nil {
 			return err
 		}
-		result, err := tx.Exec(r.Context(), `INSERT INTO sessions(id_hash,user_id,expires) SELECT $1,id,clock_timestamp()+interval '8 hours' FROM users WHERE id=$2 AND enabled`, hash[:], id)
+		result, err := tx.Exec(r.Context(), `INSERT INTO sessions(id_hash,user_id,expires) SELECT $1,id,clock_timestamp()+interval '8 hours' FROM users WHERE id=$2 AND enabled
+			AND NOT EXISTS(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, hash[:], id)
 		if err == nil && result.RowsAffected() == 0 {
 			return pgx.ErrNoRows
 		}

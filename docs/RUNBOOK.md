@@ -3,6 +3,9 @@
 Everything an operator needs to deploy and run the router. Behaviour in detail is in
 [REFERENCE.md](REFERENCE.md); the portal API in [PORTAL_API.md](PORTAL_API.md); metrics and
 traces in [OBSERVABILITY.md](OBSERVABILITY.md); the privacy notice in [PRIVACY.md](PRIVACY.md).
+For a setup walkthrough and the current administrator capabilities, start with
+[ADMIN_GUIDE.md](ADMIN_GUIDE.md). Missing local-login and Admin configuration features
+are tracked in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md).
 
 ## Deployment
 
@@ -92,6 +95,8 @@ no limit.
 |---|---|
 | `OLR_CONFIG` | config file path (image: `/etc/olr/config.yaml`) |
 | `OLR_DATABASE_URL` | Postgres URL — **secret** |
+| `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` | owner-only file for one-time protected local administrator bootstrap; preferred over environment password |
+| `OLR_BOOTSTRAP_ADMIN_PASSWORD` | alternative bootstrap password — **secret**; configure only one source; ignored once initialized |
 | `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables the portal |
 | `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | client secrets — **secret** |
 | `OIDC_AUDIENCE`, `OIDC_SYNC_CLIENT_ID`, `OIDC_REQUIRED_CLAIM=name=value` | override the `oidc` keys |
@@ -134,12 +139,34 @@ second (no buffering). Portal login is not part of it: the overlay runs without 
 
 ## Everyday operations
 
+### Bootstrap or rotate the protected local administrator
+
+Follow [the administrator guide](ADMIN_GUIDE.md#bootstrap-the-protected-local-administrator)
+for private secret files and the initial change. `olr admin bootstrap` runs without
+Keycloak; `olr serve` also bootstraps when a secret source is configured. There is
+no default password. An initialized account ignores bootstrap inputs, including
+missing retired files, and preserves its UUID and password on restart/upgrade.
+
+```sh
+olr admin bootstrap -password-file /private/secrets/olr-bootstrap
+olr admin password change -user USER_UUID \
+  -current-password-file /private/secrets/olr-current \
+  -password-file /private/secrets/olr-new
+```
+
+The first change is required before session/API-key access. Later rotations use
+the same command and revoke existing sessions. The current password is required;
+there is no recovery-reset command yet (#76). Local browser login is still pending
+(#73). The reserved local administrator cannot be deleted, disabled, demoted or
+converted to an SSO identity through ordinary application/SQL operations.
+
 ### Add a model or a replica
 
 Edit the config file — a new entry under `models` or a new `pool` replica with its `weight`
 (relative throughput) and `max_inflight` — then restart the router. Restarts are graceful;
 clients of streams still running after the grace period see an aborted stream. A replica is
-used once it passes two health checks. Give access with `groups.<name>.models`, and add
+used once it passes a successful health check; two failed checks mark it unhealthy.
+Give access with `groups.<name>.models`, and add
 aliases for the names clients send by default.
 
 ### Disable a user, revoke keys
@@ -151,28 +178,33 @@ olr admin key list -user <uuid>
 olr admin key revoke -id <key uuid>
 ```
 
-or the portal's **Admin** page. Every router clears its key cache before the command returns.
+The portal's **Admin** page can disable or re-enable users; operator key revocation
+uses the CLI. Every router clears its API-key cache before the command returns.
+A cached OIDC access-token principal can remain valid for up to one minute.
 A user disabled in Keycloak is disabled here by the group sync. Users can revoke their own keys.
 
 ### Change one user's limits
 
 `olr admin override set -user <uuid> -field tokens_per_day -value 5000000 -reason "thesis"`
 (`-value unlimited` lifts a limit), `override clear` and `override list`, or the **Admin** page.
-Changes apply at the user's next request.
+Changes apply at the user's next API-key request; cached OIDC access-token
+principals can take up to one minute to refresh.
 
 ### Rotate secrets
 
 | Secret | How |
 |---|---|
-| Postgres password | `ALTER ROLE olr PASSWORD '…'`, update `OLR_DATABASE_URL`, restart |
-| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, restart; logins in progress must start again, sessions stay |
-| `OLR_METRICS_TOKEN` | set the new token in the router and in Prometheus's credentials file, restart both |
-| backend tokens (`bearer_token_env`) | configure the backend to accept old and new, update the router, restart, drop the old one |
+| Postgres password | `ALTER ROLE olr PASSWORD '…'`, update `OLR_DATABASE_URL`, recreate the Compose container |
+| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, recreate the Compose container; logins in progress must start again, sessions stay |
+| `OLR_METRICS_TOKEN` | set the new token in the router and in Prometheus's credentials file, recreate/restart the affected services so they read it |
+| backend tokens (`bearer_token_env`) | configure the backend to accept old and new, update the router environment, recreate the Compose container, drop the old one |
 | API keys | users create a new key and revoke the old one; keys expire after `auth.default_key_lifetime_days` |
+| Local administrator password | `olr admin password change` with private current/new files; retire the bootstrap source after first change |
 
 ### Back up Postgres
 
-The database holds users, keys (hashes), sessions, overrides and usage. Back it up daily:
+The database holds users, API-key/password hashes, sessions, overrides and usage.
+Protect dumps as secrets and back it up daily:
 
 ```sh
 pg_dump --format=custom --file=olr-$(date +%F).dump "$OLR_DATABASE_URL"
@@ -181,6 +213,10 @@ pg_restore --clean --if-exists --dbname="$OLR_DATABASE_URL" olr-YYYY-MM-DD.dump 
 
 Keep backups no longer than the usage retention, or erasures (below) come back with a restore;
 after restoring an old backup, repeat the erasures done since.
+
+Migration 0004 adds the credential table and protected-account constraints. Back
+up before upgrading. Downgrading to a binary that predates these invariants is
+unsupported; restore a matching pre-upgrade backup if rollback is necessary.
 
 ### Connect Prometheus and a tracing backend
 

@@ -329,7 +329,12 @@ function UserDetail({ id, self }: { id: string; self: string }) {
             {data.keys.filter((k) => !k.revoked).length} keys
           </div>
         </div>
-        {id !== self && (
+        {data.user.protected_admin && (
+          <span className="text-xs text-muted-foreground">
+            Protected local administrator
+          </span>
+        )}
+        {id !== self && !data.user.protected_admin && (
           <Button
             variant="outline"
             size="sm"

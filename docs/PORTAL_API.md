@@ -35,7 +35,7 @@ The UI can use `fetch(url, {method, headers: {'Content-Type': 'application/json'
 
 ```json
 {
-  "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"]},
+  "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"],"protected_admin":false},
   "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"tpm":null,
              "max_concurrent":4,"max_concurrent_batch":8,"strict_quota":false}
 }
@@ -115,20 +115,26 @@ untouched. See [PRIVACY.md](PRIVACY.md).
 
 ## Admin
 
-Members of a group with `admin: true` in the config get `"admin": true` in `/portal/api/me` and
-these routes; everyone else gets 403. Membership is read from the stored groups on each request.
+Members of a group with `admin: true` in the config and the protected local administrator
+get `"admin": true` in `/portal/api/me` and these routes; everyone else gets 403.
+Membership and protected status are read from the database on each request. Protected
+authority does not grant inference model access; normal model policies still apply.
+Local browser login remains pending (#73); this describes the session authorization contract.
 
 - `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
-  month, and overrides by field.
+  month, overrides by field and `protected_admin`.
 - `GET /portal/api/admin/users/{id}`: the user, effective `limits`, `overrides` with `reason`,
   `set_by` and `set_at`, and key metadata.
 - `PUT /portal/api/admin/users/{id}/overrides/{field}` with `{"value":N,"reason":"…"}` (`null` for
   unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`;
   `DELETE …/overrides/{field}` with `{}` clears it. Both return 204 and take effect at the user's
-  next request on every router.
+  next API-key request on every router. Cached OIDC access-token principals can
+  take up to one minute to refresh.
 - `PUT /portal/api/admin/users/{id}/enabled` with `{"enabled":false}` disables a user (sessions
-  and keys stop working at once) or re-enables them; admins cannot disable themselves.
+  and API-key access stop working at once) or re-enables them; cached OIDC access-token
+  principals can remain valid for up to one minute. Admins cannot disable themselves.
+  Disabling the protected local administrator returns 403, including for another admin.
 - `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
   and tokens this month. A user in several groups counts in each.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,

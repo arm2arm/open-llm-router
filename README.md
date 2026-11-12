@@ -82,6 +82,8 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 
 | Document | Content |
 |---|---|
+| [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) | administrator setup, endpoint connections, groups, user limits and current UI boundaries |
+| [docs/ADMIN_FEATURE_PLAN.md](docs/ADMIN_FEATURE_PLAN.md) | implementation audit and plan for protected local admin, dual login, Keycloak settings and endpoint/policy editing |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | deployment, configuration reference, operations, limits, known limitations |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | API, authentication, accounting and limits in detail; tests; code layout |
 | [docs/PORTAL_API.md](docs/PORTAL_API.md) | the portal's JSON API |
@@ -90,6 +92,10 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 | [docs/PRIVACY.md](docs/PRIVACY.md) | privacy notice template |
 | [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | security review and its findings |
 | [docs/PLAN.md](docs/PLAN.md), [docs/WEEK1.md](docs/WEEK1.md) | requirements and delivery plan |
+
+Protected local administrator credentials, bootstrap and lifecycle guards are available;
+see [setup and password rotation](docs/ADMIN_GUIDE.md#bootstrap-the-protected-local-administrator).
+Local browser login is tracked separately in #73.
 
 ## Development
 

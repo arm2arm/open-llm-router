@@ -92,7 +92,9 @@ func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) callerPolicy(r *http.Request) policy.Policy {
 	p, _ := auth.FromContext(r.Context())
-	return policy.Resolve(h.cfg.Groups, p.Groups).WithOverrides(p.Overrides)
+	access := policy.Resolve(h.cfg.Groups, p.Groups).WithOverrides(p.Overrides)
+	access.Admin = access.Admin || p.ProtectedAdmin
+	return access
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {

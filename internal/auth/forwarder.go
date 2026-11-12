@@ -50,7 +50,8 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 			return Principal{}, errUnknownEndUser
 		}
 	}
-	rows, err := a.pool.Query(ctx, `SELECT id, username, groups, enabled,
+	rows, err := a.pool.Query(ctx, `SELECT id, username, groups, enabled AND NOT EXISTS
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password),protected_admin,
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = users.id)
 		FROM users WHERE `+where+` LIMIT 2`, value)
 	if err != nil {
@@ -60,7 +61,7 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 	var enabled bool
 	for rows.Next() {
 		var p Principal
-		if err := rows.Scan(&p.UserID, &p.Username, &p.Groups, &enabled, &p.Overrides); err != nil {
+		if err := rows.Scan(&p.UserID, &p.Username, &p.Groups, &enabled, &p.ProtectedAdmin, &p.Overrides); err != nil {
 			rows.Close()
 			return Principal{}, errors.New("end-user lookup failed")
 		}

@@ -7,6 +7,12 @@ Owner: A. Khalatyan. License: MIT.
 Site-specific values (hostnames, realms, GPU layout, quotas) are **not** kept in this public repository.
 They live in a private deployment file that sets the same configuration keys as `config.example.yaml`.
 
+The current administration interfaces and setup are described in
+[ADMIN_GUIDE.md](ADMIN_GUIDE.md). The proposed extension for a protected local
+administrator, dual login, Admin-managed Keycloak connections, endpoints and group
+policies is tracked separately in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md);
+those UI/local-login features are not part of the implemented first release.
+
 ## 0. Changes
 
 ### Decisions of the first release that deviate from this plan (v0.4)

@@ -150,7 +150,13 @@ export type Override = {
   set_at: string
 }
 export type AdminUserDetail = {
-  user: { id: string; username: string; email: string; groups: string[] }
+  user: {
+    id: string
+    username: string
+    email: string
+    groups: string[]
+    protected_admin: boolean
+  }
   enabled: boolean
   limits: Limits
   overrides: Override[]

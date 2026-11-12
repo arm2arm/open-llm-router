@@ -37,6 +37,8 @@ type Principal struct {
 	KeyID     string
 	KeyClass  string            // "interactive" or "batch"
 	Overrides map[string]*int64 // per-user limits; treat as read-only
+	// ProtectedAdmin is read from the database, never from token claims or groups.
+	ProtectedAdmin bool
 	// TrustedForwarder marks a key that may name the end user of a call.
 	TrustedForwarder bool
 	// ForwardedBy is the key owner when the principal is an end user named
@@ -87,10 +89,11 @@ func validKey(key string) bool {
 
 type keyRecord struct {
 	Principal
-	hash    []byte
-	expires *time.Time
-	enabled bool
-	revoked bool
+	hash                   []byte
+	expires                *time.Time
+	enabled                bool
+	revoked                bool
+	passwordChangeRequired bool
 }
 
 type keyStore interface {
@@ -191,7 +194,7 @@ func (a *Authenticator) refresh(ctx context.Context, hash [32]byte, generation u
 		return Principal{}, err
 	}
 	now := a.now()
-	if subtle.ConstantTimeCompare(hash[:], record.hash) != 1 || !record.enabled || record.revoked ||
+	if subtle.ConstantTimeCompare(hash[:], record.hash) != 1 || !record.enabled || record.revoked || record.passwordChangeRequired ||
 		(record.expires != nil && !now.Before(*record.expires)) {
 		return Principal{}, ErrInvalidKey
 	}

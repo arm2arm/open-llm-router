@@ -8,6 +8,9 @@ import (
 
 func TestAdminValidation(t *testing.T) {
 	for _, args := range [][]string{
+		{"bootstrap", "unexpected"},
+		{"password", "change"},
+		{"password", "change", "-user", "00000000-0000-0000-0000-000000000001"},
 		{"user", "add"},
 		{"user", "add", "-username", "pilot", "-groups", "staff,,admins"},
 		{"user", "disable", "-id", "pilot"},
