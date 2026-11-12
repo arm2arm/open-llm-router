@@ -9,24 +9,28 @@ import (
 const requestLimit = 200
 
 type requestRecord struct {
-	Time         time.Time `json:"time"`
-	Model        string    `json:"model"`
-	Protocol     string    `json:"protocol"`
-	Status       string    `json:"status"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	LatencyMS    int64     `json:"latency_ms"`
-	TTFBMS       *int64    `json:"ttfb_ms"`
-	Stream       bool      `json:"stream"`
-	KeyPrefix    *string   `json:"key_prefix"` // null once the key is removed
-	Forwarded    bool      `json:"forwarded"`  // made by a trusted forwarder for this user
+	Operation      string    `json:"operation"`
+	RequestID      *string   `json:"request_id"`
+	TraceAvailable bool      `json:"trace_available"`
+	Time           time.Time `json:"time"`
+	Model          string    `json:"model"`
+	Protocol       string    `json:"protocol"`
+	Status         string    `json:"status"`
+	InputTokens    int64     `json:"input_tokens"`
+	OutputTokens   int64     `json:"output_tokens"`
+	LatencyMS      int64     `json:"latency_ms"`
+	TTFBMS         *int64    `json:"ttfb_ms"`
+	Stream         bool      `json:"stream"`
+	KeyPrefix      *string   `json:"key_prefix"` // null once the key is removed
+	Forwarded      bool      `json:"forwarded"`  // made by a trusted forwarder for this user
 }
 
 // requests lists the newest per-request records attributed to the user:
 // metadata only, as stored.
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request, u user) {
 	rows, err := h.pool.Query(r.Context(), `SELECT a.ts, a.model, a.protocol, a.status, a.input_tokens, a.output_tokens,
-		a.latency_ms, a.ttfb_ms, a.is_stream, k.prefix, a.forwarded_for IS NOT NULL
+		a.latency_ms, a.ttfb_ms, a.is_stream, k.prefix, a.forwarded_for IS NOT NULL, a.request_id, a.operation,
+		EXISTS(SELECT 1 FROM request_traces t WHERE t.request_id=a.request_id AND t.user_id=$1 AND t.expires_at>now())
 		FROM usage a LEFT JOIN api_keys k ON k.id = a.key_id
 		WHERE a.forwarded_for = $1 OR (a.user_id = $1 AND a.forwarded_for IS NULL)
 		ORDER BY a.ts DESC LIMIT $2`, u.ID, requestLimit)
@@ -39,7 +43,7 @@ func (h *Handler) requests(w http.ResponseWriter, r *http.Request, u user) {
 	for rows.Next() {
 		var rec requestRecord
 		if err := rows.Scan(&rec.Time, &rec.Model, &rec.Protocol, &rec.Status, &rec.InputTokens, &rec.OutputTokens,
-			&rec.LatencyMS, &rec.TTFBMS, &rec.Stream, &rec.KeyPrefix, &rec.Forwarded); err != nil {
+			&rec.LatencyMS, &rec.TTFBMS, &rec.Stream, &rec.KeyPrefix, &rec.Forwarded, &rec.RequestID, &rec.Operation, &rec.TraceAvailable); err != nil {
 			unavailable(w)
 			return
 		}

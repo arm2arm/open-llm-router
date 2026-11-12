@@ -104,6 +104,14 @@ The service name is `open-llm-router`. No prompt, response, request headers or k
 are passed to tracing. `OLR_TRACE_USER_ID=true` explicitly adds `enduser.id`;
 it is false by default. It never adds user IDs to metric labels.
 
+## Personal content traces
+
+**My requests** provides opt-out content tracing with a 7-day default lifetime and
+user-selected 1–30 day retention. It stores private message, reasoning, tool and stream
+event detail in Postgres. It does not send content to OTLP, metrics or server logs.
+See [REQUEST_TRACING.md](REQUEST_TRACING.md) for controls, capture limits and performance
+behavior. This is independent of the OpenTelemetry configuration above.
+
 ## JSON request logs
 
 One `msg=request` JSON line per request contains request ID, trace ID when available,

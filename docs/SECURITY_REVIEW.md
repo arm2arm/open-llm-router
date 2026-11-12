@@ -123,9 +123,12 @@ updates for Go modules, npm, Docker digests and Actions.
   `dangerouslySetInnerHTML`), and is served with `default-src 'none'; script-src 'self'`.
 - [x] A user can read, change and delete only their own keys and usage: every portal query is
   scoped by the session user; another user's key gives the same 404 as a missing one.
-- [x] No prompts or responses in logs, database, metrics or traces: only token counts and
-  timing are parsed from responses; tests send a privacy marker through spans, logs and
-  metric labels.
+- [x] No prompts or responses in server logs, metrics or exported OpenTelemetry spans.
+  Personal content traces in Postgres are enabled by default, with a user opt-out and
+  1–30 day retention (default 7). Only the attributed user can read them, including
+  against an admin session; deletion/opt-out invalidate pending writes. Tests cover
+  ownership, expiry, erasure, bounded capture and omission of credentials/attachments.
+  Protect database access and backups as content-bearing storage. See [REQUEST_TRACING.md](REQUEST_TRACING.md).
 - [x] Dependencies pinned (`go.sum`, `web/package-lock.json`, Actions by SHA, base images by
   digest) and scanned: `govulncheck` reports no reachable vulnerability and `npm audit`
   reports none (both run in CI). The images run as the distroless `nonroot` user. No secrets

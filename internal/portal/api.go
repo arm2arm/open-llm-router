@@ -122,10 +122,18 @@ func (h *Handler) deleteUsage(w http.ResponseWriter, r *http.Request, u user) {
 	if !h.jsonBody(w, r, &body) {
 		return
 	}
-	result, err := h.pool.Exec(r.Context(), `DELETE FROM usage WHERE forwarded_for=$1 OR (user_id=$1 AND forwarded_for IS NULL)`, u.ID)
+	var deleted int64
+	var err error
+	if h.Traces != nil {
+		deleted, err = h.Traces.Erase(r.Context(), u.ID, true)
+	} else {
+		result, execErr := h.pool.Exec(r.Context(), `DELETE FROM usage WHERE forwarded_for=$1 OR (user_id=$1 AND forwarded_for IS NULL)`, u.ID)
+		deleted = result.RowsAffected()
+		err = execErr
+	}
 	if err != nil {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]int64{"deleted": result.RowsAffected()})
+	respond(w, 200, map[string]int64{"deleted": deleted})
 }

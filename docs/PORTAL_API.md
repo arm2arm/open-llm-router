@@ -145,12 +145,36 @@ untouched. See [PRIVACY.md](PRIVACY.md).
 
 - `GET /portal/api/requests`: `{"limit":200,"requests":[{"time":"RFC3339","model":"chat-model",
   "protocol":"openai","status":"200","input_tokens":3,"output_tokens":7,"latency_ms":400,
-  "ttfb_ms":50,"stream":true,"key_prefix":"olr-…","forwarded":false}]}`, newest first, the
+  "ttfb_ms":50,"stream":true,"key_prefix":"olr-…","forwarded":false,
+  "request_id":"32-hex-characters","operation":"chat/completions","trace_available":true}]}`, newest first, the
   user's last 200 records (metadata only). `key_prefix` is null once the key is removed, and
   for calls a trusted forwarder made for the user (`forwarded: true`).
 - `GET /portal/api/usage/daily`: `{"timezone":"UTC","days":[{"day":"2026-10-13","requests":0,
   "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
   oldest first, from the daily totals (unaffected by deleting activity).
+
+## Personal trace settings and content
+
+These routes require a full session. Mutations require the configured Origin and JSON
+content type. All access is scoped to the session user; admin status adds no content access.
+
+- `GET /portal/api/trace-preferences`: `{"enabled":true,"retention_days":7}`.
+- `PUT /portal/api/trace-preferences`: the same complete object; boolean `enabled` is
+  required and integer `retention_days` must be 1–30. Returns the saved object.
+- `GET /portal/api/requests/{request_id}`: `{"request_id":"…","expires_at":"RFC3339",
+  "detail":{"operation":"chat/completions","input":[],"output":[],"events":[],
+  "parameters":{},"truncated":false,"warnings":[]}}`. Inputs/outputs contain
+  `{role,blocks:[{type,text?,name?,id?,arguments?}]}`. Types include `text`, `reasoning`,
+  `tool_call`, `tool_result`, `refusal` and attachment markers. Events contain
+  `{ms,type,text?}` with relative arrival time. Missing, expired and another user's IDs
+  all return 404. Older metadata rows have `request_id:null`.
+- `DELETE /portal/api/request-traces` with `{}`: 204, permanently clears only the caller's
+  content and invalidates pending writes. `DELETE /portal/api/usage` also clears content;
+  daily quota totals remain.
+
+Disabling invalidates pending captures while keeping historical content. Shorter
+retention shortens existing expiry; longer retention applies only to new traces.
+See [REQUEST_TRACING.md](REQUEST_TRACING.md) for bounds and supported field semantics.
 
 ## Admin
 

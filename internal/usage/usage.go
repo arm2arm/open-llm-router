@@ -9,6 +9,8 @@ import "time"
 // TTFBMS is nil if no response body byte arrived. All durations start when the
 // proxy receives the request, before reading its body.
 type Record struct {
+	RequestID string
+	Operation string
 	StartedAt time.Time
 	KeyID     string
 	UserID    string // the user the call is attributed to

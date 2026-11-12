@@ -71,7 +71,7 @@ policy editors remain in the linked delivery plan.
 - Federated login (e.g. an eduGAIN/community AAI) is handled by **Keycloak identity brokering**;
   the router keeps trusting only Keycloak. The dev stack simulates this with a second "upstream" realm.
 - Per-user **token quotas** (daily/monthly) and **concurrency limits** besides rpm/tpm.
-- **Portal shows each user their own usage**, recent requests (metadata only) and remaining quota.
+- **Portal shows each user their own usage**, recent requests and personal content traces and remaining quota.
 - **Load-aware balancing** across heterogeneous replicas (weighted least-outstanding requests),
   replacing round-robin; per-backend in-flight caps; optional session affinity.
 - **Priority classes** (interactive vs batch) mapped to vLLM's request `priority`.
@@ -280,7 +280,9 @@ The backend does the OIDC login, so no token reaches the browser:
 - **Keys**: create (label, class, expiry), list (prefix, last used), revoke.
 - **My usage**: today / this month per model with average time to first token and tokens per
   second, chart of last 30 days, remaining quota and reset time.
-- **My requests**: last 200 requests (time, model, tokens, latency, status) — metadata only.
+- **My requests**: last 200 requests with personal text/reasoning/tool traces and stream
+  event replay. Enabled by default; each user can disable it or choose 1–30 day retention
+  (7 days by default). See [REQUEST_TRACING.md](REQUEST_TRACING.md).
 - **Privacy**: delete my request records; remove revoked keys for good.
 - **Connect**: copy-paste snippets (OpenAI SDK, Anthropic SDK/Claude Code, opencode, curl).
 - **Admin** (group `admins`): users, per-user overrides, group totals, replica health.
@@ -290,7 +292,8 @@ The backend does the OIDC login, so no token reaches the browser:
 - Prometheus: requests, tokens, latency, time to first token, tokens per second, queue time,
   in-flight per **model / replica / group** (no per-user labels). Backend vLLM `/metrics` scraped
   alongside. Grafana dashboard in repo.
-- Per-user detail only in Postgres, visible to the user and admins.
+- Per-user usage metadata in Postgres is visible to the user and admins. Personal
+  content traces are visible only to the attributed user; admin privileges add no override.
 - OpenTelemetry: one span per call (model, replica, tokens, time to first token, tokens per
   second; no content, and no user identifier unless a site enables it), exported over OTLP when an
   endpoint is configured. An incoming `traceparent` is passed on to the backend.

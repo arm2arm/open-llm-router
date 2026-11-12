@@ -216,6 +216,15 @@ the database. A database failure during that flush is logged without changing cl
 responses. The additive startup schema upgrade marks legacy rows `is_stream=false`;
 their TTFB remains available, but their generation rates are excluded from averages.
 
+## Personal request content
+
+Separate from metadata accounting, `internal/requesttrace` provides default-enabled,
+user-controlled content capture and a completed-request trace viewer. Retention defaults
+to 7 days and each user can choose 1–30 days. Two background workers decode and store
+bounded content independently of usage accounting. See [REQUEST_TRACING.md](REQUEST_TRACING.md)
+for exact limits, privacy, deletion and failure behavior. Existing metadata-only history
+cannot be backfilled.
+
 ## Limits and current-user usage
 
 After authentication and model authorization, inference routes acquire a per-user

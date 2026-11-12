@@ -26,6 +26,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
+	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 )
 
@@ -38,7 +39,8 @@ type Handler struct {
 	cfg       *config.Config
 	transport *http.Transport
 	Pools     *pool.Manager
-	Usage     usage.Recorder    // installed before serving; nil disables persistence
+	Usage     usage.Recorder // installed before serving; nil disables persistence
+	Traces    *requesttrace.Service
 	Limits    *limits.Manager   // installed before serving
 	Metrics   *metrics.Observer // installed before serving
 	active    sync.WaitGroup
@@ -150,6 +152,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		return
 	}
+	account.capture.Input(body)
 	// The server bounds the body upload; a response may stream for much longer.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	meta, err := parseRequest(body)

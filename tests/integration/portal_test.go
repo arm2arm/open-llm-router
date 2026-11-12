@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
 	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
+	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 	"github.com/arm2arm/open-llm-router/internal/server"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +28,7 @@ type portalFixture struct {
 	*usageRouter
 	provider *identityProvider
 	cfg      *config.Config
+	traces   *requesttrace.Service
 }
 type portalBrowser struct {
 	f      *portalFixture
@@ -50,6 +53,14 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
+		traces, err := requesttrace.New(t.Context(), pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(traces.Close)
+		f.traces = traces
+		forwarder.Traces = traces
+		h.Traces = traces
 		h.Pools = forwarder.Pools
 		t.Cleanup(h.Close)
 		s.Handle("/portal", h)
