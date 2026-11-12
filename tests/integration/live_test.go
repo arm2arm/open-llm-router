@@ -11,6 +11,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/portal"
+	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 )
 
 type liveStream struct {
@@ -78,6 +79,9 @@ func TestLiveRequestEvents(t *testing.T) {
 	f := startPortal(t)
 	a, b := f.browser(t), f.browser(t)
 	alice := a.login(t, "live-alice", []string{"staff"})
+	if err := f.traces.Save(t.Context(), alice, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
 	b.login(t, "live-bob", []string{"staff"})
 	if resp, _ := f.browser(t).call(t, "GET", "/portal/api/requests/events", "", ""); resp.StatusCode != 401 {
 		t.Fatal("anonymous live stream", resp.StatusCode)

@@ -122,7 +122,7 @@ updates for Go modules, npm, Docker digests and Actions.
 - [x] A user can read, change and delete only their own keys and usage: every portal query is
   scoped by the session user; another user's key gives the same 404 as a missing one.
 - [x] No prompts or responses in server logs, metrics or exported OpenTelemetry spans.
-  Personal content traces in Postgres are enabled by default, with a user opt-out and
+  Personal content traces in Postgres are disabled by default, with explicit user opt-in and
   1–30 day retention (default 7). Only the attributed user can read them, including
   against an admin session; deletion/opt-out invalidate pending writes. Tests cover
   ownership, expiry, erasure, bounded capture and omission of credentials/attachments.

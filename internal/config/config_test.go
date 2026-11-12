@@ -533,3 +533,13 @@ func TestKeyPolicyValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestContentTracingPolicy(t *testing.T) {
+	cfg, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil || cfg.ContentTracing.Enabled {
+		t.Fatal("content capture must default off", err)
+	}
+	if _, err := Parse([]byte("content_tracing: {enabled: true, redact_patterns: ['[']}\n"+valid), lookupIn(validEnv)); err == nil {
+		t.Fatal("invalid redaction accepted")
+	}
+}

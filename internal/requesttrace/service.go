@@ -4,7 +4,6 @@ package requesttrace
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sort"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/activity"
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,22 +34,30 @@ const (
 )
 
 type Preferences struct {
+	Available     bool  `json:"available"`
 	Enabled       bool  `json:"enabled"`
 	RetentionDays int   `json:"retention_days"`
 	Generation    int64 `json:"-"`
 }
 
-func defaults() Preferences { return Preferences{Enabled: true, RetentionDays: 7} }
+func defaults() Preferences { return Preferences{Enabled: false, RetentionDays: 7} }
 
 type Service struct {
-	pool   *pgxpool.Pool
-	log    *slog.Logger
-	mu     sync.Mutex
-	prefs  atomic.Pointer[map[string]Preferences]
-	slots  chan struct{}
-	queue  chan *Capture
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	gate             sync.RWMutex
+	enabled          bool
+	epoch            uint64
+	redactor         *redactor
+	Written          atomic.Uint64
+	Deleted          atomic.Uint64
+	RetentionBacklog atomic.Int64
+	pool             *pgxpool.Pool
+	log              *slog.Logger
+	mu               sync.Mutex
+	prefs            atomic.Pointer[map[string]Preferences]
+	slots            chan struct{}
+	queue            chan *Capture
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
 	// Activity, when set, announces stored traces to the user's open portal.
 	Activity  *activity.Broker
 	Processed atomic.Uint64
@@ -57,8 +65,18 @@ type Service struct {
 	Failed    atomic.Uint64
 }
 
-func New(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) (*Service, error) {
+func New(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, options ...config.ContentTracing) (*Service, error) {
 	s := &Service{pool: pool, log: log, slots: make(chan struct{}, Slots), queue: make(chan *Capture, Slots)}
+	var policy config.ContentTracing
+	if len(options) > 0 {
+		policy = options[0]
+	}
+	s.enabled = policy.Enabled
+	var err error
+	s.redactor, err = newRedactor(policy.RedactPatterns)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.refresh(ctx); err != nil {
 		return nil, errors.New("load request tracing preferences failed")
 	}
@@ -136,7 +154,7 @@ func (s *Service) refresh(ctx context.Context) error {
 	// overwrite the just-saved opt-out. Other instances are gated again in SQL.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.pool.Query(ctx, `SELECT id::text, trace_enabled, trace_retention_days, trace_generation FROM users WHERE trace_generation<>0 OR NOT trace_enabled OR trace_retention_days<>7`)
+	rows, err := s.pool.Query(ctx, `SELECT id::text, trace_enabled, trace_retention_days, trace_generation FROM users WHERE trace_generation<>0 OR trace_enabled OR trace_retention_days<>7`)
 	if err != nil {
 		return err
 	}
@@ -160,6 +178,7 @@ func (s *Service) refresh(ctx context.Context) error {
 func (s *Service) Preferences(ctx context.Context, user string) (Preferences, error) {
 	var p Preferences
 	err := s.pool.QueryRow(ctx, `SELECT trace_enabled, trace_retention_days, trace_generation FROM users WHERE id=$1`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation)
+	p.Available = s.Enabled()
 	return p, err
 }
 
@@ -196,6 +215,7 @@ type chunk struct {
 	MS  int64
 }
 type Capture struct {
+	epoch         uint64
 	service       *Service
 	generation    int64
 	operation     string
@@ -211,9 +231,14 @@ type Capture struct {
 }
 
 // Begin never performs network I/O or waits for capacity. Unknown (new) users
-// inherit enabled/7 days; the writer rechecks the database before storage.
+// inherit disabled/7 days; the writer rechecks the database before storage.
 func (s *Service) Begin(user, operation string, began time.Time) *Capture {
 	if s == nil || user == "" {
+		return nil
+	}
+	s.gate.RLock()
+	defer s.gate.RUnlock()
+	if !s.enabled {
 		return nil
 	}
 	p := defaults()
@@ -229,7 +254,7 @@ func (s *Service) Begin(user, operation string, began time.Time) *Capture {
 	}
 	select {
 	case s.slots <- struct{}{}:
-		return &Capture{service: s, generation: p.Generation, operation: operation, began: began}
+		return &Capture{service: s, epoch: s.epoch, generation: p.Generation, operation: operation, began: began}
 	default:
 		s.Dropped.Add(1)
 		return nil
@@ -239,6 +264,13 @@ func (s *Service) Begin(user, operation string, began time.Time) *Capture {
 func (c *Capture) Input(p []byte) {
 	if c == nil {
 		return
+	}
+	if c.service != nil {
+		c.service.gate.RLock()
+		defer c.service.gate.RUnlock()
+		if !c.service.enabled || c.epoch != c.service.epoch {
+			return
+		}
 	}
 	// Never decode partial JSON or accidentally store a cut base64 attachment.
 	if len(p) > MaxInput {
@@ -315,6 +347,13 @@ func (c *Capture) Write(p []byte) {
 	if c == nil {
 		return
 	}
+	if c.service != nil {
+		c.service.gate.RLock()
+		defer c.service.gate.RUnlock()
+		if !c.service.enabled || c.epoch != c.service.epoch {
+			return
+		}
+	}
 	if c.outputStopped {
 		return
 	}
@@ -344,12 +383,17 @@ func (c *Capture) Finish(r usage.Record) {
 }
 
 func (s *Service) persist(ctx context.Context, c *Capture) error {
+	s.gate.RLock()
+	defer s.gate.RUnlock()
+	if !s.enabled || c.epoch != s.epoch {
+		return nil
+	}
 	detail := c.decode()
-	data, err := json.Marshal(detail)
+	data, err := s.redactor.marshal(detail)
 	if err != nil {
 		return err
 	}
-	summary, err := json.Marshal(detail.Summary)
+	summary, err := s.redactor.marshal(detail.Summary)
 	if err != nil {
 		return err
 	}
@@ -366,6 +410,7 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 	WHERE $3::timestamptz+make_interval(days=>trace_retention_days)>now()
 	ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, c.generation, summary, conversation)
 	if err == nil && tag.RowsAffected() == 1 {
+		s.Written.Add(1)
 		s.Activity.Publish(c.record.UserID, activity.Event{Type: "trace_ready", RequestID: c.record.RequestID})
 	}
 	return err
@@ -374,7 +419,19 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 func (s *Service) Prune(ctx context.Context) error {
 	// Each transaction is bounded. Access checks exclude expired content even
 	// before physical cleanup; a backlog drains over successive ticks.
-	_, err := s.pool.Exec(ctx, `DELETE FROM request_traces WHERE request_id IN (SELECT request_id FROM request_traces WHERE expires_at<=now() LIMIT 1000)`)
+	tag, err := s.pool.Exec(ctx, `DELETE FROM request_traces WHERE request_id IN (SELECT request_id FROM request_traces WHERE expires_at<=now() LIMIT 1000)`)
+	if err != nil {
+		s.Failed.Add(1)
+		return err
+	}
+	s.Deleted.Add(uint64(tag.RowsAffected()))
+	var backlog int64
+	err = s.pool.QueryRow(ctx, `SELECT count(*) FROM request_traces WHERE expires_at<=now()`).Scan(&backlog)
+	if err == nil {
+		s.RetentionBacklog.Store(backlog)
+	} else {
+		s.Failed.Add(1)
+	}
 	return err
 }
 
@@ -384,13 +441,16 @@ func (s *Service) Erase(ctx context.Context, user string, activity bool) (int64,
 	defer s.mu.Unlock()
 	var p Preferences
 	var count int64
+	var traceDeleted uint64
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `UPDATE users SET trace_generation=trace_generation+1 WHERE id=$1 RETURNING trace_enabled,trace_retention_days,trace_generation`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM request_traces WHERE user_id=$1`, user); err != nil {
+		tag, err := tx.Exec(ctx, `DELETE FROM request_traces WHERE user_id=$1`, user)
+		if err != nil {
 			return err
 		}
+		traceDeleted = uint64(tag.RowsAffected())
 		if activity {
 			tag, err := tx.Exec(ctx, `DELETE FROM usage WHERE forwarded_for=$1 OR (user_id=$1 AND forwarded_for IS NULL)`, user)
 			count = tag.RowsAffected()
@@ -399,6 +459,7 @@ func (s *Service) Erase(ctx context.Context, user string, activity bool) (int64,
 		return nil
 	})
 	if err == nil {
+		s.Deleted.Add(traceDeleted)
 		next := make(map[string]Preferences)
 		if old := s.prefs.Load(); old != nil {
 			for id, pref := range *old {
@@ -410,3 +471,13 @@ func (s *Service) Erase(ctx context.Context, user string, activity bool) (int64,
 	}
 	return count, err
 }
+
+// SetEnabled is a site-wide kill switch; it waits for an in-progress write and
+// invalidates all captures, including across disable/re-enable cycles.
+func (s *Service) SetEnabled(enabled bool) {
+	s.gate.Lock()
+	defer s.gate.Unlock()
+	s.enabled = enabled
+	s.epoch++
+}
+func (s *Service) Enabled() bool { s.gate.RLock(); defer s.gate.RUnlock(); return s.enabled }

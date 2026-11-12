@@ -57,7 +57,7 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		traces, err := requesttrace.New(t.Context(), pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		traces, err := requesttrace.New(t.Context(), pool, slog.New(slog.NewTextHandler(io.Discard, nil)), config.ContentTracing{Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}

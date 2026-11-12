@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -44,14 +45,15 @@ const (
 // Config is the content of the config file plus the secrets from the
 // environment.
 type Config struct {
-	Auth      Auth              `yaml:"auth"`
-	Limits    Limits            `yaml:"limits"`
-	Retention Retention         `yaml:"retention"`
-	OIDC      *OIDC             `yaml:"oidc"` // nil: local portal login only
-	Portal    Portal            `yaml:"-"`
-	Models    map[string]Model  `yaml:"models"`
-	Groups    map[string]Group  `yaml:"groups"`
-	Aliases   map[string]string `yaml:"aliases"` // client model name -> model
+	ContentTracing ContentTracing    `yaml:"content_tracing"`
+	Auth           Auth              `yaml:"auth"`
+	Limits         Limits            `yaml:"limits"`
+	Retention      Retention         `yaml:"retention"`
+	OIDC           *OIDC             `yaml:"oidc"` // nil: local portal login only
+	Portal         Portal            `yaml:"-"`
+	Models         map[string]Model  `yaml:"models"`
+	Groups         map[string]Group  `yaml:"groups"`
+	Aliases        map[string]string `yaml:"aliases"` // client model name -> model
 	// Forwarders configures end-user attribution for trusted forwarder keys.
 	Forwarders Forwarders `yaml:"forwarders"`
 
@@ -80,6 +82,12 @@ const (
 	UnknownUserReject      = "reject"
 	UnknownForwarderPolicy = "forwarder_policy"
 )
+
+// ContentTracing is a site-wide content-capture gate. User consent is also required.
+type ContentTracing struct {
+	Enabled        bool     `yaml:"enabled"`
+	RedactPatterns []string `yaml:"redact_patterns"`
+}
 
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
@@ -472,6 +480,18 @@ func isVarName(s string) bool {
 func (c *Config) validate() Problems {
 	var p Problems
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+	if len(c.ContentTracing.RedactPatterns) > 32 {
+		add("content_tracing.redact_patterns: at most 32 patterns")
+	}
+	for _, pattern := range c.ContentTracing.RedactPatterns {
+		if len(pattern) > 1024 {
+			add("content_tracing.redact_patterns: pattern too long")
+			continue
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			add("content_tracing.redact_patterns: invalid regular expression")
+		}
+	}
 	if c.Limits.MaxBodyBytes <= 0 {
 		add("limits.max_body_bytes: must be positive")
 	}

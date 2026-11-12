@@ -193,7 +193,7 @@ func serve(args []string) error {
 			log.Error("usage shutdown flush incomplete")
 		}
 	}()
-	traces, err := requesttrace.New(ctx, database, log)
+	traces, err := requesttrace.New(ctx, database, log, cfg.ContentTracing)
 	if err != nil {
 		return err
 	}
@@ -226,6 +226,7 @@ func serve(args []string) error {
 			log.Error("trace shutdown flush incomplete")
 		}
 	}()
+	traces.RegisterMetrics(observability.Registry)
 	forwarder.Metrics = observability
 	defer forwarder.Close()
 	retentionDone := make(chan struct{})

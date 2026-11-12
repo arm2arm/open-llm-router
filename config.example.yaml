@@ -95,3 +95,8 @@ forwarders:
 
 # Names that clients send by default, mapped to a model above.
 aliases: {claude-sonnet-4-5: chat-model}
+
+# Content retention requires data-owner approval and explicit user opt-in.
+content_tracing:
+  enabled: false
+  redact_patterns: [] # supplemental RE2 patterns, e.g. organization identifiers

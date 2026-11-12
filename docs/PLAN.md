@@ -281,7 +281,7 @@ The backend does the OIDC login, so no token reaches the browser:
 - **My usage**: today / this month per model with average time to first token and tokens per
   second, chart of last 30 days, remaining quota and reset time.
 - **My requests**: last 200 requests with personal text/reasoning/tool traces and stream
-  event replay. Enabled by default; each user can disable it or choose 1–30 day retention
+  event replay. Disabled by default; site approval and user opt-in are required; each user can disable it or choose 1–30 day retention
   (7 days by default). See [REQUEST_TRACING.md](REQUEST_TRACING.md).
 - **Privacy**: delete my request records; remove revoked keys for good.
 - **Connect**: copy-paste snippets (OpenAI SDK, Anthropic SDK/Claude Code, opencode, curl).

@@ -92,7 +92,7 @@ async function startFixture(
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
+    `${suffix === 'tracing' ? 'content_tracing: {enabled: true}\n' : ''}${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   // Test a new image without restarting the developer's running router.
   const image =
@@ -237,7 +237,8 @@ test('personal traces, reasoning, tools, retention, opt-out and erasure', async 
   const key = (await issued.json()).key as string
   await page.goto(`${tracing}/portal/requests`)
   const toggle = page.getByRole('switch')
-  await expect(toggle).toBeChecked()
+  await expect(toggle).not.toBeChecked()
+  await toggle.click()
   await expect(page.getByLabel('Trace retention days')).toHaveValue('7')
   await page.getByLabel('Trace retention days').fill('14')
   await page.getByRole('button', { name: 'Save settings' }).click()
