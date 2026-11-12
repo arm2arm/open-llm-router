@@ -1,22 +1,87 @@
 # open-llm-router
 
-Small open-source LLM router for locally hosted models: OpenAI- and Anthropic-compatible API,
-Keycloak SSO (any realm, incl. brokered federated IdPs), per-user API keys, group-based model
-access, per-user quotas and rate limits, a self-service portal, and load-aware balancing across
-model replicas. One Go binary with an embedded React portal; state in PostgreSQL.
+**One endpoint for your team's locally hosted LLMs.** Connect OpenAI and Anthropic
+clients to Ollama, vLLM or SGLang pools, give people access through groups, and keep
+usage and quotas visible. One Go binary serves both the APIs and the React portal;
+PostgreSQL holds identities, settings and usage.
 
-Status: **pilot-ready**. Streaming passthrough of both protocols with cancellation, weighted
-balancing, queueing, session affinity and priority classes; API keys and Keycloak access
-tokens; group policy with per-user overrides; concurrency, RPM, TPM and day/month quotas
-(optionally strict); usage records with timing, retention and user-driven deletion; trusted
-forwarders such as Open WebUI; group sync from Keycloak; Prometheus metrics, a Grafana
-dashboard and OTLP traces. Security review: [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
-Kubernetes manifests: [deploy/k8s](deploy/k8s). Requirements in [docs/PLAN.md](docs/PLAN.md),
-work items in the [issues](https://github.com/arm2arm/open-llm-router/issues).
-Production deployment and the two-week pilot acceptance checklist:
-[docs/PILOT.md](docs/PILOT.md).
+[![CI](https://github.com/arm2arm/open-llm-router/actions/workflows/ci.yml/badge.svg)](https://github.com/arm2arm/open-llm-router/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](LICENSE)
 
-Authors: A. Khalatyan (AIP), with Hermes agent.
+- **Connect your model pool.** Balance requests across replicas, stream responses,
+  and edit backend connections with model detection in Admin.
+- **Decide who can use it.** Keycloak SSO or local login, per-user API keys,
+  group-based model access, and quota, rate and concurrency limits.
+- **See what is happening.** A self-service usage portal, request timing, replica
+  health, group totals, and Prometheus/Grafana/OpenTelemetry integration.
+
+![Admin overview showing endpoint configuration and healthy model replicas](docs/images/admin-overview.png)
+
+*The actual Admin portal, shown with disposable demo accounts and synthetic usage.
+The two mock backends stand in for GPU servers. [About these screenshots](docs/images/README.md).*
+
+## How it works
+
+```mermaid
+flowchart LR
+    Clients["Your clients<br/>OpenAI / Anthropic APIs"] --> Router["open-llm-router<br/>Authenticate · authorize · limit · route"]
+    Router --> A["Model replica A<br/>Ollama / vLLM / SGLang"]
+    Router --> B["Model replica B<br/>Ollama / vLLM / SGLang"]
+    Portal["Web portal<br/>Users + administrators"] --> Router
+    Identity["Keycloak SSO<br/>or local accounts"] --> Router
+    Router --> DB[("PostgreSQL<br/>Keys · settings · usage")]
+    style Router fill:#0f766e,color:#fff,stroke:#115e59
+    style Portal fill:#ecfdf5,stroke:#99c9bb
+    style Identity fill:#ecfdf5,stroke:#99c9bb
+    style DB fill:#f1f5f9,stroke:#94a3b8
+```
+
+A client sends a public model name such as `chat-model`. The router checks its
+user's access and limits, selects a healthy replica with free capacity, and maps
+the name to the backend's model. It forwards the native API payload and streamed
+events, including thinking, tool calls and image inputs when the backend supports
+them. The router records usage metadata and timing; it does not store prompts or
+completions.
+
+## A look inside
+
+| Your usage and allowance | Backend connections |
+|---|---|
+| [![Usage page with daily and monthly allowances and a 30-day token chart](docs/images/portal-usage.png)](docs/images/portal-usage.png) | [![Endpoint editor with detected upstream models, protocol settings and replica connections](docs/images/endpoint-editor.png)](docs/images/endpoint-editor.png) |
+| See token totals, remaining quota and request performance. Create your own API keys and use **Connect** for client setup. | Add or edit replicas, detect upstream model names, test connections, and apply or restore saved revisions. |
+
+<details>
+<summary>Keycloak and local sign-in</summary>
+
+![Sign-in page offering Keycloak and an independent local account login](docs/images/sign-in.png)
+
+Keycloak is the default choice when configured. A protected local administrator
+can still sign in when Keycloak is unavailable. Local users complete a required
+password change on first login.
+
+</details>
+
+## Current status
+
+**Pilot-ready for a single router process.** The features below are implemented;
+the production pilot acceptance remains tracked in [#21](https://github.com/arm2arm/open-llm-router/issues/21)
+and the [pilot checklist](docs/PILOT.md).
+
+| Area | Available today |
+|---|---|
+| Routing | OpenAI and Anthropic native APIs; SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
+| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
+| Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
+| Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
+| Usage and operations | Usage history and timing, retention and user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
+| Deployment | Local Compose demo, real-backend examples, production pilot Compose and [Kubernetes manifests](deploy/k8s) |
+
+**Still planned:** configuring Keycloak from Admin; creating logical models and
+aliases in Admin; editing group policies in Admin; protected-admin recovery CLI;
+and shared limits/live configuration across multiple router processes. Logical
+names, aliases and group defaults currently use YAML, while Keycloak settings use
+YAML/environment. See the [capability audit and milestones](docs/ADMIN_FEATURE_PLAN.md)
+and [security review](docs/SECURITY_REVIEW.md) for scope and limitations.
 
 ## Quickstart (5 minutes)
 
@@ -93,21 +158,8 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 | [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | security review and its findings |
 | [docs/PLAN.md](docs/PLAN.md), [docs/WEEK1.md](docs/WEEK1.md) | requirements and delivery plan |
 
-Protected local administrator credentials, bootstrap and lifecycle guards are available;
-see [setup and password rotation](docs/ADMIN_GUIDE.md#bootstrap-the-protected-local-administrator).
-The portal offers Keycloak and local sign-in, with a direct local route at
-`/portal/login/local` that works without Keycloak. First login requires replacing
-the initial password; later changes are available under **Account**.
-**Admin** can create additional local users, assign existing groups, reset their
-passwords, disable accounts and revoke user keys. See
-[local user administration](docs/ADMIN_GUIDE.md#manage-local-users-in-admin) for access and revocation behavior.
-
-**Admin → Endpoint configuration** adds, edits and removes backend replicas for
-existing logical models, tests connectivity and applies persisted revisions live.
-Use it to point `chat-model` at your Ollama or vLLM origin. See the
-[endpoint editor guide](docs/ADMIN_GUIDE.md#configure-endpoints-in-admin) for setup,
-network/credential policy and restore. New logical names, aliases and group
-policies still use YAML.
+Start with the [administrator guide](docs/ADMIN_GUIDE.md) for protected-admin
+bootstrap, local users, external Keycloak setup, backend connections and limits.
 
 ## Development
 
@@ -145,6 +197,8 @@ OLR_TEST_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=di
 CI runs the same commands on every push and pull request.
 
 ## Citation
+
+Authors: A. Khalatyan (AIP), with Hermes agent.
 
 See [CITATION.cff](CITATION.cff) (GitHub: "Cite this repository").
 
