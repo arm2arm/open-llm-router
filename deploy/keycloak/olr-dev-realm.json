@@ -36,7 +36,7 @@
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "${PORTAL_BASE_URL}/portal/"
+        "post.logout.redirect.uris": "${PORTAL_BASE_URL}/"
       },
       "protocolMappers": [
         {

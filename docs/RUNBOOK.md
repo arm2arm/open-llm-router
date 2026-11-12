@@ -61,7 +61,7 @@ server {
 
 Set `PORTAL_BASE_URL=https://llm.example.org` (secure cookies are the default and require
 HTTPS). In the identity provider, register the confidential client `olr-portal` with redirect URI
-`https://llm.example.org/portal/callback`, post-logout redirect `https://llm.example.org/portal/`,
+`https://llm.example.org/portal/callback`, post-logout redirect `https://llm.example.org/`,
 PKCE S256 and a groups mapper. Switching from the dev Keycloak to a production one is
 configuration only: `OIDC_ISSUER`, client ID and secret (and remove `OIDC_BACKCHANNEL_URL`).
 

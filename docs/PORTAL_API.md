@@ -49,9 +49,11 @@ dependencies return 503. No OIDC token is stored or returned to the browser.
   users cannot log in. A successful login rotates the session and redirects to `/portal/`.
 - `POST /portal/logout` with `{}`: deletes this session and clears its cookie. Returns
   `{"logout_url":"<discovered end_session_endpoint with client_id and post_logout_redirect_uri>"}`.
-  A local session returns `{"logout_url":"/portal/login/local"}` without contacting the
+  A local session returns `{"logout_url":"/"}` without contacting the
   provider. SSO sessions use the provider URL when available and fall back to the local
-  URL during an outage. The UI navigates to that URL. Keycloak asks for
+  homepage URL during an outage. The UI navigates to that URL. The provider's
+  `post_logout_redirect_uri` is the configured portal origin followed by `/`, so
+  both login methods return to the public homepage. Keycloak asks for
   confirmation because no ID token is retained or exposed as an `id_token_hint`.
 
 Session cookies are `HttpOnly; SameSite=Lax; Path=/portal`, with `Secure` on by default.
@@ -380,4 +382,4 @@ requests to the public issuer's subtree are transported to that internal URL. Th
 issuer and browser URLs stay public and are verified without exceptions. Remove this
 override when the public issuer is directly reachable. Switching providers requires only
 environment settings, plus registering the configured `/portal/callback` redirect and
-`/portal/` post-logout redirect with that provider.
+`/` post-logout redirect with that provider.
