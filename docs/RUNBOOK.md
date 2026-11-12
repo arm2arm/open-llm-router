@@ -1,5 +1,9 @@
 # Operations runbook
 
+Practical installation and upgrade commands for Docker Compose and Kubernetes/Helm
+are in [INSTALL.md](INSTALL.md). The [Helm chart](../charts/open-llm-router) is the
+packaged Kubernetes installation path; Kustomize remains available below.
+
 Everything an operator needs to deploy and run the router. Behaviour in detail is in
 [REFERENCE.md](REFERENCE.md); the portal API in [PORTAL_API.md](PORTAL_API.md); metrics and
 traces in [OBSERVABILITY.md](OBSERVABILITY.md); the privacy notice in [PRIVACY.md](PRIVACY.md).
@@ -113,6 +117,12 @@ no limit.
 | any name in `bearer_token_env` | a backend's API key — **secret** |
 
 ### Kubernetes
+
+For new installations, use the [Helm walkthrough](INSTALL.md#kubernetes-with-helm).
+Its Ingress is optional and controller annotations are configurable. The older base
+and acceptance script below target community ingress-nginx, which
+[retired in March 2026](https://kubernetes.io/blog/2026/03/30/kubernetes-v1-36-sneak-peek/);
+translate their streaming settings to your maintained ingress controller.
 
 [`deploy/k8s/base`](../deploy/k8s/base) is a kustomize base with the same image and
 environment as Compose: a single-replica Deployment (`Recreate`, non-root, read-only root

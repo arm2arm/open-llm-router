@@ -23,7 +23,8 @@ retention:
   usage_daily_days: 400            # daily totals for quotas/accounting (default 400, min 62)
   run_at: "03:00"                  # default
 
-# No portal in the acceptance overlay: API keys only.
+# No Keycloak in the acceptance overlay. Local portal login is available if an
+# operator bootstraps a protected local administrator separately.
 
 models:
   chat-model:

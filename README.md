@@ -74,7 +74,7 @@ and the [pilot checklist](docs/PILOT.md).
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
 | Usage and operations | Usage history and timing, retention and user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
-| Deployment | Local Compose demo, real-backend examples, production pilot Compose and [Kubernetes manifests](deploy/k8s) |
+| Deployment | Local Compose demo, real-backend examples, production pilot Compose, [Helm chart](charts/open-llm-router) and [Kubernetes manifests](deploy/k8s) |
 
 **Still planned:** configuring Keycloak from Admin; creating logical models and
 aliases in Admin; editing group policies in Admin; protected-admin recovery CLI;
@@ -84,6 +84,9 @@ YAML/environment. See the [capability audit and milestones](docs/ADMIN_FEATURE_P
 and [security review](docs/SECURITY_REVIEW.md) for scope and limitations.
 
 ## Quickstart (5 minutes)
+
+For practical Docker Compose and Kubernetes/Helm installation, first login,
+real-backend setup and upgrades, follow the [installation guide](docs/INSTALL.md).
 
 Needs Docker with Compose 2.20+. Everything runs locally: router, Postgres, Keycloak and two
 mock LLM backends; no GPU is needed.
@@ -147,6 +150,8 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 
 | Document | Content |
 |---|---|
+| [docs/INSTALL.md](docs/INSTALL.md) | step-by-step Compose and Kubernetes/Helm install, first login, real backends, upgrades and troubleshooting |
+| [Helm chart](charts/open-llm-router) | chart values, external Secrets and an HTTPS production example |
 | [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) | administrator setup, endpoint connections, groups, user limits and current UI boundaries |
 | [docs/ADMIN_FEATURE_PLAN.md](docs/ADMIN_FEATURE_PLAN.md) | implementation audit and plan for protected local admin, dual login, Keycloak settings and endpoint/policy editing |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | deployment, configuration reference, operations, limits, known limitations |

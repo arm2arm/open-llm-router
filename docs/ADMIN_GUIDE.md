@@ -1,5 +1,8 @@
 # Administrator guide
 
+For a fresh installation, follow [Docker Compose or Kubernetes/Helm setup](INSTALL.md)
+before continuing with administration below.
+
 This guide describes local administration and the endpoint editor (12 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).

@@ -1,0 +1,23 @@
+open-llm-router is installed as {{ include "olr.fullname" . }} in {{ .Release.Namespace }}.
+
+Check readiness:
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "olr.fullname" . }}
+
+{{- if .Values.ingress.enabled }}
+Portal: {{ .Values.portal.baseURL }}/portal/
+{{- else }}
+{{- $localPort := regexFind ":[0-9]+$" (get (urlParse .Values.portal.baseURL) "host") | trimPrefix ":" | default "8080" }}
+Forward the Service (keep this command running):
+  kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "olr.fullname" . }} {{ $localPort }}:{{ .Values.service.port }}
+
+Portal: {{ .Values.portal.baseURL }}/portal/
+For HTTP localhost access, use portal.baseURL=http://localhost:8080 and portal.cookieSecure=false.
+{{- end }}
+
+Use /portal/login/local for the protected local administrator. Its password comes
+from OLR_BOOTSTRAP_ADMIN_PASSWORD in Secret {{ .Values.existingSecret }}; there is
+no default. Complete the required first password change before creating API keys.
+
+The chart expects external PostgreSQL and existing model backends. It installs
+neither PostgreSQL, Keycloak nor GPU workloads. Keep replicaCount=1.
+Installation and upgrade guide: docs/INSTALL.md in the repository.

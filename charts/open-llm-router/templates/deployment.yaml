@@ -1,0 +1,106 @@
+{{- range $name, $_ := .Values.env }}
+{{- if or (eq $name "OLR_CONFIG") (eq $name "PORTAL_BASE_URL") (eq $name "PORTAL_COOKIE_SECURE") }}
+{{- fail (printf "env.%s is managed by the chart; use config or portal values instead" $name) }}
+{{- end }}
+{{- end }}
+{{- if and .Values.portal.cookieSecure (not (hasPrefix "https://" .Values.portal.baseURL)) }}
+{{- fail "portal.cookieSecure=true requires an HTTPS portal.baseURL" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "olr.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "olr.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "olr.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "olr.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- $annotations := mergeOverwrite (deepCopy .Values.podAnnotations) (dict "checksum/config" (toYaml .Values.config | sha256sum)) }}
+        {{- toYaml $annotations | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: router
+          image: {{ include "olr.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [serve]
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: {{ required "existingSecret must name the Secret containing OLR_DATABASE_URL" .Values.existingSecret }}
+          env:
+            - name: OLR_CONFIG
+              value: /etc/olr/config.yaml
+            - name: PORTAL_BASE_URL
+              value: {{ .Values.portal.baseURL | quote }}
+            - name: PORTAL_COOKIE_SECURE
+              value: {{ .Values.portal.cookieSecure | quote }}
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/olr
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "olr.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

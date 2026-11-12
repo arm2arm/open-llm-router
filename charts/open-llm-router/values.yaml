@@ -1,0 +1,87 @@
+# Build the router image from this checkout; no public image is assumed.
+image:
+  repository: olr-router
+  tag: local
+  # Prefer a tested digest in production; when set, it takes precedence over tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# The router's limits, queue and affinity are process-local. Only 1 is supported.
+replicaCount: 1
+
+# Create this Secret separately in the release namespace. It must contain
+# OLR_DATABASE_URL. Add bootstrap, encryption, OIDC and backend secrets as needed.
+# The chart never generates passwords or stores secrets in Helm values/history.
+existingSecret: olr-secrets
+
+# Defaults support localhost port-forwarding. Use an HTTPS origin and true for
+# cookieSecure when publishing the portal.
+portal:
+  baseURL: http://localhost:8080
+  cookieSecure: false
+
+# Non-secret environment variables, e.g. OIDC_ISSUER, OIDC_PORTAL_CLIENT_ID,
+# OIDC_GROUPS_CLAIM, OLR_BACKEND_ALLOWED_CIDRS, OLR_BACKEND_TOKEN_ENVS, OTEL_*.
+# OLR_CONFIG and PORTAL_* below are managed by the chart.
+env: {}
+
+# The same router YAML as config.example.yaml. ${ENV_VAR} references are passed
+# unchanged to the router. Do not put credentials here; use existingSecret.
+# This example expects an existing Ollama Service named ollama in this namespace.
+# Replace its origin/upstream_model with a backend reachable from the router pod.
+config:
+  auth:
+    default_key_lifetime_days: 90
+  limits:
+    timezone: UTC
+  models:
+    chat-model:
+      upstream_model: replace-with-installed-model
+      protocols: [openai]
+      timeout_s: 900
+      idle_timeout_s: 120
+      queue_timeout_s: 120
+      session_affinity: true
+      pool:
+        - url: http://ollama:11434
+          health_path: /
+          weight: 1
+          max_inflight: 1
+  groups:
+    staff:
+      models: [chat-model]
+      tokens_per_day: 2000000
+      tokens_per_month: 20000000
+      rpm: 60
+      max_concurrent: 4
+    admins:
+      models: ["*"]
+      admin: true
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+# Controller-specific streaming settings belong in annotations. See the chart
+# README for a maintained NGINX controller example and TLS setup.
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tlsSecretName: ""
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
