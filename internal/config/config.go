@@ -257,8 +257,10 @@ func Load(path string) (*Config, error) {
 		if err := ValidateDatabaseTLS(cfg.DatabaseURL); err != nil {
 			return nil, err
 		}
-		if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); endpoint != "" && !strings.HasPrefix(endpoint, "https://") {
-			return nil, errors.New("security.require_tls requires HTTPS telemetry")
+		for _, name := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"} {
+			if endpoint := os.Getenv(name); endpoint != "" && !strings.HasPrefix(endpoint, "https://") {
+				return nil, errors.New("security.require_tls requires HTTPS telemetry")
+			}
 		}
 	}
 	return cfg, nil
