@@ -15,11 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/arm2arm/open-llm-router/internal/apitoken"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
-	"github.com/arm2arm/open-llm-router/internal/groupsync"
 	"github.com/arm2arm/open-llm-router/internal/home"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
@@ -129,18 +127,10 @@ func serve(args []string) error {
 	}
 	defer authenticator.Close()
 	authenticator.Forwarders = cfg.Forwarders
-	if cfg.OIDC != nil && cfg.OIDC.Audience != "" {
-		tokenCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		verifier, err := apitoken.New(tokenCtx, cfg.OIDC, database)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("API tokens: %w", err)
-		}
-		defer verifier.Close()
-		authenticator.Tokens = verifier.Authenticate
-	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	stopOIDC := startOIDCServices(cfg, database, authenticator, log)
+	defer stopOIDC()
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -175,22 +165,6 @@ func serve(args []string) error {
 	}()
 	forwarder.Metrics = observability
 	defer forwarder.Close()
-	if cfg.OIDC != nil && cfg.OIDCSyncSecret != "" {
-		syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		syncer, err := groupsync.New(syncCtx, cfg.OIDC, cfg.OIDCSyncSecret, database, log)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("group sync: %w", err)
-		}
-		defer syncer.Close()
-		syncRun, stopSync := context.WithCancel(context.Background())
-		syncDone := make(chan struct{})
-		go func() {
-			defer close(syncDone)
-			syncer.Run(syncRun, time.Duration(cfg.OIDC.SyncIntervalS)*time.Second)
-		}()
-		defer func() { stopSync(); <-syncDone }()
-	}
 	retentionDone := make(chan struct{})
 	retentionCtx, cancelRetention := context.WithCancel(context.Background())
 	go func() {
@@ -205,25 +179,23 @@ func serve(args []string) error {
 	go func() { defer close(healthDone); forwarder.Pools.Run(healthCtx) }()
 	defer func() { cancelHealth(); <-healthDone }()
 	srv := server.New(log)
-	srv.Handle("/", home.New(cfg.OIDC != nil))
+	srv.Handle("/", home.New(true))
 	srv.SetAPIMiddleware(authenticator.Middleware)
 	srv.SetReadiness(func(ctx context.Context) bool {
 		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
 	})
 	forwarder.Register(srv.Handle)
 	srv.Handle("GET /metrics", observability.Handler())
-	if cfg.OIDC != nil {
-		portalCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		portalHandler, err := portal.New(portalCtx, cfg, database, forwarder.Limits)
-		cancel()
-		if err != nil {
-			return err
-		}
-		defer portalHandler.Close()
-		portalHandler.Pools = forwarder.Pools
-		srv.Handle("/portal", portalHandler)
-		srv.Handle("/portal/", portalHandler)
+	portalCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	portalHandler, err := portal.New(portalCtx, cfg, database, forwarder.Limits)
+	cancel()
+	if err != nil {
+		return err
 	}
+	defer portalHandler.Close()
+	portalHandler.Pools = forwarder.Pools
+	srv.Handle("/portal", portalHandler)
+	srv.Handle("/portal/", portalHandler)
 
 	log.Info("listening", "addr", ln.Addr().String(), "config", *configPath, "models", len(cfg.Models))
 	if err := srv.Run(ctx, ln, *grace); err != nil {

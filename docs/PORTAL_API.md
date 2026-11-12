@@ -2,6 +2,7 @@
 
 The portal is served at the configured `PORTAL_BASE_URL` origin. `/portal/*` uses an
 opaque eight-hour session cookie; `/v1/*` continues to require API keys and ignores cookies.
+The initial local password-change session is restricted and lasts ten minutes.
 All portal responses use `Cache-Control: no-store`. Errors are JSON:
 `{"error":{"type":"authentication_error","message":"authentication required"}}`.
 Unauthenticated API calls return 401; forbidden origins/disabled logins return 403;
@@ -10,17 +11,41 @@ dependencies return 503. No OIDC token is stored or returned to the browser.
 
 ## Login and logout
 
+- `GET /portal/api/auth` and `GET /portal/login/local`: public authentication metadata,
+  with `local: {available, login_url, password_url}` and
+  `oidc: {configured, available, login_url}`. No secret or account-existence information
+  is returned. The explicit local route never redirects to SSO; its GET currently
+  returns JSON, with browser forms tracked in #74.
+- `POST /portal/login/local`: accepts `{"username":"admin","password":"…"}` from the
+  configured Origin and Host. Returns `{"must_change_password":true|false}` and a new
+  server-side session cookie, revoking the browser's old session and pending SSO challenge.
+  Unknown, disabled, SSO-only users and wrong passwords return the same 401 error.
+  Local identity is keyed by the exact local username, never linked to an SSO identity.
+- `GET /portal/api/auth/session`: returns the session's `auth_method` (`local` or `oidc`)
+  and `must_change_password`, including for restricted sessions. A required-change session
+  gets 403 `password_change_required` on all other authenticated APIs except password
+  change and logout. No inference or Admin access is granted before the first change.
+- `POST /portal/password`: requires a local session and accepts
+  `{"current_password":"…","new_password":"…"}`. A new password must differ, contain
+  at least 15 UTF-8 characters and fit within 1024 bytes. Success revokes **all** sessions,
+  clears the cookie and returns `{"login_required":true}`. Sign in again with the new
+  password. Policy errors return 400; an incorrect current password returns generic 401.
+  Each local session is bound to the credential revision verified at login, preventing
+  an older verification from establishing a usable session after a password change.
 - `GET /portal/login`: starts authorization code login with fresh state, nonce and PKCE S256.
   A ten-minute HttpOnly cookie binds the one-use server-side challenge to this browser.
   At most 10,000 unfinished challenges exist at a time; beyond that the route answers 503
-  with `Retry-After: 60`.
+  with `Retry-After: 60`. Without OIDC it redirects to `/portal/login/local`.
+  Unavailable configured SSO returns 503 `oidc_unavailable` with `Retry-After: 10`.
 - `GET /portal/callback`: consumes the challenge, exchanges the code and validates the ID
   token's signature, issuer, audience, expiry and nonce. The user is upserted by `(issuer, sub)`;
   email is never an identity key. Username, email and groups refresh on each login. Disabled
   users cannot log in. A successful login rotates the session and redirects to `/portal/`.
 - `POST /portal/logout` with `{}`: deletes this session and clears its cookie. Returns
   `{"logout_url":"<discovered end_session_endpoint with client_id and post_logout_redirect_uri>"}`.
-  The UI navigates to that URL to end the identity-provider session. Keycloak asks for
+  A local session returns `{"logout_url":"/portal/login/local"}` without contacting the
+  provider. SSO sessions use the provider URL when available and fall back to the local
+  URL during an outage. The UI navigates to that URL. Keycloak asks for
   confirmation because no ID token is retained or exposed as an `id_token_hint`.
 
 Session cookies are `HttpOnly; SameSite=Lax; Path=/portal`, with `Secure` on by default.
@@ -28,6 +53,14 @@ Only local HTTP development explicitly sets `PORTAL_COOKIE_SECURE=false`.
 State-changing requests, including logout and DELETE, require `Content-Type: application/json`
 and an `Origin` exactly matching `PORTAL_BASE_URL`; cross-site Fetch Metadata is rejected.
 The UI can use `fetch(url, {method, headers: {'Content-Type': 'application/json'}, body: ...})`.
+
+Local login and password change use bounded 8 KiB JSON bodies and fixed one-minute
+throttle windows: ten attempts per username, twenty per socket source address and sixty
+globally. All attempts count. `429` includes `Retry-After`; rejections never extend a
+window or disable an account. Forwarding headers are ignored. Hashed buckets persist in
+PostgreSQL, with a 4096-row bound, and at most two password operations run concurrently
+per process. See [the guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak)
+for a cookie-jar workflow that keeps passwords out of command arguments.
 
 ## Current user
 
@@ -119,7 +152,7 @@ Members of a group with `admin: true` in the config and the protected local admi
 get `"admin": true` in `/portal/api/me` and these routes; everyone else gets 403.
 Membership and protected status are read from the database on each request. Protected
 authority does not grant inference model access; normal model policies still apply.
-Local browser login remains pending (#73); this describes the session authorization contract.
+Local session APIs work without Keycloak; browser sign-in/password forms remain in #74.
 
 - `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
@@ -165,9 +198,14 @@ The origin is configured, never derived from untrusted Host or forwarding header
 `OIDC_SYNC_CLIENT_SECRET` enable the group sync job (see the runbook).
 `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_GROUPS_CLAIM`
 (default `groups`) and `OIDC_USERNAME_CLAIM` (default `preferred_username`) override the
-optional YAML `oidc` section. Setting an issuer enables the portal. `PORTAL_BASE_URL` sets
+optional YAML `oidc` section. The portal is always mounted; setting an issuer enables SSO.
+Discovery and retry run independently of listening, with availability polled every ten
+seconds. API-token and group-sync initialization retry without blocking local login/API keys.
+`PORTAL_BASE_URL` sets
 its public HTTP(S) origin (default `http://localhost:8080`); HTTPS is required when secure
-cookies are enabled. `PORTAL_COOKIE_SECURE` defaults to true. Discovery supplies all OIDC
+cookies are enabled; cookie-issuing login operations return 503 for an HTTP origin with
+secure cookies, while the API server keeps running. `PORTAL_COOKIE_SECURE` defaults to
+true. Discovery supplies all OIDC
 endpoints, including logout. Discovery without a logout endpoint is refused.
 
 Compose alone sets `OIDC_BACKCHANNEL_URL=http://keycloak:8080/realms/olr-dev`: server-side

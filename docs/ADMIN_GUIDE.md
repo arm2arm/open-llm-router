@@ -1,6 +1,6 @@
 # Administrator guide
 
-This guide describes the implementation including issue #72 (12 November 2026). Start here
+This guide describes the implementation including issues #72–#73 (12 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
 The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
@@ -20,11 +20,12 @@ working functionality.
 | Issue/revoke a user's API key as an operator | `olr admin key create/revoke` | No restart |
 | Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment | Router restart/recreation |
 | Configure Keycloak, endpoints or group policies from the Admin page | **Not implemented** | See the feature plan |
-| Log in with a local administrator password, including without Keycloak | **Not implemented** | See the feature plan |
-| Bootstrap a protected local administrator; rotate its password | `olr admin bootstrap`, `olr admin password change`, optional startup secret | No restart after CLI bootstrap; local browser login remains pending |
+| Log in with a local administrator password, including without Keycloak | Portal JSON API | Browser forms are pending in #74 |
+| Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
 
-The portal requires OIDC today. A local CLI user, even one in an `admin: true`
-group, cannot sign into it with a password. The development account named `admin`
+The portal and local password API run without OIDC and during a Keycloak outage.
+An ordinary CLI user has no password credential; putting it in an `admin: true`
+group does not create one. The development account named `admin`
 is a **Keycloak account**, not a protected local router administrator.
 
 ### Bootstrap the protected local administrator
@@ -83,11 +84,63 @@ deployment hardware when reviewing future hash versions. Verification accepts
 only the version's bounded parameters. PostgreSQL backups contain password
 hashes and must be protected as secrets.
 
-The credential foundation does not yet expose a local browser login. That flow
-and its password-change screen are tracked in
-[#73](https://github.com/arm2arm/open-llm-router/issues/73) and
-[#74](https://github.com/arm2arm/open-llm-router/issues/74); the portal still requires
-OIDC today.
+### Use local authentication without Keycloak
+
+Issue #73 adds the JSON authentication handlers. The browser sign-in and
+password-change forms remain in [#74](https://github.com/arm2arm/open-llm-router/issues/74).
+Until then, use the operator CLI or the API workflow below.
+
+Set `PORTAL_BASE_URL` to the public HTTPS origin. For local HTTP only, explicitly
+set `PORTAL_COOKIE_SECURE=false`. An HTTP origin with secure cookies leaves the
+API server running but refuses cookie-issuing login operations. Omitting `oidc`
+enables local-only authentication; no Keycloak realm is needed.
+
+Create owner-only JSON files with your secret manager outside the checkout:
+`local-login.json` holds `{"username":"admin","password":"<current password>"}`;
+`local-change.json` holds `{"current_password":"<current password>","new_password":"<replacement>"}`.
+Keep those values out of shell arguments/history. Use a private cookie jar:
+
+```sh
+umask 077
+export OLR_PORTAL_ORIGIN=https://llm.example.org
+curl --fail "$OLR_PORTAL_ORIGIN/portal/api/auth"
+curl --fail -c /private/secrets/olr-cookies \
+  -H "Origin: $OLR_PORTAL_ORIGIN" -H 'Content-Type: application/json' \
+  --data-binary @/private/secrets/local-login.json \
+  "$OLR_PORTAL_ORIGIN/portal/login/local"
+curl --fail -b /private/secrets/olr-cookies -c /private/secrets/olr-cookies \
+  -H "Origin: $OLR_PORTAL_ORIGIN" -H 'Content-Type: application/json' \
+  --data-binary @/private/secrets/local-change.json \
+  "$OLR_PORTAL_ORIGIN/portal/password"
+```
+
+The first login returns `must_change_password: true` and a ten-minute restricted
+session. Only session status, password change and logout are permitted. A successful
+change revokes all sessions and returns `login_required: true`. Update the private
+login JSON to the replacement password, repeat the login command, and then use the
+cookie jar for `/portal/api/me` or `/portal/api/admin/users`. A full session lasts
+eight hours and carries protected admin authority independently of group policies.
+Retire the one-time files and cookie jar when finished. Password rotation binds
+sessions to a new credential revision, so even a delayed login using an old
+verification cannot create a usable session.
+
+`POST /portal/logout` with `{}` and the same Origin/cookie revokes that session.
+Local logout never contacts Keycloak. Portal cookies do not authorize `/v1/*`;
+clients still need an API key or a configured OIDC access token.
+
+Local login and password change share fixed one-minute limits: ten attempts per
+username, twenty per source address and sixty overall. The router ignores
+forwarding headers for this purpose; clients behind a reverse proxy share its
+source-address limit. `429` includes `Retry-After`. Rejected requests do not extend
+the window or disable any account. Throttle buckets are hashed, bounded in count
+and stored in PostgreSQL; two password operations can run concurrently per process.
+
+OIDC discovery, API-token verification initialization and group-sync initialization
+run independently of listening. Failed initialization retries every ten seconds.
+`GET /portal/api/auth` reports SSO discovery availability separately; affected SSO
+routes return 503 during an outage. Existing local sessions, local login, Admin,
+API keys and readiness remain independent of Keycloak. Discovery health is polled
+every ten seconds, and SSO can recover without a router restart.
 
 ## How the project works
 
@@ -95,6 +148,7 @@ OIDC today.
 flowchart TD
     Browser[User or administrator browser] -->|Portal sign-in| KC[Keycloak: bundled for development, external for production]
     KC -->|Verified identity and groups| Portal[Portal embedded in the Go router]
+    Local[Protected local administrator] -->|Password API and server-side session| Portal
     Client[SDK, coding client or trusted application] -->|Router API key or configured OIDC access token| Auth[Authenticate caller]
     Auth --> Policy[Resolve groups and user overrides]
     Policy --> Model[Resolve model alias and logical model]
@@ -549,10 +603,10 @@ Full erasure is an operator CLI operation; see [RUNBOOK.md](RUNBOOK.md#erase-a-u
 | OIDC startup/login fails | Discovery and logout metadata, issuer reachability, client secret, exact redirects and secure cookies |
 | Stream stalls behind HTTPS | TLS proxy buffering/timeouts and backend idle timeout |
 | Group policy changes unexpectedly | Multiple memberships, omitted limits and group-sync name/path consistency |
-| Keycloak unavailable and no portal login works | No local portal login exists today; use the database-backed operator CLI while restoring the IdP |
+| Keycloak unavailable | Use the local authentication API or operator CLI; inspect `/portal/api/auth` for SSO availability; browser forms are pending in #74 |
 
-The protected local credential and CLI foundation is implemented; local browser
-login, dual login and Admin-managed external Keycloak configuration remain in
+Protected credentials, local session APIs and independent portal startup are implemented;
+browser forms, dual-login UI and Admin-managed external Keycloak configuration remain in
 [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
 local tests and this documentation do not replace deployed acceptance and two
 weeks of real user activity.

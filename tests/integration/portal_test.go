@@ -57,6 +57,19 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		f.cfg = cfg
 	}
 	f.usageRouter = startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 7}), opt)
+	// OIDC discovery is deliberately independent of portal startup.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, body := f.browser(t).call(t, "GET", "/portal/api/auth", "", "")
+		var methods struct{ OIDC struct{ Available bool } }
+		if json.Unmarshal(body, &methods) == nil && methods.OIDC.Available {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("test OIDC provider did not become available")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	return f
 }
 func (f *portalFixture) browser(t *testing.T) *portalBrowser {

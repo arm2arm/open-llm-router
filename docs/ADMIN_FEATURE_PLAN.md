@@ -1,6 +1,6 @@
 # Admin capability audit and implementation plan
 
-Audit baseline: commit `6cedb62`, updated for the implementation of issue #72,
+Audit baseline: commit `6cedb62`, updated for the implementation of issues #72–#73,
 12 November 2026. The remaining delivery stages below are proposals.
 Current setup and operation are documented in [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
 
@@ -17,8 +17,9 @@ no due dates or assignees have been set.
 | 2 | [M8 · Admin-managed Keycloak configuration](https://github.com/arm2arm/open-llm-router/milestone/10) | [#77](https://github.com/arm2arm/open-llm-router/issues/77) revisions/secrets; [#78](https://github.com/arm2arm/open-llm-router/issues/78) authentication settings; [#79](https://github.com/arm2arm/open-llm-router/issues/79) SSO activation/rollback; [#80](https://github.com/arm2arm/open-llm-router/issues/80) authorization freshness/group naming |
 | 3 | [M9 · Admin-managed endpoints and policies](https://github.com/arm2arm/open-llm-router/milestone/11) | [#81](https://github.com/arm2arm/open-llm-router/issues/81) routing API/runtime; [#82](https://github.com/arm2arm/open-llm-router/issues/82) endpoint/model UI; [#83](https://github.com/arm2arm/open-llm-router/issues/83) group-policy editor; [#84](https://github.com/arm2arm/open-llm-router/issues/84) administration history; [#85](https://github.com/arm2arm/open-llm-router/issues/85) integrated acceptance/docs |
 
-The #72 credential/bootstrap foundation is implemented in this checkout. Continue
-with #73 for local browser authentication. Explicit cloud-provider adapters in delivery stage 4 below remain
+The #72 credential/bootstrap foundation and #73 local authentication APIs are
+implemented in this checkout. Continue with #74 for browser sign-in/password forms.
+Explicit cloud-provider adapters in delivery stage 4 below remain
 a future extension; these milestones cover existing compatible backends.
 Stage 5's authorization/audit/acceptance work is included in M8 and M9. The
 production pilot #21 remains independent.
@@ -47,8 +48,9 @@ additional evidence that the production pilot in #21 has been completed.
 | External Keycloak connection | Yes, via YAML/environment and restart | `internal/config`, `internal/oidcclient`, portal OIDC setup |
 | Keycloak configuration in Admin | No | Portal routes have no authentication-settings editor/API |
 | Local users and API keys | Yes, CLI/API-key authentication | Ordinary local users still have no password login; reserved administrator has credential storage and rotation |
-| Protected permanent local administrator | Yes, credential/CLI foundation (#72) | Migration 0004, transactional bootstrap, Argon2id, required first change, database guards; browser login is #73 |
-| Local password login and dual login | No | Portal is mounted only when `cfg.OIDC != nil`; login redirects to OIDC |
+| Protected permanent local administrator | Yes (#72) | Migration 0004, transactional bootstrap, Argon2id, required first change, database guards |
+| Local password authentication and independent startup | Yes, JSON API (#73) | Migration 0005, restricted first-change sessions, rotation/revocation, throttling and OIDC retry; Keycloak absence/outage does not block local Admin |
+| Local sign-in/password forms and dual-login UI | No (#74) | Backend routes are ready; the React UI still redirects unauthenticated users toward `/portal/login` |
 | Endpoint pools, credentials, weights and capacity | Yes, YAML plus restart | `config.Model`, `config.Replica`, `internal/pool` |
 | Endpoint/model creation and editing in Admin | No | `/admin/replicas` is GET-only; UI displays health/capacity |
 | Group model grants and default limits | Yes, YAML plus restart | `config.Group`, `policy.Resolve` |
@@ -86,9 +88,12 @@ ability to administer the application.
 Completed for #72: versioned salted credentials, singleton bootstrap, first-change
 enforcement and current-password rotation, stable identity, independent admin
 authority, and API/CLI/database lifecycle guards. Local tests cover concurrent
-bootstrap, prior-schema upgrade, restart and secret non-disclosure. The browser
-login, independent portal startup, additional local users and recovery work below
-remain assigned to #73–#76.
+bootstrap, prior-schema upgrade, restart and secret non-disclosure.
+Completed for #73: local JSON login/password/logout handlers, revision-bound
+sessions, fixed-window throttling, always-mounted portal routes and independent
+OIDC initialization/retry. Tests cover local-only startup, configured IdP outage,
+recovery, session fixation/expiry/revocation, CSRF and existing SSO/API-key flows.
+Browser forms, additional local users and recovery remain assigned to #74–#76.
 
 - Add a local credential store keyed by user UUID, with a maintained password
   hashing implementation, per-password salt and calibrated work factor. Keep

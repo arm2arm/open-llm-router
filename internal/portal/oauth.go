@@ -24,6 +24,14 @@ var MaxPendingLogins = 10000
 var errTooManyLogins = errors.New("too many pending logins")
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.OIDC == nil {
+		http.Redirect(w, r, "/portal/login/local", http.StatusSeeOther)
+		return
+	}
+	sso := h.requireSSO(w)
+	if sso == nil {
+		return
+	}
 	base, err := url.Parse(h.cfg.Portal.BaseURL)
 	if err != nil {
 		unavailable(w)
@@ -67,10 +75,14 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cookie(w, loginCookie, browser, 10*time.Minute)
-	http.Redirect(w, r, h.oauth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce)), http.StatusSeeOther)
+	http.Redirect(w, r, sso.oauth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce)), http.StatusSeeOther)
 }
 
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
+	sso := h.requireSSO(w)
+	if sso == nil {
+		return
+	}
 	idHash, ok := cookieHash(r, loginCookie)
 	query := r.URL.Query()
 	if !ok || len(query["state"]) != 1 || query.Get("state") == "" || len(query["code"]) != 1 || query.Get("code") == "" || query.Has("error") {
@@ -89,8 +101,8 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cookie(w, loginCookie, "", -1)
-	ctx := oidc.ClientContext(r.Context(), h.client)
-	token, err := h.oauth.Exchange(ctx, query.Get("code"), oauth2.VerifierOption(verifier))
+	ctx := oidc.ClientContext(r.Context(), sso.idp.HTTP)
+	token, err := sso.oauth.Exchange(ctx, query.Get("code"), oauth2.VerifierOption(verifier))
 	if err != nil {
 		var rejected *oauth2.RetrieveError
 		if errors.As(err, &rejected) && rejected.Response.StatusCode >= 400 && rejected.Response.StatusCode < 500 {
@@ -105,7 +117,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid_request_error", "identity token is missing")
 		return
 	}
-	id, err := h.verifier.Verify(ctx, raw)
+	id, err := sso.verifier.Verify(ctx, raw)
 	if err != nil || id.Subject == "" || id.Issuer != h.cfg.OIDC.Issuer || subtle.ConstantTimeCompare([]byte(id.Nonce), []byte(nonce)) != 1 {
 		fail(w, 400, "invalid_request_error", "identity token validation failed")
 		return
@@ -125,7 +137,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		raw, ok := claims[name]
 		return !ok || json.Unmarshal(raw, value) == nil
 	}
-	if !decode(h.cfg.OIDC.UsernameClaim, &username) || !decode("email", &email) || !decode(h.cfg.OIDC.GroupsClaim, &groups) || !decode("azp", &party) || (party != "" && party != h.oauth.ClientID) || (len(id.Audience) > 1 && party != h.oauth.ClientID) {
+	if !decode(h.cfg.OIDC.UsernameClaim, &username) || !decode("email", &email) || !decode(h.cfg.OIDC.GroupsClaim, &groups) || !decode("azp", &party) || (party != "" && party != sso.oauth.ClientID) || (len(id.Audience) > 1 && party != sso.oauth.ClientID) {
 		fail(w, 400, "invalid_request_error", "invalid identity claims")
 		return
 	}

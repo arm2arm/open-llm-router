@@ -15,6 +15,7 @@ var (
 	ErrProtectedAdmin    = errors.New("protected local administrator cannot be deleted, disabled, demoted or detached from local credentials")
 	ErrInvalidPassword   = errors.New("invalid local username or password")
 	ErrBootstrapConflict = errors.New("local admin identity already exists without protection; bootstrap will not adopt an existing account")
+	ErrPasswordReuse     = errors.New("new password must differ from the current password")
 )
 
 // LocalAccount contains only public identity metadata, never a password/hash.
@@ -25,6 +26,7 @@ type LocalAccount struct {
 	Username           string `json:"username"`
 	ProtectedAdmin     bool   `json:"protected_admin"`
 	MustChangePassword bool   `json:"must_change_password"`
+	CredentialRevision int64  `json:"-"` // internal login snapshot, never a password/hash
 }
 
 func protectedAdminError(err error) bool {
@@ -35,9 +37,9 @@ func protectedAdminError(err error) bool {
 
 func (a Admin) ProtectedLocalAdmin(ctx context.Context) (LocalAccount, error) {
 	var account LocalAccount
-	err := a.Pool.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password
+	err := a.Pool.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password,c.revision
 		FROM users u JOIN local_credentials c ON c.user_id=u.id WHERE u.protected_admin`).
-		Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword)
+		Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword, &account.CredentialRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LocalAccount{}, ErrNotFound
 	}
@@ -58,9 +60,9 @@ func (a Admin) BootstrapLocalAdmin(ctx context.Context, password []byte) (LocalA
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", bootstrapLock); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password
+		err := tx.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password,c.revision
 			FROM users u JOIN local_credentials c ON c.user_id=u.id WHERE u.protected_admin`).
-			Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword)
+			Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword, &account.CredentialRevision)
 		if err == nil {
 			return nil
 		}
@@ -89,6 +91,7 @@ func (a Admin) BootstrapLocalAdmin(ctx context.Context, password []byte) (LocalA
 			return err
 		}
 		account.MustChangePassword, created = true, true
+		account.CredentialRevision = 1
 		return nil
 	})
 	if err != nil {
@@ -107,9 +110,9 @@ func (a Admin) VerifyLocalPassword(ctx context.Context, username string, passwor
 	var hash string
 	var version int
 	var enabled bool
-	err := a.Pool.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password,c.version,c.password_hash,u.enabled
+	err := a.Pool.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password,c.revision,c.version,c.password_hash,u.enabled
 		FROM users u JOIN local_credentials c ON c.user_id=u.id WHERE u.issuer='local' AND u.sub=$1`, username).
-		Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword, &version, &hash, &enabled)
+		Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword, &account.CredentialRevision, &version, &hash, &enabled)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !enabled) {
 		_ = verifyPassword(passwordVersion, dummyPasswordHash, password)
 		return LocalAccount{}, ErrInvalidPassword
@@ -145,7 +148,7 @@ func (a Admin) ChangeLocalPassword(ctx context.Context, userID string, current, 
 	}
 	// The first change must actually replace the one-time bootstrap credential.
 	if bytes.Equal(current, next) {
-		return errors.New("new password must differ from the current password")
+		return ErrPasswordReuse
 	}
 	replacement, err := hashPassword(next)
 	if err != nil {
@@ -153,7 +156,7 @@ func (a Admin) ChangeLocalPassword(ctx context.Context, userID string, current, 
 	}
 	return a.changeWith(ctx, func(tx pgx.Tx) error {
 		result, err := tx.Exec(ctx, `UPDATE local_credentials c SET version=$2,password_hash=$3,
-			must_change_password=false,changed_at=clock_timestamp()
+			must_change_password=false
 			WHERE c.user_id=$1 AND c.password_hash=$4 AND EXISTS(SELECT 1 FROM users u WHERE u.id=c.user_id AND u.enabled AND u.issuer='local')`,
 			userID, passwordVersion, replacement, hash)
 		if err != nil {

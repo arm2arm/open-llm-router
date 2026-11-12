@@ -18,8 +18,7 @@ var stylesheet string
 
 var page = template.Must(template.New("home").Parse(pageHTML))
 
-// New returns a public home page. Portal links are shown only when OIDC is
-// configured, so API-only deployments do not offer an unavailable login.
+// New returns a public home page. The caller controls whether portal links appear.
 func New(portalEnabled bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

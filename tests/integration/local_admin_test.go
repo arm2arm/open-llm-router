@@ -170,6 +170,8 @@ func TestProtectedAdminDatabaseAndStoreGuards(t *testing.T) {
 		`UPDATE local_credentials SET user_id=gen_random_uuid() WHERE user_id=$1`,
 		`UPDATE local_credentials SET password_hash='' WHERE user_id=$1`,
 		`UPDATE local_credentials SET version=2 WHERE user_id=$1`,
+		`UPDATE local_credentials SET must_change_password=false WHERE user_id=$1`,
+		`UPDATE local_credentials SET revision=2 WHERE user_id=$1`,
 	} {
 		wantConstraint(t, pool, "23514", sql, account.ID)
 	}
@@ -245,12 +247,13 @@ func TestProtectedAdminPortalGuardsAndIndependentAuthority(t *testing.T) {
 		t.Helper()
 		cookie := base64.RawURLEncoding.EncodeToString([]byte("local-session-for-guard-test-001"))
 		hash := sha256.Sum256([]byte(cookie))
-		execSQL(t, f.pool, `INSERT INTO sessions(id_hash,user_id,expires) VALUES($1,$2,now()+interval '1 hour')`, hash[:], account.ID)
+		execSQL(t, f.pool, `INSERT INTO sessions(id_hash,user_id,expires,auth_method,credential_revision)
+			SELECT $1,$2,now()+interval '1 hour','local',revision FROM local_credentials WHERE user_id=$2`, hash[:], account.ID)
 		u, _ := url.Parse(f.cfg.Portal.BaseURL + "/portal/")
 		local.client.Jar.SetCookies(u, []*http.Cookie{{Name: "olr_session", Value: cookie, Path: "/portal"}})
 	}
 	installSession()
-	if resp, _ := local.call(t, "GET", "/portal/api/me", "", ""); resp.StatusCode != 401 {
+	if resp, _ := local.call(t, "GET", "/portal/api/me", "", ""); resp.StatusCode != 403 {
 		t.Fatal("session bypassed required password change")
 	}
 	if err := admin.ChangeLocalPassword(t.Context(), account.ID, []byte(initialAdminPassword), []byte(rotatedAdminPassword)); err != nil {

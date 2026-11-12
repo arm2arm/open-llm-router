@@ -134,7 +134,8 @@ the same `OIDC_ISSUER`, and transports server-side requests via
 token must still advertise the public issuer exactly, following the
 [Keycloak hostname configuration](https://www.keycloak.org/server/hostname). No issuer or signature check is
 disabled. The router discovers authorization, token, JWKS and logout endpoints; the
-internal discovery is checked at startup before listening. `make portal-check` also checks
+internal discovery runs independently of listening, with retries during outages.
+`/portal/api/auth` reports SSO availability. `make portal-check` also checks
 public discovery and completes real logins against the container to verify both sides.
 
 `OLR_PORT` and `KEYCLOAK_PORT` change the default public origins in Compose. The realm's
@@ -155,7 +156,10 @@ unset OIDC_BACKCHANNEL_URL  # the public issuer is reachable from the host
 ```
 
 In deployment, set an HTTPS `PORTAL_BASE_URL`; `PORTAL_COOKIE_SECURE` defaults to true and
-startup rejects HTTP with secure cookies. `OIDC_GROUPS_CLAIM` and `OIDC_USERNAME_CLAIM`
+login refuses an HTTP public origin with secure cookies. Local HTTP development must
+explicitly disable secure cookies. Local session APIs work without Keycloak; browser
+forms are tracked in #74. See [the admin guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak).
+`OIDC_GROUPS_CLAIM` and `OIDC_USERNAME_CLAIM`
 override the default `groups` and `preferred_username` claims. All five OIDC settings can
 override the YAML or enable OIDC with no YAML section. Use the public issuer directly when
 reachable, or configure an internal backchannel without changing the expected issuer.

@@ -11,7 +11,9 @@ The current administration interfaces and setup are described in
 [ADMIN_GUIDE.md](ADMIN_GUIDE.md). The proposed extension for a protected local
 administrator, dual login, Admin-managed Keycloak connections, endpoints and group
 policies is tracked separately in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md);
-those UI/local-login features are not part of the implemented first release.
+These extend the first release. Protected credentials (#72) and independent local
+session APIs (#73) are implemented; browser forms and the configuration editors
+remain in the linked delivery plan.
 
 ## 0. Changes
 
