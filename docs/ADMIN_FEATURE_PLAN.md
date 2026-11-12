@@ -63,7 +63,7 @@ additional evidence that the production pilot in #21 has been completed.
 | Group membership management | Keycloak externally; local memberships in Admin/API (#75) | Assign existing configured groups; sessions end and keys receive updated access; effective models/limits shown |
 | Per-user quota/rate/concurrency overrides | Yes, Admin/API/CLI | Numeric fields plus `strict_quota`, reason/actor/time |
 | Enable/disable user | Yes, Admin/API; disable through CLI | Protected local administrator cannot be disabled; UI hides its disable action |
-| Key administration | Self-service create/revoke, operator CLI create/revoke, Admin list/revoke | Admin exposes metadata only; revocation is scoped to the displayed owner |
+| Key administration | Self-service create/revoke, operator CLI create/revoke, Admin list/revoke/copy | Lists expose metadata only; explicit Admin copy requires encrypted storage configured before issuance; legacy keys need replacement |
 | User deletion | Operator CLI | Protected local administrator cannot be erased; database guards cover ordinary SQL/cascades |
 | Remote compatible backend | Conditional on current native-protocol contract | Origin-only URL, Bearer token, HTTP-200 health probe; not a cloud-provider integration |
 | Provider adapters and provider registry | Partial | Endpoint editor detects OpenAI/Ollama model catalogs; no custom auth headers, base paths, signing, provider registry or shared provider capacity |
