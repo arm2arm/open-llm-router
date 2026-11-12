@@ -228,11 +228,7 @@ func admin(args []string, out, errout io.Writer) error {
 		return err
 	}
 	defer pool.Close()
-	keyCipher, err := auth.LoadKeyCipher(os.Getenv)
-	if err != nil {
-		return err
-	}
-	manager := auth.Admin{Pool: pool, KeyCipher: keyCipher, KeyPolicy: keyPolicy}
+	manager := auth.Admin{Pool: pool, KeyPolicy: keyPolicy}
 	switch command {
 	case "password change":
 		current, err := readPasswordFile(currentPasswordFile)

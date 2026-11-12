@@ -217,15 +217,10 @@ authorization remains enforced on the server regardless of browser navigation.
   `admin` and key metadata. The user includes `issuer`, `has_local_password` and
   `must_change_password`; keys include `id`, `prefix`, `label`, `created`, `last_used`,
   `expires`, `revoked`, `expired`, `class`, `trusted_forwarder` and `copy_available`, never hashes, ciphertext or raw keys.
-- `POST /portal/api/admin/users/{id}/keys/{key}/copy` with `{}` returns 200
-  `{"key":"olr-..."}` only to a full admin session with the configured Origin.
-  Responses are `no-store`. Only active keys owned by an enabled user without a
-  required password change can be copied. Returns 404 for an inactive/mismatched
-  key, 409 `key_unavailable` for a legacy hash-only key or unavailable/wrong
-  encryption key, 403 for non-admin/invalid Origin, and 503 on storage failure.
-  `OLR_API_KEY_ENCRYPTION_KEY` enables encrypted storage for newly issued keys;
-  see the [Admin guide](ADMIN_GUIDE.md#copy-user-api-keys-as-admin). Existing keys
-  continue authenticating and are never silently rotated.
+- `POST /portal/api/admin/users/{id}/keys/{key}/copy` is retired. It returns 410
+  `key_recovery_removed` for an authorized session with valid Origin, 403 otherwise.
+  No key can be recovered. `copy_available` is always false for compatibility.
+  See [replacement and migration](ADMIN_GUIDE.md#replace-lost-api-keys).
 - `POST /portal/api/admin/users` with
   `{"username":"alice","email":"alice@example.org","groups":["staff"],"password":"…"}`
   creates a new local identity and returns 201 `{"id":"UUID","must_change_password":true}`.

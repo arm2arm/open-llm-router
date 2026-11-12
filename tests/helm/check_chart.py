@@ -45,7 +45,7 @@ class HelmChart(unittest.TestCase):
         secret = resources["Secret", NAME + "-credentials"]
         data = {key: base64.b64decode(value).decode() for key, value in secret["data"].items()}
         self.assertGreaterEqual(len(data["OLR_BOOTSTRAP_ADMIN_PASSWORD"]), 15)
-        self.assertEqual(len(base64.b64decode(data["OLR_API_KEY_ENCRYPTION_KEY"])), 32)
+        self.assertNotIn("OLR_API_KEY_ENCRYPTION_KEY", data)
         url = urlsplit(data["OLR_DATABASE_URL"])
         self.assertEqual(url.hostname, NAME + "-postgresql")
         self.assertEqual(url.password, data["POSTGRES_PASSWORD"])
@@ -106,7 +106,7 @@ class HelmChart(unittest.TestCase):
     def test_custom_credentials_and_storage(self):
         password = "db:pass/@?#% +value"
         values = {"postgresql": {"password": password, "persistence": {"storageClass": "fast", "size": "16Gi"}},
-                  "secrets": {"bootstrapAdminPassword": "test-bootstrap-password", "apiKeyEncryptionKey": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=", "env": {"GPU_TOKEN": "test-token"}},
+                  "secrets": {"bootstrapAdminPassword": "test-bootstrap-password", "env": {"GPU_TOKEN": "test-token"}},
                   "keycloak": {"clientSecret": "test-client-secret", "demoUserPassword": "test-staff-password"}}
         resources = self.render(values)
         data = {key: base64.b64decode(value).decode() for key, value in resources["Secret", NAME + "-credentials"]["data"].items()}

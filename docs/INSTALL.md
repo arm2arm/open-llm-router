@@ -270,7 +270,6 @@ all initial settings in one place:
 | Value | Initial behavior |
 |---|---|
 | `secrets.bootstrapAdminPassword` | Blank generates the local `admin` bootstrap password; a supplied password must be at least 15 characters |
-| `secrets.apiKeyEncryptionKey` | Blank generates a base64-encoded 32-byte key; optionally supply `openssl rand -base64 32` output and retain it |
 | `postgresql.username`, `database`, `password` | Creates database/user `olr`; blank password is generated |
 | `keycloak.adminPassword` | Blank generates the Keycloak console `admin` password |
 | `keycloak.clientSecret` | Blank generates and shares the portal SSO client secret |

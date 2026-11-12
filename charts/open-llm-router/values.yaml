@@ -17,7 +17,6 @@ replicaCount: 1
 existingSecret: ""
 secrets:
   bootstrapAdminPassword: ""
-  apiKeyEncryptionKey: ""
   # Additional secret environment variables, e.g. backend tokens or OIDC secrets.
   env: {}
 

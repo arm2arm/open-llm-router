@@ -184,7 +184,6 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 |---|---|
 | `OLR_CONFIG` | config file path (image: `/etc/olr/config.yaml`) |
 | `OLR_DATABASE_URL` | Postgres URL — **secret** |
-| `OLR_API_KEY_ENCRYPTION_KEY` | optional base64 32-byte AES key for Admin copy of newly issued keys — **secret**; keep stable and back up separately from PostgreSQL |
 | `OLR_SETTINGS_ENCRYPTION_KEY` | optional base64 32-byte AES key for stored managed-settings secrets — **secret**; keep stable and back up separately from PostgreSQL |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` | owner-only file for one-time protected local administrator bootstrap; preferred over environment password |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | alternative bootstrap password — **secret**; configure only one source; ignored once initialized |
@@ -360,9 +359,9 @@ Changes apply at the user's next request, for API keys and OIDC access tokens al
 
 ### Back up Postgres
 
-The database holds users, API-key/password hashes, optional encrypted API keys,
-sessions, overrides and usage. Back up the API-key encryption secret separately;
-losing it prevents Admin copy but does not invalidate API-key authentication.
+The database holds users, API-key/password hashes, sessions, overrides and usage.
+API keys cannot be recovered. Upgrading for OLR-SEC-04 drops historical ciphertext;
+retire legacy API-key encryption secrets and expire old backups per site policy.
 Protect dumps as secrets and back it up daily:
 
 ```sh

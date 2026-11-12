@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Plus, KeyRound } from 'lucide-react'
-import { AdminKeyCopyButton, useAdminKeyCopy } from '@/key-copy'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -411,7 +410,6 @@ export function AdminUserKeys({
   onSaved: () => Promise<void>
 }) {
   const [selected, setSelected] = useState<Key | null>(null)
-  const keyCopy = useAdminKeyCopy(id)
   const revoke = useMutation({
     mutationFn: (key: string) => api(`admin/users/${id}/keys/${key}`, 'DELETE'),
     onSuccess: onSaved,
@@ -420,16 +418,10 @@ export function AdminUserKeys({
     <section aria-label="User API keys">
       <h3 className="font-semibold mb-3">API keys</h3>
       <Failure error={revoke.error} />
-      <Failure error={keyCopy.error} />
       <p className="subtitle mb-3">
         Copy is available for keys issued with encryption enabled. Older keys
         need replacement; they continue to work until revoked.
       </p>
-      {keyCopy.copied && (
-        <p role="status" className="subtitle">
-          API key copied to clipboard.
-        </p>
-      )}
       <div className="table-wrap">
         <table>
           <caption className="sr-only">User key metadata</caption>
@@ -465,9 +457,6 @@ export function AdminUserKeys({
                   <td>{time(key.expires)}</td>
                   <td>
                     {key.revoked ? 'Revoked' : expired ? 'Expired' : 'Active'}
-                    {!key.revoked && !expired && (
-                      <AdminKeyCopyButton keyInfo={key} copy={keyCopy} />
-                    )}
                   </td>
                   <td>
                     {!key.revoked && !expired && (

@@ -60,8 +60,6 @@ app.kubernetes.io/component: {{ .component }}
 {{- .value | b64enc -}}
 {{- else if and .existing (hasKey .existing .key) -}}
 {{- index .existing .key -}}
-{{- else if eq .key "OLR_API_KEY_ENCRYPTION_KEY" -}}
-{{- randBytes 32 | b64enc -}}
 {{- else -}}
 {{- randAlphaNum 32 | b64enc -}}
 {{- end -}}
