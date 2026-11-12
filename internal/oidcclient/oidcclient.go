@@ -5,9 +5,13 @@ package oidcclient
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
@@ -23,9 +27,45 @@ type Client struct {
 	transport *http.Transport
 }
 
+// ErrIssuerMismatch reports discovery metadata naming a different issuer.
+var ErrIssuerMismatch = errors.New("the provider reports a different issuer")
+
+// Options restrict a client used for administrator-supplied settings.
+type Options struct {
+	// Allow is called with every address before connecting; an error
+	// refuses it. Checking at dial time also covers DNS rebinding.
+	// Environment proxies are not used when Allow is set.
+	Allow func(netip.Addr) error
+}
+
 // New discovers the provider. Close releases idle connections.
 func New(ctx context.Context, cfg *config.OIDC) (*Client, error) {
+	client, err := NewWith(ctx, cfg, Options{})
+	if err != nil {
+		return nil, errors.New("OIDC discovery failed")
+	}
+	return client, nil
+}
+
+// NewWith is New with connection restrictions; its error distinguishes an
+// issuer mismatch from other discovery failures.
+func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if options.Allow != nil {
+		transport.Proxy = nil
+		dialer := &net.Dialer{Timeout: 5 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			addr, err := netip.ParseAddr(host)
+			if err != nil {
+				return err
+			}
+			return options.Allow(addr.Unmap())
+		}}
+		transport.DialContext = dialer.DialContext
+	}
 	var rt http.RoundTripper = transport
 	if cfg.BackchannelURL != "" {
 		public, err := url.Parse(cfg.Issuer)
@@ -42,7 +82,12 @@ func New(ctx context.Context, cfg *config.OIDC) (*Client, error) {
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, client), cfg.Issuer)
 	if err != nil {
 		transport.CloseIdleConnections()
-		return nil, errors.New("OIDC discovery failed")
+		var mismatch *oidc.IssuerMismatchError
+		if errors.As(err, &mismatch) {
+			return nil, ErrIssuerMismatch
+		}
+		// The cause may name URLs; New and callers expose fixed messages only.
+		return nil, fmt.Errorf("OIDC discovery failed: %w", err)
 	}
 	return &Client{HTTP: client, Provider: provider, transport: transport}, nil
 }

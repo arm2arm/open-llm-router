@@ -24,6 +24,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/requesttrace"
+	"github.com/arm2arm/open-llm-router/internal/settings"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,7 +47,11 @@ type Handler struct {
 	Activity  *activity.Broker
 	Pools     *pool.Manager
 	Endpoints *endpoints.Service
-	keyCipher *auth.KeyCipher
+	// Settings manages authentication settings; SettingsRuntime is what this
+	// process loaded at startup.
+	Settings        *settings.Service
+	SettingsRuntime settings.Snapshot
+	keyCipher       *auth.KeyCipher
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
@@ -103,6 +108,12 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/test", h.admin(h.endpointTest))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/models", h.admin(h.endpointModels))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/restore", h.admin(h.endpointRestore))
+	h.mux.HandleFunc("GET /portal/api/admin/settings/authentication", h.admin(h.authenticationSettings))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/import", h.settingsAdmin(h.importAuthentication))
+	h.mux.HandleFunc("PUT /portal/api/admin/settings/authentication/draft", h.settingsAdmin(h.saveAuthenticationDraft))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/discard", h.settingsAdmin(h.discardAuthenticationDraft))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/checks", h.settingsAdmin(h.checkAuthentication))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/test-sign-in", h.settingsAdmin(h.startTestSignIn))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {

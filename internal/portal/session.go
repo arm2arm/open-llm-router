@@ -20,6 +20,7 @@ type user struct {
 	ProtectedAdmin         bool              `json:"protected_admin"`
 	AuthMethod             string            `json:"auth_method"`
 	PasswordChangeRequired bool              `json:"must_change_password"`
+	SessionCreated         time.Time         `json:"-"`
 }
 
 func (h *Handler) authenticated(next func(http.ResponseWriter, *http.Request, user)) http.HandlerFunc {
@@ -33,14 +34,14 @@ func (h *Handler) session(r *http.Request) (user, error) {
 		return u, pgx.ErrNoRows
 	}
 	err := h.pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.email,u.groups,u.protected_admin,
-		s.auth_method,(s.scope='password_change' OR COALESCE(c.must_change_password,false)),
+		s.auth_method,(s.scope='password_change' OR COALESCE(c.must_change_password,false)),s.created,
 		(SELECT jsonb_object_agg(o.field,o.value) FROM quota_overrides o WHERE o.user_id=u.id)
 		FROM sessions s JOIN users u ON u.id=s.user_id
 		LEFT JOIN local_credentials c ON c.user_id=u.id
 		WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled AND
 		((s.auth_method='oidc' AND u.issuer<>'local') OR
 		(s.auth_method='local' AND u.issuer='local' AND c.revision=s.credential_revision))`, hash[:]).
-		Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.ProtectedAdmin, &u.AuthMethod, &u.PasswordChangeRequired, &u.Overrides)
+		Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.ProtectedAdmin, &u.AuthMethod, &u.PasswordChangeRequired, &u.SessionCreated, &u.Overrides)
 	return u, err
 }
 

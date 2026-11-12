@@ -126,6 +126,9 @@ type OIDC struct {
 	// string claim equal to Value, or an array containing it. Env:
 	// OIDC_REQUIRED_CLAIM=name=value.
 	RequiredClaim *RequiredClaim `yaml:"required_claim"`
+	// DefaultSignIn chooses the primary sign-in option: "keycloak" (the
+	// default) or "local". Both stay available.
+	DefaultSignIn string `yaml:"default_sign_in"`
 }
 
 // RequiredClaim names a claim and the value a user must have.
@@ -297,6 +300,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		}
 		if cfg.OIDC.SyncIntervalS == 0 {
 			cfg.OIDC.SyncIntervalS = 900
+		}
+		if cfg.OIDC.DefaultSignIn == "" {
+			cfg.OIDC.DefaultSignIn = "keycloak"
 		}
 	}
 	for name, model := range cfg.Models {
@@ -484,6 +490,9 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.BackchannelURL != "" && !isIssuerURL(c.OIDC.BackchannelURL) {
 			add("OIDC_BACKCHANNEL_URL: must be an http or https URL without credentials, query or fragment")
+		}
+		if c.OIDC.DefaultSignIn != "" && c.OIDC.DefaultSignIn != "keycloak" && c.OIDC.DefaultSignIn != "local" {
+			add("oidc.default_sign_in: must be keycloak or local")
 		}
 	}
 	if !isBackendURL(c.Portal.BaseURL) {

@@ -73,6 +73,9 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		traces.Activity = f.routerActivity
 		h.Activity = f.portalActivity
 		h.Pools = forwarder.Pools
+		if opt.portal != nil {
+			opt.portal(h, cfg, pool)
+		}
 		t.Cleanup(h.Close)
 		s.Handle("/portal", h)
 		s.Handle("/portal/", h)

@@ -68,6 +68,7 @@ type AuthSetting struct{ Name, YAML, Env string }
 // is derived: an oidc section or OIDC_ISSUER turns SSO on.
 var AuthSettings = []AuthSetting{
 	{"enabled", "", "OIDC_ISSUER"},
+	{"default_sign_in", "default_sign_in", ""},
 	{"issuer", "issuer", "OIDC_ISSUER"},
 	{"backchannel_url", "", "OIDC_BACKCHANNEL_URL"},
 	{"portal_client_id", "portal_client_id", "OIDC_PORTAL_CLIENT_ID"},

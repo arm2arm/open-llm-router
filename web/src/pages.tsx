@@ -4,6 +4,7 @@ import { Activity, Server, ShieldCheck, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EndpointSettingsPanel } from '@/endpoints'
+import { AuthenticationSettingsPanel } from './authentication'
 import {
   AdminUserKeys,
   CreateLocalUser,
@@ -424,6 +425,7 @@ export function AdminPage({ self }: { self: string }) {
           }}
         />
       </div>
+      <AuthenticationSettingsPanel />
       <EndpointSettingsPanel />
       <section className="panel" aria-label="Replica health">
         <div className="panel-head">

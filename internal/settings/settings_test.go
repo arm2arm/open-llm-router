@@ -78,7 +78,7 @@ func TestDecodeIsStrictAndNeverEchoesValues(t *testing.T) {
 }
 
 func TestDocumentProblems(t *testing.T) {
-	valid := Authentication{Enabled: true, Issuer: "https://idp.example/realms/a", PortalClientID: "olr-portal",
+	valid := Authentication{Enabled: true, DefaultSignIn: "keycloak", Issuer: "https://idp.example/realms/a", PortalClientID: "olr-portal",
 		GroupsClaim: "groups", UsernameClaim: "preferred_username", SyncClientID: "olr-sync", SyncIntervalS: 900,
 		PortalClientSecret: SecretRef{Env: config.EnvOIDCClientSecret}}
 	if p := valid.problems(); len(p) != 0 {
@@ -102,7 +102,7 @@ func TestDocumentProblems(t *testing.T) {
 		}
 	}
 	// Disabled SSO keeps retained values without requiring them.
-	disabled := Authentication{SyncIntervalS: 900}
+	disabled := Authentication{DefaultSignIn: "keycloak", SyncIntervalS: 900}
 	if p := disabled.problems(); len(p) != 0 {
 		t.Fatal("disabled", p)
 	}

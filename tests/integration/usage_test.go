@@ -18,6 +18,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
+	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
 	"github.com/arm2arm/open-llm-router/internal/usage"
@@ -41,6 +42,8 @@ type usageOptions struct {
 	configure  func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
 	forwarders *config.Forwarders
 	tokens     func(*pgxpool.Pool) func(*auth.Authenticator)
+	// portal adjusts a portal handler before it serves requests.
+	portal func(*portal.Handler, *config.Config, *pgxpool.Pool)
 }
 
 func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOptions) *usageRouter {

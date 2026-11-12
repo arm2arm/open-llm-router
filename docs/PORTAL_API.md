@@ -12,7 +12,8 @@ dependencies return 503. No OIDC token is stored or returned to the browser.
 ## Login and logout
 
 - `GET /portal/api/auth`: public authentication metadata,
-  with `local: {available, login_url, password_url}` and
+  with `default` (`oidc` or `local`: the primary sign-in option),
+  `local: {available, login_url, password_url}` and
   `oidc: {configured, available, login_url}`. No secret or account-existence information
   is returned. The OIDC `login_url` points to the browser entry below.
 - `GET /portal/sign-in`: browser sign-in page, with Keycloak primary when configured
@@ -341,6 +342,50 @@ Existing requests retain their routing snapshot; per-user admission and accounti
 are retained. Activation supports one router process, without a broadcast to peers.
 Logical names, aliases and group policies remain file-owned; these routes do not
 create/delete logical models or edit permissions.
+
+## Admin authentication settings
+
+`GET` requires an admin session. Every other route also requires a **local**
+administrator session established within the last 15 minutes; otherwise it
+returns 403 `reauthentication_required`. SSO sessions cannot change how people
+sign in. Bodies use the normal JSON and same-origin checks. Responses never
+contain secret values: secrets appear as `configured`, `reference`
+(`environment` or `stored`), `id`, `created_at` and `available`.
+
+- `GET /portal/api/admin/settings/authentication` returns `settings` (the managed
+  settings view: `managed`, `version`, `effective` values with `source`, `active`
+  and `draft` revisions with documents, secret states, `validation` and `checks`,
+  `conflicts` and `history`), `urls` (`redirect_uri`, `post_logout_redirect_uri`,
+  `web_origin` to register on the portal client), `runtime` (the revision this
+  process loaded, a startup `problem`, `sso_configured`, `sso_available`),
+  `can_change`, `change_requirement` and `encryption_key_configured`.
+- `POST …/import` with `{}` makes the database the authority; 409 if already managed.
+- `PUT …/draft` with `{"version":N,"document":{…},"secrets":{"sync_client_secret":"…"}}`
+  saves a draft based on the active revision. Empty secret values are ignored.
+  400 lists field problems; 409 reports a stale version or file-managed settings.
+- `POST …/discard` with `{"version":N}` drops the pending draft.
+- `POST …/checks` with `{"revision":R,"test_client_id":"…","test_client_secret":"…"}`
+  runs connection checks for revision `R` (`0`: the current configuration) and
+  stores them on the revision. Returns `{revision, results, view}`; each result is
+  `{name, status, message}` with `status` `passed`, `failed` or `skipped` for
+  `discovery`, `logout_metadata`, `portal_credentials` (client authentication at
+  the introspection endpoint), `service_token_audience` (needs the optional test
+  service client, used once and not stored) and `sync_permissions` (lists one user
+  through the Keycloak admin API). Messages are fixed text without secrets or
+  provider responses.
+- `POST …/test-sign-in` with `{"revision":R}` (a managed revision) returns
+  `{"url":"…"}` for the browser. It sets a separate `olr_test_login` cookie; the
+  provider returns to the normal `/portal/callback`, which verifies the identity
+  token, the username and groups claims and the required claim, stores a
+  `test_sign_in` result on the revision and redirects to
+  `/portal/admin?authentication_test=passed|failed#authentication`. It creates no
+  user or session, and only the administrator who started it, still freshly
+  signed in locally, can complete it.
+
+Connection checks and test sign-in contact only the issuer (or its back-channel
+URL), never follow redirects, and refuse link-local, metadata, multicast and
+unspecified addresses at connection time. Loopback and private networks are
+allowed for internal identity providers.
 
 ## Models and client URLs
 
