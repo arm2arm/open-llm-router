@@ -151,7 +151,9 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 
 | Key | Default | Meaning |
 |---|---|---|
-| `auth.default_key_lifetime_days` | 90 | lifetime of new API keys (1–36500) |
+| `auth.default_key_lifetime_days` | 90 | default lifetime, at most the site maximum |
+| `auth.max_key_lifetime_days` | 90 | maximum lifetime in every issuance path (1–36500) |
+| `auth.max_active_keys_per_user` | 10 | active keys per user (1–1000), enforced atomically |
 | `limits.timezone` | UTC | IANA zone of daily/monthly quotas and daily totals |
 | `limits.max_body_bytes` | 4194304 (4 MiB) | maximum proxied body size; match the edge cap |
 | `limits.max_body_readers` | 32 | simultaneous uploads, parsing and normal admission per process |
@@ -760,3 +762,31 @@ Raw capacity reports: [256 clients](benchmarks/2026-11-11-arm64-fast-256.json),
 correctly exits nonzero for dropped accounting; it is not an acceptance pass.
 No reachable real vLLM/GPU backend was configured for this session; repeat on the
 deployment hardware before the pilot.
+
+## API-key policy rollout and lifecycle
+
+Configure the same auth policy on all router replicas and CLI config files; restart replicas
+after changing it. CLI callers without a config use the secure defaults (90 days, 10 keys).
+Operators with database access are trusted and can change policy; there is no portal/admin
+bypass or per-user exception. A site exception requires an operator-reviewed config change.
+Existing keys are not silently shortened or revoked: inventory them before rollout, issue
+replacements, then revoke over-age/indefinite keys. Accounts already above the cap cannot
+issue again until revocation or expiry frees capacity. Disabled users cannot issue keys.
+
+`olr admin key list -user UUID` reports created, last_used, expires, revoked and expired
+without secrets. Schedule a daily read-only inventory job using the query below, send
+expiry reminders at seven days to the account owner through your approved notification
+system, and open a rotation ticket for keys unused for 30 days. Never email raw keys.
+Authentication rejects expired keys automatically; a scheduled operator job should call
+`olr admin key revoke -id UUID` for approved inactive/legacy revocations so cache invalidation
+reaches all replicas. Use the same command immediately during incident response.
+
+```sql
+SELECT user_id, id, label, created, last_used, expires,
+       clock_timestamp()-created AS age,
+       expires <= clock_timestamp()+interval '7 days' AS expires_soon
+FROM api_keys
+WHERE NOT revoked AND
+ (expires IS NULL OR expires <= clock_timestamp()+interval '7 days'
+  OR coalesce(last_used,created) < clock_timestamp()-interval '30 days');
+```

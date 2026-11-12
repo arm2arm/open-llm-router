@@ -53,8 +53,11 @@ encoded as 43 base62 characters after `olr-`. The SHA-256 hash and a 12-characte
 prefix are stored. With `OLR_API_KEY_ENCRYPTION_KEY`, newly issued keys also store
 AES-256-GCM ciphertext for explicit Admin copy; older keys remain unrecoverable.
 Listing returns metadata only. Request logs contain neither credentials nor
-hashes. Keys expire after `auth.default_key_lifetime_days` (default 90; range 1–36500), unless
-`key create -lifetime` supplies a positive Go duration. The CLI reads this setting from
+hashes. Keys default to `auth.default_key_lifetime_days` (90), and every issuance path,
+including trusted forwarders and CLI `-lifetime`, enforces `auth.max_key_lifetime_days`
+(default 90; range 1–36500) and `auth.max_active_keys_per_user` (default 10; range 1–1000).
+The default lifetime cannot exceed the maximum. Active means unrevoked and unexpired;
+legacy keys without expiry also consume capacity. Concurrent issuance is serialized per user. The CLI reads this setting from
 `-config` / `OLR_CONFIG`, or uses 90 days without a config file. No command issues indefinite keys.
 
 Successful authentication is cached for 60 seconds, bounded by the key's expiry. `last_used`

@@ -11,6 +11,8 @@
 # Every /v1/* route requires an API key. Admin-created keys expire by default.
 auth:
   default_key_lifetime_days: 90
+  max_key_lifetime_days: 90
+  max_active_keys_per_user: 10
 
 # Quota calendar and upload admission (per router process).
 limits:

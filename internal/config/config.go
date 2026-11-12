@@ -26,9 +26,11 @@ import (
 
 // Protocols a model can be served with.
 const (
-	ProtocolOpenAI         = "openai"
-	ProtocolAnthropic      = "anthropic"
-	DefaultKeyLifetimeDays = 90
+	ProtocolOpenAI              = "openai"
+	ProtocolAnthropic           = "anthropic"
+	DefaultKeyLifetimeDays      = 90
+	DefaultMaxKeyLifetimeDays   = 90
+	DefaultMaxActiveKeysPerUser = 10
 )
 
 // Environment variables that carry secrets. Secrets have no key in the config
@@ -82,6 +84,8 @@ const (
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
 	DefaultKeyLifetimeDays int `yaml:"default_key_lifetime_days"`
+	MaxKeyLifetimeDays     int `yaml:"max_key_lifetime_days"`
+	MaxActiveKeysPerUser   int `yaml:"max_active_keys_per_user"`
 }
 
 // Retention sets how long usage records are kept. A nightly job deletes older
@@ -254,7 +258,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, problems
 	}
 
-	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{
+	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays, MaxKeyLifetimeDays: DefaultMaxKeyLifetimeDays, MaxActiveKeysPerUser: DefaultMaxActiveKeysPerUser}, Limits: Limits{
 		Timezone: "UTC", MaxBodyBytes: DefaultMaxBodyBytes,
 		MaxBodyReaders: DefaultMaxBodyReaders, MaxBodyReadersPerUser: DefaultMaxBodyReadersPerUser},
 		Forwarders: Forwarders{UnknownUser: UnknownUserReject},
@@ -479,6 +483,15 @@ func (c *Config) validate() Problems {
 	}
 	if c.Auth.DefaultKeyLifetimeDays <= 0 || c.Auth.DefaultKeyLifetimeDays > 36500 {
 		add("auth.default_key_lifetime_days: must be between 1 and 36500")
+	}
+	if c.Auth.MaxKeyLifetimeDays < 1 || c.Auth.MaxKeyLifetimeDays > 36500 {
+		add("auth.max_key_lifetime_days: must be between 1 and 36500")
+	}
+	if c.Auth.DefaultKeyLifetimeDays > c.Auth.MaxKeyLifetimeDays {
+		add("auth.default_key_lifetime_days: exceeds auth.max_key_lifetime_days")
+	}
+	if c.Auth.MaxActiveKeysPerUser < 1 || c.Auth.MaxActiveKeysPerUser > 1000 {
+		add("auth.max_active_keys_per_user: must be between 1 and 1000")
 	}
 	if c.Forwarders.UnknownUser != UnknownUserReject && c.Forwarders.UnknownUser != UnknownForwarderPolicy {
 		add("forwarders.unknown_user: must be %q or %q", UnknownUserReject, UnknownForwarderPolicy)

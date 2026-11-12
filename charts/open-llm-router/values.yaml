@@ -86,6 +86,8 @@ env: {}
 config:
   auth:
     default_key_lifetime_days: 90
+    max_key_lifetime_days: 90
+    max_active_keys_per_user: 10
   limits:
     timezone: UTC
     max_body_bytes: 4194304
