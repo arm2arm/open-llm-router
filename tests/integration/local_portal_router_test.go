@@ -99,7 +99,9 @@ models:
 			call("POST", "/portal/login/local", map[string]string{"username": "admin", "password": password}, 200)
 		}
 		call("GET", "/portal/api/admin/users", nil, 200)
-		call("GET", "/portal/", nil, 200)
+		// The Go-only CI job embeds the placeholder dist directory; the image
+		// job builds and checks browser assets. Verify mounting independently.
+		call("GET", "/portal", nil, 303)
 		methods := call("GET", "/portal/api/auth", nil, 200)
 		if oidc != "" && !strings.Contains(string(methods), `"available":false`) {
 			t.Fatal("SSO failure hidden from auth status")
