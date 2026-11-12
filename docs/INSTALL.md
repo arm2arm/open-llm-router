@@ -100,6 +100,16 @@ The initialized local account and its new password remain in PostgreSQL. The
 bootstrap input does not reset an existing account. Local users and SSO users can
 both log in; additional local users require no Keycloak setup.
 
+If the local administrator password is lost, write a temporary one to a private
+host file and redirect it into the container, then sign in and replace it:
+
+```sh
+docker compose exec -T router olr admin recover -password-stdin < /private/secrets/olr-recovery
+```
+
+See [recovery](ADMIN_GUIDE.md#recover-the-protected-local-administrator) for its
+effects on sessions and API keys.
+
 **Upgrading an existing Keycloak setup:** sign-out now returns to the public
 homepage. Before upgrading, add your portal origin followed by `/` (for example,
 `http://localhost:8080/`) to the client's **Valid post logout redirect URIs**.
@@ -313,6 +323,9 @@ kubectl -n olr get secret olr-open-llm-router-credentials \
 Open [local admin login](http://localhost:8080/portal/login/local), sign in as
 `admin`, complete the required password change, and sign in again. This account
 is independent of Keycloak; the bootstrap input never resets an existing account.
+To reset a lost password, run
+`kubectl -n olr exec -i deployment/olr-open-llm-router -- olr admin recover -password-stdin < FILE`
+([details](ADMIN_GUIDE.md#recover-the-protected-local-administrator)).
 Open the [portal](http://localhost:8080/portal/) in a separate browser session,
 choose **Continue with Keycloak**, and sign in as `staff`. The demo realm assigns
 that user the `staff` policy. Create an API key in that user's portal.

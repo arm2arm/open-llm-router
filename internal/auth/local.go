@@ -169,3 +169,85 @@ func (a Admin) ChangeLocalPassword(ctx context.Context, userID string, current, 
 		return err
 	})
 }
+
+// ErrNotBootstrapped reports that no protected administrator exists yet.
+var ErrNotBootstrapped = errors.New("protected local administrator is not bootstrapped; run olr admin bootstrap first")
+
+// Recovery reports what operator recovery changed. It never contains a
+// password or hash.
+type Recovery struct {
+	LocalAccount
+	// CredentialReplaced is false when the supplied password already was the
+	// pending temporary credential, i.e. a retry of a committed recovery.
+	CredentialReplaced bool  `json:"credential_replaced"`
+	SessionsRevoked    int64 `json:"sessions_revoked"`
+	KeysRevoked        int64 `json:"keys_revoked"`
+}
+
+// RecoverProtectedAdmin replaces the protected administrator's credential
+// without the current password. Database access is the authority for this
+// operator path; it does not contact an identity provider. The new password is
+// temporary: the next local login must replace it, every session ends and
+// every API key of the account is revoked, as for an Admin password reset.
+// The UUID, username and protected admin authority are never touched.
+//
+// A retry with the pending temporary password (for example after cache
+// invalidation was not acknowledged) revokes again without rehashing. Reusing
+// the account's current permanent password is refused.
+func (a Admin) RecoverProtectedAdmin(ctx context.Context, password []byte) (Recovery, error) {
+	if !validPassword(password) {
+		return Recovery{}, ErrPasswordPolicy
+	}
+	replacement, err := hashPassword(password)
+	if err != nil {
+		return Recovery{}, err
+	}
+	var result Recovery
+	err = a.changeWith(ctx, func(tx pgx.Tx) error {
+		result = Recovery{}
+		var version int
+		var hash string
+		// Locking the identity row excludes concurrent session/key issuance,
+		// which takes a shared lock on it.
+		err := tx.QueryRow(ctx, `SELECT u.id,u.username,u.protected_admin,c.must_change_password,c.revision,c.version,c.password_hash
+			FROM users u JOIN local_credentials c ON c.user_id=u.id WHERE u.protected_admin FOR UPDATE OF u,c`).
+			Scan(&result.ID, &result.Username, &result.ProtectedAdmin, &result.MustChangePassword, &result.CredentialRevision, &version, &hash)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if verifyPassword(version, hash, password) {
+			if !result.MustChangePassword {
+				return ErrPasswordReuse
+			}
+		} else {
+			if err := tx.QueryRow(ctx, `UPDATE local_credentials SET version=$2,password_hash=$3,must_change_password=true
+				WHERE user_id=$1 RETURNING revision`, result.ID, passwordVersion, replacement).Scan(&result.CredentialRevision); err != nil {
+				return err
+			}
+			result.CredentialReplaced, result.MustChangePassword = true, true
+		}
+		sessions, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, result.ID)
+		if err != nil {
+			return err
+		}
+		keys, err := tx.Exec(ctx, `UPDATE api_keys SET revoked=true WHERE user_id=$1 AND NOT revoked`, result.ID)
+		if err != nil {
+			return err
+		}
+		result.SessionsRevoked, result.KeysRevoked = sessions.RowsAffected(), keys.RowsAffected()
+		return nil
+	})
+	if errors.Is(err, ErrNotFound) {
+		return Recovery{}, ErrNotBootstrapped
+	}
+	if err != nil {
+		// Only the target identity is reported: the transaction may have
+		// rolled back, or committed without an invalidation acknowledgement,
+		// in which case a retry with the same password completes it.
+		return Recovery{LocalAccount: LocalAccount{ID: result.ID, Username: result.Username, ProtectedAdmin: result.ProtectedAdmin}}, err
+	}
+	return result, nil
+}

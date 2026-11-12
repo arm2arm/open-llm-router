@@ -23,6 +23,7 @@ import (
 
 const adminUsage = `usage:
   olr admin bootstrap [-password-file FILE]
+  olr admin recover -password-file FILE | -password-stdin
   olr admin password change -user USER_UUID -current-password-file FILE -password-file FILE
   olr admin user add -username NAME [-email EMAIL] [-groups staff,admins]
   olr admin user disable -id USER_UUID
@@ -51,7 +52,13 @@ Bootstrap creates the protected local admin once; later calls never reset it.
 Use OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE (preferred) or OLR_BOOTSTRAP_ADMIN_PASSWORD.
 Password files must be private (0400/0600); passwords need 15+ characters and
 at most 1024 bytes. Initial password change is required before session/API-key
-access. Password change requires the current password; recovery is separate.
+access. Password change requires the current password.
+Recover replaces a lost protected admin password without the current one or
+Keycloak, using only OLR_DATABASE_URL. The new password is temporary: the next
+login must replace it, and all of the account's sessions and API keys are
+revoked. It never reads the bootstrap sources. -password-stdin takes redirected
+or piped input only (e.g. docker compose exec -T router olr admin recover
+-password-stdin < FILE). An audit event is written to stderr.
 `
 
 func admin(args []string, out, errout io.Writer) error {
@@ -61,6 +68,9 @@ func admin(args []string, out, errout io.Writer) error {
 	}
 	if args[0] == "bootstrap" {
 		return bootstrapCommand(args[1:], out, errout)
+	}
+	if args[0] == "recover" {
+		return recoverCommand(args[1:], os.Stdin, out, errout)
 	}
 	if len(args) < 2 {
 		fmt.Fprint(errout, adminUsage)

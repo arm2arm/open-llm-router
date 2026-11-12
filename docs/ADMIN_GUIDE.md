@@ -36,6 +36,7 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Configure Keycloak or group policies from the Admin page | **Not implemented** | See the feature plan |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
+| Recover a lost protected administrator password | `olr admin recover` on the host or in the router container | No restart; works without Keycloak |
 
 The portal and local password API run without OIDC and during a Keycloak outage.
 An ordinary CLI user has no password credential; putting it in an `admin: true`
@@ -73,8 +74,8 @@ Securely retire the bootstrap file after the change and store the replacement
 password in your secret manager. The change requires the current password,
 rejects reusing it, revokes existing sessions and clears authentication caches.
 Until it succeeds, the account cannot establish a full portal session or issue
-or authenticate API keys. Password reset without the current password is tracked
-separately in [#76](https://github.com/arm2arm/open-llm-router/issues/76).
+or authenticate API keys. Without the current password, use
+[operator recovery](#recover-the-protected-local-administrator).
 
 `olr serve` also bootstraps when `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` or the secret
 environment variable `OLR_BOOTSTRAP_ADMIN_PASSWORD` is supplied. Configure exactly
@@ -91,12 +92,88 @@ to files **inside** the container. The development Compose file forwards both
 bootstrap environment variables but does not create or mount a password file.
 The production pilot passes variables from its private environment file.
 
+The bootstrap secret is read only while no protected administrator exists.
+Changing or removing `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` /
+`OLR_BOOTSTRAP_ADMIN_PASSWORD` later has no effect on the account, so retire it
+after the first change. If a bootstrap secret was exposed before that change,
+replace it with [recovery](#recover-the-protected-local-administrator).
+
 Credentials use versioned Argon2id hashes with a random 16-byte salt, 64 MiB,
 three passes, two lanes and a 32-byte result. `BenchmarkPasswordHash` measured
 about 94 ms on an Apple M5 Max during local validation; repeat the benchmark on
 deployment hardware when reviewing future hash versions. Verification accepts
 only the version's bounded parameters. PostgreSQL backups contain password
 hashes and must be protected as secrets.
+
+### Recover the protected local administrator
+
+If the protected administrator's password is lost, an operator with database
+access resets it from the host or the router container. The command needs only
+`OLR_DATABASE_URL`: it does not contact Keycloak, works during an IdP outage and
+does not need a running router. Put a new temporary password (same rules as
+bootstrap) in an owner-only file, then run one of:
+
+```sh
+# Host or a container with the file mounted inside it
+olr admin recover -password-file /private/secrets/olr-recovery
+# Compose: the distroless image has no shell, so redirect the host file
+docker compose exec -T router olr admin recover -password-stdin < /private/secrets/olr-recovery
+# Helm/Kubernetes
+kubectl -n olr exec -i deployment/olr-open-llm-router -- \
+  olr admin recover -password-stdin < /private/secrets/olr-recovery
+```
+
+Sign in at `/portal/login/local` as `admin` with the temporary password and
+choose a replacement, or run `olr admin password change` with the recovery file
+as `-current-password-file`. Then delete the recovery file.
+
+| Effect | Detail |
+|---|---|
+| Old password | Stops working at once |
+| Temporary password | Permits only the required change, like the bootstrap credential; full portal and API-key access resume after the replacement |
+| Sessions | Every session of the account ends |
+| API keys | Every key of the account is revoked; issue new ones afterwards |
+| Identity | UUID, username and protected admin authority are unchanged |
+| Router caches | Invalidated on every router before the command returns |
+
+The command has no flag that names an account, so it can only replace this one
+credential: it cannot target, disable, delete, rename or convert any identity.
+Ordinary local users are reset under **Admin**. Recovery never reads the bootstrap
+password sources and fails with `not bootstrapped` before bootstrap; a retired
+bootstrap secret, at startup or through `olr admin bootstrap`, never resets the
+recovered account. Reusing the current permanent password is refused.
+
+Passwords are read only from a private file or redirected/piped standard input,
+never from flags. `-password-stdin` refuses a terminal, where typing would echo.
+Standard output contains identity metadata and counts, never the password or hash:
+
+```json
+{"id":"…","username":"admin","protected_admin":true,"must_change_password":true,"credential_replaced":true,"sessions_revoked":1,"keys_revoked":0}
+```
+
+If the command reports `change committed but cache invalidation was not
+acknowledged; retry the command`, run it again with the same file. A retry with
+the pending temporary password revokes sessions and keys again without changing
+the credential (`"credential_replaced": false`).
+
+Every attempt with a valid command line writes one JSON audit line to standard
+error. It identifies the operating-system account and host, the target UUID, the
+result (`succeeded`, `refused` or `failed`), a sanitized reason and counts, and
+never contains credentials or file paths:
+
+```json
+{"time":"…","level":"INFO","msg":"admin audit","event":{"time":"…","action":"local_admin.recover","actor":{"type":"operator_cli","name":"nonroot","host":"…"},"target_id":"…","result":"succeeded","details":{"credential_revision":3,"keys_revoked":0,"sessions_revoked":1}}}
+```
+
+Keep standard error in your operations log. A persistent, searchable
+administration history is tracked in
+[#84](https://github.com/arm2arm/open-llm-router/issues/84).
+
+**Backups and restore.** Restoring a PostgreSQL backup returns the protected
+administrator's credential to the state in that backup: the password valid at
+backup time works again, and sessions or keys created later are gone. If that
+password is unknown, run recovery after the restore. Backups contain password
+hashes; protect them as secrets.
 
 ### Use local authentication without Keycloak
 
@@ -789,8 +866,8 @@ take up to one minute to observe disablement or limit changes.
 Keycloak account details show the authoritative issuer. Their memberships and
 passwords are managed by the IdP; the local editing/reset APIs reject these accounts.
 The protected local administrator has no disable, group reassignment or Admin reset
-action. It rotates its own password under **Account**, using the current password;
-host-side recovery without that password remains #76. The Admin page does not delete users.
+action. It rotates its own password under **Account**, using the current password; an
+operator recovers a lost one with [`olr admin recover`](#recover-the-protected-local-administrator). The Admin page does not delete users.
 
 ## 5. Routine operation and troubleshooting
 

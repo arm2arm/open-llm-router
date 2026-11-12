@@ -9,6 +9,15 @@ import (
 func TestAdminValidation(t *testing.T) {
 	for _, args := range [][]string{
 		{"bootstrap", "unexpected"},
+		{"recover"},
+		{"recover", "-password-stdin", "-password-file", "/private/new"},
+		{"recover", "-password-stdin", "extra"},
+		// Recovery has no account selector: it cannot target, disable,
+		// delete or convert any identity, and takes no password flag.
+		{"recover", "-password-stdin", "-user", "00000000-0000-0000-0000-000000000001"},
+		{"recover", "-password-stdin", "-id", "00000000-0000-0000-0000-000000000001"},
+		{"recover", "-password-stdin", "-disable"},
+		{"recover", "-password", "a private password in argv"},
 		{"password", "change"},
 		{"password", "change", "-user", "00000000-0000-0000-0000-000000000001"},
 		{"user", "add"},

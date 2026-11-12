@@ -170,7 +170,7 @@ value. File-defined destinations and token references remain trusted. Never use
 unrelated database/OIDC secrets as backend credentials. Model names, aliases,
 group policies, OIDC and other file settings still require recreation.
 
-### Bootstrap or rotate the protected local administrator
+### Bootstrap, rotate or recover the protected local administrator
 
 Follow [the administrator guide](ADMIN_GUIDE.md#bootstrap-the-protected-local-administrator)
 for private secret files and the initial change. `olr admin bootstrap` runs without
@@ -186,8 +186,24 @@ olr admin password change -user USER_UUID \
 ```
 
 The first change is required before session/API-key access. Later rotations use
-the same command and revoke existing sessions. The current password is required;
-there is no recovery-reset command yet (#76). Local JSON login/password/logout
+the same command and revoke existing sessions; they require the current password.
+
+If the password is lost, reset it with only database access; Keycloak may be down.
+The new password is temporary and must be replaced at the next local login. The
+old password, every session and every API key of the account stop working; the
+UUID and admin authority are kept. Bootstrap inputs are never read. Each attempt
+writes a JSON `admin audit` line to stderr. Details, outputs and retry behaviour
+are in [the guide](ADMIN_GUIDE.md#recover-the-protected-local-administrator).
+
+```sh
+olr admin recover -password-file /private/secrets/olr-recovery
+docker compose exec -T router olr admin recover -password-stdin < /private/secrets/olr-recovery
+kubectl -n olr exec -i deployment/olr-open-llm-router -- \
+  olr admin recover -password-stdin < /private/secrets/olr-recovery
+```
+
+Changing the bootstrap secret after initialization has no effect; retire it after
+the first change and use recovery if it was exposed before then. Local JSON login/password/logout
 handlers work without Keycloak; [the guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak)
 shows their use. Browser local sign-in is at `/portal/login/local`; the first login
 requires a replacement password, and later rotation is under **Account**. The
@@ -246,7 +262,7 @@ principals can take up to one minute to refresh.
 | `OLR_METRICS_TOKEN` | set the new token in the router and in Prometheus's credentials file, recreate/restart the affected services so they read it |
 | backend tokens (`bearer_token_env`) | configure the backend to accept old and new, update the router environment, recreate the Compose container, drop the old one |
 | API keys | users create a new key and revoke the old one; keys expire after `auth.default_key_lifetime_days` |
-| Local administrator password | `olr admin password change` with private current/new files; retire the bootstrap source after first change |
+| Local administrator password | `olr admin password change` with private current/new files; retire the bootstrap source after first change; if lost, `olr admin recover` |
 
 ### Back up Postgres
 
@@ -262,6 +278,10 @@ pg_restore --clean --if-exists --dbname="$OLR_DATABASE_URL" olr-YYYY-MM-DD.dump 
 
 Keep backups no longer than the usage retention, or erasures (below) come back with a restore;
 after restoring an old backup, repeat the erasures done since.
+
+A restore also returns the protected administrator's password, sessions and keys to
+their state at backup time. If that password is unknown, run `olr admin recover`
+after the restore.
 
 Migration 0004 adds the credential table and protected-account constraints;
 0005 adds credential revisions, scoped local sessions and login throttling. Back
