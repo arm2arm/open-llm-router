@@ -74,6 +74,8 @@ jobs:
         run: |
           docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/observability.yml config --quiet
           python3 deploy/observability/tools/dashboard.py | diff - deploy/observability/grafana/dashboards/open-llm-router.json
+      - name: Verify trusted-edge authentication throttling
+        run: python3 tests/security/check_edge.py
       - name: Build images and start the stack
         run: make up
       - name: Probe router and both mock backends

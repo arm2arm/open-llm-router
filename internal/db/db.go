@@ -88,6 +88,24 @@ func Open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+// OpenCredentials reserves a separate, small pool for API credential work.
+// Invalid keys and verified token identity lookups cannot exhaust the portal,
+// accounting or readiness pool, even when its configured maximum is small.
+// This pool shares the migrated database; it never runs migrations itself.
+func OpenCredentials(ctx context.Context, main *pgxpool.Pool) (*pgxpool.Pool, error) {
+	cfg := main.Config().Copy()
+	cfg.MaxConns, cfg.MinConns, cfg.MinIdleConns = 4, 0, 0
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, errors.New("create credential database pool failed")
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, errors.New("connect credential database pool failed")
+	}
+	return pool, nil
+}
+
 // Version returns the highest applied migration.
 func Version(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	var version int

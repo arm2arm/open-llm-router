@@ -477,33 +477,81 @@ func TestStrictQuotaUnderConcurrency(t *testing.T) {
 
 func TestBatchKeysHaveTheirOwnConcurrency(t *testing.T) {
 	gate := make(chan struct{})
+	arrived := make(chan struct{}, 2)
 	slow := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
-			<-gate
+			arrived <- struct{}{}
+			select {
+			case <-gate:
+			case <-r.Context().Done():
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 	})
 	f := startUsageRouter(t, slow, usageOptions{group: &config.Group{Models: []string{"*"}, MaxConcurrent: limitPtr(1), MaxConcurrentBatch: limitPtr(1)}})
-	defer close(gate)
+	var release sync.Once
+	releaseGate := func() { release.Do(func() { close(gate) }) }
+	type result struct {
+		resp *http.Response
+		err  error
+	}
+	results := make(chan result, 2)
+	var clients sync.WaitGroup
+	defer func() {
+		releaseGate()
+		clients.Wait()
+		close(results)
+		for result := range results {
+			if result.resp != nil {
+				result.resp.Body.Close()
+			}
+		}
+	}()
 	batchKey, err := (auth.Admin{Pool: f.pool}).CreateKeyOfClass(t.Context(), f.owner, "batch", "batch", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := make(chan *http.Response, 2)
 	for _, key := range []string{f.key, batchKey} {
-		go func() {
+		clients.Go(func() {
 			req, _ := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+"/v1/chat/completions", strings.NewReader(`{"model":"chat-model"}`))
 			req.Header.Set("Authorization", "Bearer "+key)
 			resp, err := f.router.Client().Do(req)
-			if err == nil {
-				started <- resp
+			results <- result{resp, err}
+		})
+		// Uploads share one per-user reader slot. Wait until each request
+		// releases it and reaches inference before starting the next class.
+		select {
+		case <-arrived:
+		case result := <-results:
+			if result.err != nil {
+				t.Fatal("request failed before reaching inference", result.err)
 			}
-		}()
+			body, _ := io.ReadAll(result.resp.Body)
+			result.resp.Body.Close()
+			t.Fatalf("request rejected before reaching inference: %d %s", result.resp.StatusCode, body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("request did not reach inference")
+		}
 	}
-	waitFor(t, func() bool { s := f.currentUsage(t); return s.InFlight == 2 && s.Batch == 1 })
+	if s := f.currentUsage(t); s.InFlight != 2 || s.Batch != 1 {
+		t.Fatalf("classes did not acquire independent inference slots: %+v", s)
+	}
 	requireLimit(t, f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"chat-model"}`), "max_concurrent", false)
 	requireLimit(t, f.call(t, batchKey, "POST", "/v1/chat/completions", `{"model":"chat-model"}`), "max_concurrent_batch", false)
+	releaseGate()
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatal("admitted request failed", result.err)
+		}
+		io.Copy(io.Discard, result.resp.Body)
+		result.resp.Body.Close()
+		if result.resp.StatusCode != 200 {
+			t.Fatal("admitted request status", result.resp.StatusCode)
+		}
+	}
 }
 
 func TestTPMLimitThroughBothProtocols(t *testing.T) {

@@ -37,7 +37,7 @@ func startTokenRouter(t *testing.T) *tokenFixture {
 		},
 		tokens: func(pool *pgxpool.Pool) func(*auth.Authenticator) {
 			return func(a *auth.Authenticator) {
-				v, err := apitoken.New(t.Context(), f.oidc, pool, a.Freshness)
+				v, err := apitoken.New(t.Context(), f.oidc, pool, a.Freshness, a.WorkBudget())
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -89,6 +89,16 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 		// The cause may name URLs; New and callers expose fixed messages only.
 		return nil, fmt.Errorf("OIDC discovery failed: %w", err)
 	}
+	var metadata struct {
+		JWKS string `json:"jwks_uri"`
+	}
+	if err := provider.Claims(&metadata); err != nil {
+		transport.CloseIdleConnections()
+		return nil, errors.New("invalid OIDC discovery metadata")
+	}
+	// Install before exposing the client. Provider retains this HTTP client
+	// for its shared RemoteKeySet, including detached refresh goroutines.
+	client.Transport = &jwksThrottle{next: rt, endpoint: metadata.JWKS, now: time.Now}
 	return &Client{HTTP: client, Provider: provider, transport: transport}, nil
 }
 

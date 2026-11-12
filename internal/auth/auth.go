@@ -106,8 +106,9 @@ type cacheEntry struct {
 	until     time.Time
 }
 
-// Authenticator caches successful lookups only. Changes to users or keys clear
-// the cache through a dedicated Postgres LISTEN connection (see notifications.go).
+// Authenticator caches successful and short-lived failed lookups. Changes to
+// users or keys clear the caches through a dedicated Postgres LISTEN connection
+// (see notifications.go).
 type Authenticator struct {
 	// Forwarders is installed before serving; see config.Forwarders.
 	Forwarders config.Forwarders
@@ -122,6 +123,8 @@ type Authenticator struct {
 	refreshing map[[32]byte]chan struct{}
 	generation uint64
 	listening  bool
+	work       *WorkLimiter
+	failures   FailureCache
 	now        func() time.Time
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -132,9 +135,16 @@ func (a *Authenticator) invalidate(listening bool) {
 	defer a.mu.Unlock()
 	a.generation++
 	a.cache = make(map[[32]byte]cacheEntry)
+	a.failures.Clear()
 	a.endUsers = make(map[string]endUserEntry)
 	a.listening = listening
+	if a.work == nil {
+		a.work = NewWorkLimiter()
+	}
 }
+
+// WorkBudget is shared with the API-token verifier before serving requests.
+func (a *Authenticator) WorkBudget() *WorkLimiter { return a.work }
 
 func (a *Authenticator) Authenticate(ctx context.Context, key string) (Principal, error) {
 	if !validKey(key) {
@@ -153,14 +163,24 @@ func (a *Authenticator) Authenticate(ctx context.Context, key string) (Principal
 			return entry.principal.clone(), nil
 		}
 		delete(a.cache, hash)
+		if err := a.failures.Check(hash, generation, a.now()); err != nil {
+			a.mu.Unlock()
+			return Principal{}, err
+		}
+		if !a.work.TryAcquire() {
+			a.mu.Unlock()
+			return Principal{}, ErrAuthBusy
+		}
 		var refresh chan struct{}
 		if a.listening {
 			if pending := a.refreshing[hash]; pending != nil {
 				a.mu.Unlock()
 				select {
 				case <-ctx.Done():
+					a.work.Release()
 					return Principal{}, ctx.Err()
 				case <-pending:
+					a.work.Release()
 					continue // Recheck cache, expiry and invalidation generation.
 				}
 			}
@@ -172,12 +192,22 @@ func (a *Authenticator) Authenticate(ctx context.Context, key string) (Principal
 		}
 		a.mu.Unlock()
 		principal, err := a.refresh(ctx, hash, generation)
+		a.mu.Lock()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		if generation != a.generation && (err == nil || errors.Is(err, ErrInvalidKey)) {
+			err = errCacheChanged
+		}
+		if errors.Is(err, ErrInvalidKey) {
+			a.failures.Remember(hash, generation, a.now())
+		}
 		if refresh != nil {
-			a.mu.Lock()
 			delete(a.refreshing, hash)
 			close(refresh)
-			a.mu.Unlock()
 		}
+		a.mu.Unlock()
+		a.work.Release()
 		if errors.Is(err, errCacheChanged) {
 			continue
 		}
@@ -187,7 +217,8 @@ func (a *Authenticator) Authenticate(ctx context.Context, key string) (Principal
 
 // refresh is shared only while the invalidation listener is healthy. Waiters
 // own their contexts; a cancelled owner wakes them to retry, rather than
-// cancelling their requests. Without a listener every call still reads the DB.
+// cancelling their requests. Without a listener successful credentials are
+// always read from the DB; short-lived denials can still be cached safely.
 func (a *Authenticator) refresh(ctx context.Context, hash [32]byte, generation uint64) (Principal, error) {
 	record, err := a.store.lookup(ctx, hash)
 	if err != nil {
@@ -245,10 +276,15 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			cancel()
 		}
 		if err != nil {
-			if errors.Is(err, ErrInvalidKey) {
+			switch {
+			case errors.Is(err, ErrAuthRateLimited):
+				w.Header().Set("Retry-After", "5")
+				apierr.Write(w, protocol, 429, "rate_limit_error", "too many authentication attempts; try again shortly")
+			case errors.Is(err, ErrInvalidKey):
 				w.Header().Set("WWW-Authenticate", `Bearer realm="olr"`)
 				apierr.Write(w, protocol, 401, "authentication_error", "a valid API key is required")
-			} else {
+			default:
+				w.Header().Set("Retry-After", "1")
 				apierr.Write(w, protocol, 503, "api_error", "authentication is temporarily unavailable")
 			}
 			return

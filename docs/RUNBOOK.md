@@ -84,6 +84,50 @@ For community ingress-nginx, the base Ingress includes connection/rate limits; m
 into its controller ConfigMap (this is a controller setting,
 not an Ingress annotation). Verify the generated NGINX config before public exposure.
 
+Authentication uses two complementary limits: the trusted edge limits the connecting
+source, including rotating invalid credentials; the router hashes each presented API
+key or token with SHA-256 and throttles repeated failures for that digest. Never use
+raw Authorization or X-Api-Key values as proxy bucket keys or put them in access logs.
+Keep the router inaccessible from the Internet except through the edge, and strip or
+overwrite forwarding headers there. Neither the credential throttle nor the source
+limits above use client-supplied forwarding headers. For a load balancer in front of
+NGINX, trust only its explicit address ranges when configuring real-IP restoration.
+
+Each router admits at most **eight** concurrent API credential cache misses, including
+requests waiting for a shared API-key refresh. API-key and OIDC verification share that
+budget. A full budget fails immediately with **503** and `Retry-After: 1`; cached valid
+principals remain usable. Credential SQL uses a separate **four-connection** pool, so
+invalid credentials cannot occupy the portal/accounting/readiness pool. Allow those
+four connections per router in the database's connection budget, plus its dedicated
+invalidation connection and the primary pool configured by `pool_max_conns` in
+`OLR_DATABASE_URL`. These fixed authentication limits require no configuration.
+
+Failed API keys and tokens occupy separate bounded caches of **4,096 SHA-256 digests**
+for **five seconds**. Unknown, expired, revoked, disabled and otherwise invalid
+credentials receive the same 401; after ten failures for a cached digest, further
+attempts receive **429** with `Retry-After: 5`. Retries never extend the fixed expiry.
+Database errors and cancelled work are not negatively cached. Admin invalidation
+clears API-key denials and invalidates token denials by generation. A new random API
+key is usable immediately; if its exact value was previously presented while absent,
+the denial expires within five seconds even when invalidation is unavailable.
+
+JWKS fetches have a **ten-second minimum interval per OIDC client** and at most one
+active response, including failed fetches. Unknown `kid` values and bad signatures
+cannot reset or extend the interval. Cached signing keys continue working during it;
+a newly published signing key succeeds on a retry after the interval. A token tried
+during the cooldown may additionally retain a five-second negative-cache entry, so
+allow up to **15 seconds** and retry after a signing-key rotation. Publish overlapping
+signing keys in advance where the IdP supports it. Portal login and API verification
+have separate OIDC clients, so API-token floods cannot consume the portal's JWKS slot.
+All in-memory budgets/caches are per router; multiply limits by replicas when sizing
+the edge and database.
+
+Run `python3 tests/security/check_edge.py` with Docker available to exercise the
+NGINX example against rotating credentials and spoofed forwarding headers. This check
+also runs in CI. The Go race/integration tests cover work limits, negative-cache
+expiry/invalidation, signing-key rotation and portal access while credential SQL is
+stalled. Validate equivalent limits against the actual deployed ingress controller.
+
 Set `PORTAL_BASE_URL=https://llm.example.org` (secure cookies are the default and require
 HTTPS). In the identity provider, register the confidential client `olr-portal` with redirect URI
 `https://llm.example.org/portal/callback`, post-logout redirect `https://llm.example.org/`,
