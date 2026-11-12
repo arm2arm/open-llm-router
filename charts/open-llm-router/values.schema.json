@@ -368,6 +368,10 @@
                 "IfNotPresent",
                 "Never"
               ]
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$"
             }
           }
         },
@@ -437,6 +441,136 @@
           "type": "string"
         }
       }
+    },
+    "production": {
+      "type": "boolean"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "production": {
+            "const": true
+          }
+        },
+        "required": [
+          "production"
+        ]
+      },
+      "then": {
+        "properties": {
+          "image": {
+            "properties": {
+              "digest": {
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            }
+          },
+          "networkPolicy": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "config": {
+            "required": [
+              "security"
+            ],
+            "properties": {
+              "security": {
+                "required": [
+                  "require_tls"
+                ],
+                "properties": {
+                  "require_tls": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "postgresql": {
+                  "properties": {
+                    "enabled": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "postgresql": {
+                  "properties": {
+                    "image": {
+                      "pattern": "^.+@sha256:[a-f0-9]{64}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "keycloak": {
+                  "properties": {
+                    "enabled": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "keycloak": {
+                  "properties": {
+                    "image": {
+                      "pattern": "^.+@sha256:[a-f0-9]{64}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "demoBackend": {
+                  "properties": {
+                    "enabled": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "demoBackend": {
+                  "properties": {
+                    "image": {
+                      "properties": {
+                        "digest": {
+                          "pattern": "^sha256:[a-f0-9]{64}$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -42,7 +42,7 @@ spec:
       {{- end }}
       containers:
         - name: mock
-          image: {{ printf "%s:%s" .Values.demoBackend.image.repository .Values.demoBackend.image.tag | quote }}
+          image: {{ include "olr.image" (dict "Values" (dict "image" .Values.demoBackend.image)) | quote }}
           imagePullPolicy: {{ .Values.demoBackend.image.pullPolicy }}
           env:
             - {name: MOCK_MODELS, value: chat-model}

@@ -171,6 +171,10 @@ readiness. The router gets 35 seconds to drain streams during shutdown.
 schema, isolated Service selectors, secret/database wiring, storage, external
 services, security and packaging.
 
+Production values must set `production: true` and immutable image digests. Install or
+upgrade through the [verified release/deployment workflow](../../docs/RELEASE_SECURITY.md)
+to check image signatures, provenance and SBOMs before applying manifests.
+
 `bash tests/helm/acceptance.sh` needs Helm 4, kind, Docker, kubectl and Python 3.
 It creates its own cluster/kubeconfig, builds the two images and installs all
 components with one Helm command. It verifies local admin setup, real SSO login

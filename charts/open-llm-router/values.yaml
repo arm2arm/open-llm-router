@@ -1,3 +1,5 @@
+# The default stack is a disposable demo; production enables strict image/TLS policy.
+production: false
 # Build the router image from this checkout; no public image is assumed.
 image:
   repository: olr-router
@@ -23,7 +25,7 @@ secrets:
 # Bundled PostgreSQL is ready to use; requires a default StorageClass.
 postgresql:
   enabled: true
-  image: postgres:17
+  image: postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07
   username: olr
   database: olr
   password: ""
@@ -42,7 +44,7 @@ externalDatabase:
 # Keep baseURL stable after initialization; realm import does not update a realm.
 keycloak:
   enabled: true
-  image: quay.io/keycloak/keycloak:26.8.2
+  image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
   baseURL: http://localhost:8081
   adminPassword: ""
   clientSecret: ""
@@ -60,6 +62,7 @@ demoBackend:
   enabled: true
   image:
     repository: olr-mock-llm
+    digest: ""
     tag: local
     pullPolicy: IfNotPresent
   resources:
