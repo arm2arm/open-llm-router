@@ -80,14 +80,13 @@ and the [pilot checklist](docs/PILOT.md).
 | Area | Available today |
 |---|---|
 | Routing | OpenAI and Anthropic native APIs; SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
-| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
+| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; routing revisions for models, endpoints and aliases in Admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
 | Usage and operations | Usage history and timing; personal text, reasoning, tool and stream traces with user-controlled capture and 7-day default retention; user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
 | Deployment | Local Compose demo, real-backend examples, production pilot Compose, [Helm chart](charts/open-llm-router) and [Kubernetes manifests](deploy/k8s) |
 
-**Still planned:** the Admin UI for routing revisions (the API and CLI exist);
-editing group policies in Admin;
+**Still planned:** editing group policies in Admin;
 and shared limits/live configuration across multiple router processes. Group
 defaults use YAML; logical models, aliases and Keycloak settings can move from
 YAML/environment into database revisions. See the [capability audit and milestones](docs/ADMIN_FEATURE_PLAN.md)

@@ -364,3 +364,27 @@ export type AuthenticationView = {
   change_requirement?: string
   encryption_key_configured: boolean
 }
+
+export type RoutingDocument = {
+  models: Record<string, EndpointModel>
+  aliases: Record<string, string>
+}
+export type RoutingRevision = Omit<SettingsRevision, 'document'> & {
+  document?: RoutingDocument
+}
+export type RoutingView = {
+  settings: {
+    domain: string
+    managed: boolean
+    version: number
+    active?: RoutingRevision
+    draft?: RoutingRevision
+    effective: EffectiveSetting[]
+    conflicts: { setting: string; source: string; where: string }[]
+    history: RoutingRevision[]
+  }
+  runtime: { revision: number }
+  credential_references: string[]
+  allowed_private_networks: string[]
+  group_grants: Record<string, string[]>
+}

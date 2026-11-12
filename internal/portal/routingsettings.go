@@ -38,6 +38,9 @@ type routingView struct {
 	} `json:"runtime"`
 	CredentialReferences   []string `json:"credential_references"`
 	AllowedPrivateNetworks []string `json:"allowed_private_networks"`
+	// GroupGrants maps each group policy to the models it grants ("*": all).
+	// Group policies are file-owned; a granted model cannot be removed.
+	GroupGrants map[string][]string `json:"group_grants"`
 }
 
 func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user) {
@@ -45,7 +48,11 @@ func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user
 	if settingsError(w, err) {
 		return
 	}
-	out := routingView{Settings: view, CredentialReferences: []string{}, AllowedPrivateNetworks: []string{}}
+	out := routingView{Settings: view, CredentialReferences: []string{}, AllowedPrivateNetworks: []string{}, GroupGrants: map[string][]string{}}
+	running, _ := h.RoutingRuntime.Snapshot()
+	for name, group := range running.Groups {
+		out.GroupGrants[name] = slices.Clone(group.Models)
+	}
 	if snapshot := h.routingRuntime.Load(); snapshot != nil {
 		out.Runtime.Revision = snapshot.Revision
 	}

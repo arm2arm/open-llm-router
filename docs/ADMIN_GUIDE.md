@@ -852,8 +852,23 @@ The **routing** settings domain holds the complete set of logical models (upstre
 name, native protocols, timeouts, affinity, priority and endpoint pools) and the
 aliases clients may use, as one revision. Like authentication settings it is
 file-managed until imported, then versioned with drafts, activation and rollback
-(`/portal/api/admin/settings/routing`, or `olr admin settings -domain routing`).
-Group policies stay in the YAML file.
+in **Admin → Routing** (or `/portal/api/admin/settings/routing`, or
+`olr admin settings -domain routing`). Group policies stay in the YAML file.
+
+**Admin → Routing** shows how a request is routed: the groups that grant each
+model (`*` grants all), its aliases, native protocols, upstream name and each
+endpoint with its credential reference, health and in-flight count. After
+**Import current routing**, edit a draft: add a logical model, set its upstream
+name, protocols, timeouts and session affinity, add or remove endpoint replicas
+(origin, health path, weight, capacity, credential reference chosen from the
+allowed list), and add or retarget aliases. A model still granted by a group
+or named by an alias cannot be removed; the page names the dependency. **Save
+routing draft** lists validation problems (for example a duplicate origin in one
+pool, an unknown alias target or a refused destination). **Test changed
+endpoints**, **Activate routing draft**, **Discard**, **Roll back** and **Apply
+active routing to this router** act as described below. Endpoints are generic
+OpenAI- or Anthropic-compatible HTTP origins, not named cloud providers.
+Credential values are never shown or stored in the browser.
 
 - **Import** copies the routing in use, including saved per-model endpoint
   revisions, without changing it. From then on the per-model endpoint editor is

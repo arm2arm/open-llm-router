@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EndpointSettingsPanel } from '@/endpoints'
 import { AuthenticationSettingsPanel } from './authentication'
+import { RoutingSettingsPanel } from './routing'
 import {
   AdminUserKeys,
   CreateLocalUser,
@@ -427,6 +428,7 @@ export function AdminPage({ self }: { self: string }) {
       </div>
       <AuthenticationSettingsPanel />
       <EndpointSettingsPanel />
+      <RoutingSettingsPanel />
       <section className="panel" aria-label="Replica health">
         <div className="panel-head">
           <h2 className="panel-title">Replicas</h2>
