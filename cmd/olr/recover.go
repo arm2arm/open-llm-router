@@ -39,13 +39,13 @@ func recoverCommand(args []string, stdin io.Reader, out, errout io.Writer) error
 	if (*passwordFile == "") == !*fromStdin {
 		return errors.New("use exactly one of -password-file FILE or -password-stdin")
 	}
-	event := audit.Event{Action: recoverAction, Actor: audit.OperatorCLI()}
+	event := audit.Event{Action: recoverAction, Actor: audit.OperatorCLI(), TargetType: "user"}
 	record := func(result auth.Recovery, err error, reason string) error {
 		event.TargetID = result.ID
 		switch {
 		case err == nil:
 			event.Result = audit.Succeeded
-			event.Details = map[string]int64{"credential_revision": result.CredentialRevision,
+			event.Details = map[string]any{"credential_revision": result.CredentialRevision,
 				"sessions_revoked": result.SessionsRevoked, "keys_revoked": result.KeysRevoked}
 		case errors.Is(err, auth.ErrPasswordPolicy), errors.Is(err, auth.ErrPasswordReuse), errors.Is(err, auth.ErrNotBootstrapped):
 			event.Result, event.Reason = audit.Refused, err.Error()

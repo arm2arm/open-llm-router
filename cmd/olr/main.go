@@ -29,6 +29,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 	"github.com/arm2arm/open-llm-router/internal/retention"
 	"github.com/arm2arm/open-llm-router/internal/server"
+	"github.com/arm2arm/open-llm-router/internal/settings"
 	usagewriter "github.com/arm2arm/open-llm-router/internal/usage"
 )
 
@@ -117,12 +118,26 @@ func serve(args []string) error {
 		return err
 	}
 	defer database.Close()
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	fileConfig := cfg
 	destinations, err := backendpolicy.New(fileConfig, os.LookupEnv)
 	if err != nil {
 		return err
 	}
-	cfg, err = endpoints.Load(ctx, database, fileConfig, destinations)
+	// Managed settings replace their domain's file values before anything
+	// uses them; endpoint revisions then apply on top of that base.
+	settingsCipher, err := settings.LoadCipher(os.Getenv)
+	if err != nil {
+		return err
+	}
+	settingsCtx, cancelSettings := context.WithTimeout(ctx, 10*time.Second)
+	managed, err := settings.Apply(settingsCtx, database, fileConfig, settingsCipher, os.LookupEnv, log)
+	cancelSettings()
+	if err != nil {
+		return err
+	}
+	baseConfig := managed.Config
+	cfg, err = endpoints.Load(ctx, database, baseConfig, destinations)
 	if err != nil {
 		return err
 	}
@@ -141,7 +156,6 @@ func serve(args []string) error {
 	defer authenticator.Close()
 	authenticator.Forwarders = cfg.Forwarders
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	stopOIDC := startOIDCServices(cfg, database, authenticator, log)
 	defer stopOIDC()
 	ln, err := net.Listen("tcp", *listen)
@@ -224,7 +238,7 @@ func serve(args []string) error {
 	portalHandler.Traces = traces
 	portalHandler.Activity = live
 	portalHandler.Pools = forwarder.Pools
-	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: fileConfig, Policy: destinations, Runtime: forwarder}
+	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: baseConfig, Policy: destinations, Runtime: forwarder}
 	srv.Handle("/portal", portalHandler)
 	srv.Handle("/portal/", portalHandler)
 

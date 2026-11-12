@@ -46,6 +46,9 @@ Edit `.env` before the first start:
 OLR_BOOTSTRAP_ADMIN_PASSWORD=REPLACE_WITH_A_PRIVATE_TEMPORARY_PASSWORD
 # Paste the generated base64 value; keep it stable and back it up separately.
 OLR_API_KEY_ENCRYPTION_KEY=REPLACE_WITH_GENERATED_BASE64_VALUE
+# Optional, a second generated value: only needed to store SSO client secrets
+# in managed settings (olr admin settings). Keep it stable and backed up too.
+# OLR_SETTINGS_ENCRYPTION_KEY=REPLACE_WITH_ANOTHER_GENERATED_BASE64_VALUE
 ```
 
 Enable encryption before issuing keys if admins should be able to copy them

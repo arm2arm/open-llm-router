@@ -102,9 +102,10 @@ no limit.
 | `OLR_CONFIG` | config file path (image: `/etc/olr/config.yaml`) |
 | `OLR_DATABASE_URL` | Postgres URL — **secret** |
 | `OLR_API_KEY_ENCRYPTION_KEY` | optional base64 32-byte AES key for Admin copy of newly issued keys — **secret**; keep stable and back up separately from PostgreSQL |
+| `OLR_SETTINGS_ENCRYPTION_KEY` | optional base64 32-byte AES key for stored managed-settings secrets — **secret**; keep stable and back up separately from PostgreSQL |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` | owner-only file for one-time protected local administrator bootstrap; preferred over environment password |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | alternative bootstrap password — **secret**; configure only one source; ignored once initialized |
-| `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables SSO; the portal is always mounted |
+| `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables SSO; the portal is always mounted. After `olr admin settings import`, the database revision is authoritative and differing values are ignored with an error log |
 | `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | client secrets — **secret** |
 | `OIDC_AUDIENCE`, `OIDC_SYNC_CLIENT_ID`, `OIDC_REQUIRED_CLAIM=name=value` | override the `oidc` keys |
 | `OIDC_BACKCHANNEL_URL` | reach the issuer at an internal URL; the issuer stays the public one |
@@ -258,7 +259,7 @@ principals can take up to one minute to refresh.
 | Secret | How |
 |---|---|
 | Postgres password | `ALTER ROLE olr PASSWORD '…'`, update `OLR_DATABASE_URL`, recreate the Compose container |
-| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, recreate the Compose container; logins in progress must start again, sessions stay |
+| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, recreate the Compose container; logins in progress must start again, sessions stay. With managed settings, store the new value with `olr admin settings draft -secret`, activate and recreate |
 | `OLR_METRICS_TOKEN` | set the new token in the router and in Prometheus's credentials file, recreate/restart the affected services so they read it |
 | backend tokens (`bearer_token_env`) | configure the backend to accept old and new, update the router environment, recreate the Compose container, drop the old one |
 | API keys | users create a new key and revoke the old one; keys expire after `auth.default_key_lifetime_days` |
@@ -278,6 +279,11 @@ pg_restore --clean --if-exists --dbname="$OLR_DATABASE_URL" olr-YYYY-MM-DD.dump 
 
 Keep backups no longer than the usage retention, or erasures (below) come back with a restore;
 after restoring an old backup, repeat the erasures done since.
+
+Managed settings (revisions, activations, encrypted secrets and the audit history)
+are in the same database. A restore returns them to the backup's active revision;
+stored secrets open only with the matching `OLR_SETTINGS_ENCRYPTION_KEY`. Without
+it, routers start with SSO off and local login available.
 
 A restore also returns the protected administrator's password, sessions and keys to
 their state at backup time. If that password is unknown, run `olr admin recover`
