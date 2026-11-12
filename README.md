@@ -161,7 +161,7 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 | Document | Content |
 |---|---|
 | [docs/INSTALL.md](docs/INSTALL.md) | step-by-step Compose and Kubernetes/Helm install, first login, real backends, upgrades and troubleshooting |
-| [Helm chart](charts/open-llm-router) | chart values, external Secrets and an HTTPS production example |
+| [Helm chart](charts/open-llm-router) | one-release demo stack, initial passwords/keys, real endpoints and an HTTPS production example |
 | [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) | administrator setup, endpoint connections, groups, user limits and current UI boundaries |
 | [docs/ADMIN_FEATURE_PLAN.md](docs/ADMIN_FEATURE_PLAN.md) | implementation audit and plan for protected local admin, dual login, Keycloak settings and endpoint/policy editing |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | deployment, configuration reference, operations, limits, known limitations |

@@ -28,3 +28,41 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "olr.secretName" -}}
+{{- default (printf "%s-credentials" (include "olr.resourcePrefix" .)) .Values.existingSecret -}}
+{{- end -}}
+
+{{- define "olr.componentName" -}}
+{{- printf "%s-%s" (include "olr.resourcePrefix" .root) .component -}}
+{{- end -}}
+
+{{/* Retain release identity when reserving space for component suffixes. */}}
+{{- define "olr.resourcePrefix" -}}
+{{- $name := include "olr.fullname" . -}}
+{{- if gt (len $name) 48 -}}
+{{- printf "%s-%s" ($name | trunc 39 | trimSuffix "-") ($name | sha256sum | trunc 8) -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Separate app names preserve the original router selector on upgrades. */}}
+{{- define "olr.componentSelector" -}}
+app.kubernetes.io/name: {{ printf "%s-%s" (include "olr.name" .root | trunc 48 | trimSuffix "-") .component }}
+app.kubernetes.io/instance: {{ .root.Release.Name }}
+app.kubernetes.io/component: {{ .component }}
+{{- end -}}
+
+{{/* Prefer an explicit initial value, otherwise retain the installed credential. */}}
+{{- define "olr.credential" -}}
+{{- if .value -}}
+{{- .value | b64enc -}}
+{{- else if and .existing (hasKey .existing .key) -}}
+{{- index .existing .key -}}
+{{- else if eq .key "OLR_API_KEY_ENCRYPTION_KEY" -}}
+{{- randBytes 32 | b64enc -}}
+{{- else -}}
+{{- randAlphaNum 32 | b64enc -}}
+{{- end -}}
+{{- end -}}

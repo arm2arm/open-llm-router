@@ -1,13 +1,13 @@
 # Installation
 
 Use **Docker Compose** for a complete local environment with PostgreSQL, Keycloak
-and mock backends. Use **Helm** to install the router on Kubernetes with your own
-PostgreSQL and model servers. Neither method downloads or runs GPU models for you.
+and mock backends. Use **Helm** for the same complete demo on Kubernetes, with
+PostgreSQL, Keycloak SSO and a mock model backend in one release. Neither method downloads or runs GPU models for you.
 
 | Path | Includes | Start here |
 |---|---|---|
 | Local Compose | Router, persistent PostgreSQL, development Keycloak, two mock model servers | [Local Docker Compose](#local-docker-compose) |
-| Kubernetes / Helm | Router, configuration, Service, optional Ingress | [Kubernetes with Helm](#kubernetes-with-helm) |
+| Kubernetes / Helm | Router, persistent PostgreSQL, development Keycloak SSO, mock backend, optional Ingress | [Kubernetes with Helm](#kubernetes-with-helm) |
 | Server Compose with external services | Router with your production PostgreSQL, Keycloak and GPUs | [Production Compose](#production-compose) |
 
 Run commands from the repository root unless a step says otherwise. The examples
@@ -188,166 +188,140 @@ database and Keycloak state. See the [backup/restore runbook](RUNBOOK.md).
 
 ## Kubernetes with Helm
 
-### 1. Prepare infrastructure and a router image
+The default [chart](../charts/open-llm-router) installs the **complete demo stack
+in one Helm release**: router and portal, persistent PostgreSQL 17, persistent
+development Keycloak with a configured SSO client and `staff` user, and a mock
+model backend serving `chat-model`. Passwords and the API-key encryption key are
+generated automatically. No database setup, separate manifests or GPU is needed.
 
-You need an accessible Kubernetes cluster, `kubectl` configured for its context,
-[Helm 4](https://helm.sh/docs/intro/install/), Docker Buildx, a registry the nodes
-can pull from, PostgreSQL 17, and a model backend reachable from the router pods.
-The [chart](../charts/open-llm-router) installs the router, not PostgreSQL,
-Keycloak, an ingress controller or GPU workloads. For public access, prepare DNS,
-an existing maintained ingress controller, and a TLS certificate.
+### 1. Prepare the cluster and images
+
+You need Kubernetes, `kubectl`, [Helm 4](https://helm.sh/docs/intro/install/), and a
+**default StorageClass** (or set `postgresql.persistence.storageClass` and
+`keycloak.persistence.storageClass`). Check your context before installing:
 
 ```sh
 kubectl config current-context
 kubectl cluster-info
+kubectl get storageclass
 helm version
+```
+
+Build the router and demo backend from this checkout; no public application image
+or published Helm repository is assumed. For a remote cluster, push both images
+to a registry its nodes can pull from:
+
+```sh
 export OLR_IMAGE_REPOSITORY=registry.example.org/olr
+export OLR_MOCK_IMAGE_REPOSITORY=registry.example.org/olr-mock
 export OLR_IMAGE_TAG=$(git rev-parse --short=12 HEAD)
-# Choose the cluster nodes' architecture, not necessarily your laptop's.
+# Use linux/arm64 for ARM nodes.
 export OLR_IMAGE_PLATFORM=linux/amd64
 docker login registry.example.org
 docker buildx build --platform "$OLR_IMAGE_PLATFORM" --target olr \
   -t "$OLR_IMAGE_REPOSITORY:$OLR_IMAGE_TAG" --push .
+docker buildx build --platform "$OLR_IMAGE_PLATFORM" --target mock-llm \
+  -t "$OLR_MOCK_IMAGE_REPOSITORY:$OLR_IMAGE_TAG" --push .
 ```
 
-Replace the registry; use `linux/arm64` for ARM nodes. No prebuilt public router
-image or published Helm repository is assumed. For a private registry, provision
-a pull Secret in namespace `olr` and set `imagePullSecrets: [{name: YOUR_SECRET}]`.
-
-Create a dedicated database and a login role that owns it and can run schema
-migrations. For self-managed PostgreSQL, an administrator can run these in `psql`:
-
-```sql
-CREATE ROLE olr LOGIN;
-\password olr
-CREATE DATABASE olr OWNER olr;
-```
-
-Use your provider's connection URL and TLS requirements; URI-encode special
-characters in URL credentials. Confirm network policies/firewalls allow the pod
-to reach PostgreSQL, the model pool and the Keycloak issuer if configured.
-
-### 2. Create the namespace and private Secret
+For an existing local **kind** cluster, use local images instead:
 
 ```sh
-kubectl create namespace olr --dry-run=client -o yaml | kubectl apply -f -
+docker build --target olr -t olr-router:local .
+docker build --target mock-llm -t olr-mock-llm:local .
+kind load docker-image olr-router:local olr-mock-llm:local --name YOUR_CLUSTER
+```
+
+### 2. Copy one demo values file and install everything
+
+```sh
 umask 077
 export OLR_SITE="$HOME/.config/olr-k8s"
 mkdir -p "$OLR_SITE"
 chmod 700 "$OLR_SITE"
-cat > "$OLR_SITE/secrets.env" <<'EOF'
-OLR_DATABASE_URL=REPLACE_WITH_POSTGRES_CONNECTION_URL
-OLR_BOOTSTRAP_ADMIN_PASSWORD=REPLACE_WITH_PRIVATE_15_PLUS_CHARACTER_PASSWORD
-OLR_API_KEY_ENCRYPTION_KEY=REPLACE_WITH_STABLE_BASE64_32_BYTE_KEY
-EOF
-chmod 600 "$OLR_SITE/secrets.env"
-openssl rand -base64 32
+# Keep an existing configuration when repeating these instructions.
+test -f "$OLR_SITE/values.yaml" || \
+  cp charts/open-llm-router/examples/demo.values.yaml "$OLR_SITE/values.yaml"
+chmod 600 "$OLR_SITE/values.yaml"
 ```
 
-Edit the file and replace every `REPLACE_…` value. Paste the generated encryption
-key once and retain it across upgrades. `kubectl --from-env-file` treats quotes
-as part of a value: write plain `NAME=value` lines, without surrounding quotes.
-For external Keycloak, add `OIDC_PORTAL_CLIENT_SECRET`; group sync also needs
-`OIDC_SYNC_CLIENT_SECRET`. Backend tokens and a dedicated `OLR_METRICS_TOKEN`
-can be added here. Use your organization's secret manager instead if available.
+For remote clusters, edit `image.repository` / `image.tag` and
+`demoBackend.image.repository` / `demoBackend.image.tag` to the images you pushed.
+For a private registry, create its pull Secret in namespace `olr` and set
+`imagePullSecrets: [{name: YOUR_SECRET}]`; it applies to all bundled components.
+The local kind image names already match the demo values.
+
+The [demo values file](../charts/open-llm-router/examples/demo.values.yaml) shows
+all initial settings in one place:
+
+| Value | Initial behavior |
+|---|---|
+| `secrets.bootstrapAdminPassword` | Blank generates the local `admin` bootstrap password; a supplied password must be at least 15 characters |
+| `secrets.apiKeyEncryptionKey` | Blank generates a base64-encoded 32-byte key; optionally supply `openssl rand -base64 32` output and retain it |
+| `postgresql.username`, `database`, `password` | Creates database/user `olr`; blank password is generated |
+| `keycloak.adminPassword` | Blank generates the Keycloak console `admin` password |
+| `keycloak.clientSecret` | Blank generates and shares the portal SSO client secret |
+| `keycloak.demoUserPassword` | Blank generates the SSO `staff` user's password |
+| `portal.baseURL`, `keycloak.baseURL` | Browser addresses `http://localhost:8080` and `http://localhost:8081` |
+| `config.models.chat-model` | Default endpoint is this release's bundled demo backend |
+| `secrets.env` | Optional backend API keys, metrics tokens and other secret environment variables |
+
+Leave credentials blank for automatic generation, or choose them **before the
+first install**. Helm stores supplied values and rendered Secrets in release
+history; protect both the private file and access to Helm release Secrets. For
+credentials managed outside Helm, use `existingSecret` as described in the
+[chart reference](../charts/open-llm-router/README.md).
 
 ```sh
-kubectl -n olr create secret generic olr-secrets \
-  --from-env-file="$OLR_SITE/secrets.env" --dry-run=client -o yaml \
-  | kubectl apply -f -
-```
-
-Keep secrets out of Helm values and `--set`: Helm retains release values/history.
-The chart references this existing Secret and never recreates its credentials.
-
-### 3. Set model pools, login and network exposure
-
-```sh
-cp charts/open-llm-router/examples/production.yaml "$OLR_SITE/values.yaml"
-```
-
-Edit the copy:
-
-- Set `image.repository` and `image.tag` to the image just pushed, or use
-  `image.digest` to pin its tested `sha256:…` digest.
-- Set `config.models.chat-model.upstream_model` and its complete `pool` list.
-  The supplied example uses a LAN Ollama backend; replace it with your reachable
-  origin. Keep Ollama's `/` health path, or use the backend's health endpoint.
-- Set `config.groups` to your local/SSO memberships and desired access/quotas.
-  Limits apply per user across all their keys. `env.OLR_BACKEND_ALLOWED_CIDRS`
-  permits additional private destinations entered later through Admin.
-- For Keycloak, set the `env.OIDC_*` values. Register confidential client
-  `olr-portal` with PKCE S256, a groups mapper, redirect
-  `https://llm.example.org/portal/callback` and post-logout redirect
-  `https://llm.example.org/`. Use your actual host. Group claim values must
-  match `config.groups` exactly. See [external Keycloak setup](ADMIN_GUIDE.md).
-  Remove the example's `OIDC_*` entries for local-only login.
-- Set `portal.baseURL`, `ingress.host`, `ingress.className` and TLS Secret name.
-  The example's annotations target **F5 NGINX Ingress Controller**, using
-  [its documented streaming/timeout annotations](https://docs.nginx.com/nginx-ingress-controller/configuration/ingress-resources/advanced-configuration-with-annotations/).
-  Use your controller's equivalent: response buffering off, 960-second read/send
-  timeouts and a 32 MiB request body limit. Point DNS at that controller.
-
-For an existing certificate/key on disk:
-
-```sh
-kubectl -n olr create secret tls olr-tls \
-  --cert=/private/certs/fullchain.pem --key=/private/certs/privkey.pem \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-An existing cert-manager Certificate may provision that Secret instead. If you
-only want a private trial through port-forwarding, set these values instead of
-configuring Ingress/TLS, and remove the external Keycloak `env.OIDC_*` entries:
-
-```yaml
-portal:
-  baseURL: http://localhost:18080
-  cookieSecure: false
-ingress:
-  enabled: false
-```
-
-The chart defaults to local-only authentication. With Keycloak configured, SSO
-becomes the default choice and local login stays available during an IdP outage.
-OIDC settings are deployment configuration; an Admin Keycloak editor is planned.
-
-### 4. Install and verify
-
-```sh
-helm lint charts/open-llm-router -f "$OLR_SITE/values.yaml" --strict
-helm template olr charts/open-llm-router -n olr -f "$OLR_SITE/values.yaml" \
-  > "$OLR_SITE/rendered.yaml"
 helm upgrade --install olr charts/open-llm-router \
   --namespace olr --create-namespace -f "$OLR_SITE/values.yaml" \
-  --wait --timeout 5m
-kubectl -n olr get pods,svc,ingress
-kubectl -n olr rollout status deployment/olr-open-llm-router --timeout=300s
+  --wait --timeout 10m
+kubectl -n olr get pods,svc,pvc
 ```
 
-For a trial without Ingress, keep this running in another terminal:
+This single Helm command deploys and waits for all components. The router waits
+for PostgreSQL and applies its database migrations automatically. The first
+Keycloak startup can take several minutes. Generated credentials are reused on
+subsequent installs/upgrades against the same namespace and release name.
+
+### 3. Open the portal and try both login methods
+
+Keep each port-forward running in its own terminal:
 
 ```sh
-kubectl -n olr port-forward service/olr-open-llm-router 18080:80
+kubectl -n olr port-forward service/olr-open-llm-router 8080:80
 ```
 
-Verify through the address you configured:
+```sh
+kubectl -n olr port-forward service/olr-open-llm-router-keycloak 8081:8080
+```
+
+Read the initial passwords from the release's Secret:
 
 ```sh
-export OLR_BASE_URL=https://llm.example.org
-# For the port-forward trial instead: export OLR_BASE_URL=http://localhost:18080
+# Local router administrator (username: admin)
+kubectl -n olr get secret olr-open-llm-router-credentials \
+  -o jsonpath='{.data.OLR_BOOTSTRAP_ADMIN_PASSWORD}' | base64 --decode; echo
+# Demo SSO user (username: staff)
+kubectl -n olr get secret olr-open-llm-router-credentials \
+  -o jsonpath='{.data.OLR_DEMO_USER_PASSWORD}' | base64 --decode; echo
+# Keycloak administration console (username: admin)
+kubectl -n olr get secret olr-open-llm-router-credentials \
+  -o jsonpath='{.data.KC_BOOTSTRAP_ADMIN_PASSWORD}' | base64 --decode; echo
+```
+
+Open [local admin login](http://localhost:8080/portal/login/local), sign in as
+`admin`, complete the required password change, and sign in again. This account
+is independent of Keycloak; the bootstrap input never resets an existing account.
+Open the [portal](http://localhost:8080/portal/) in a separate browser session,
+choose **Continue with Keycloak**, and sign in as `staff`. The demo realm assigns
+that user the `staff` policy. Create an API key in that user's portal.
+The [Keycloak console](http://localhost:8081/admin/) manages SSO accounts separately.
+
+```sh
+export OLR_BASE_URL=http://localhost:8080
 curl --fail "$OLR_BASE_URL/healthz"
 curl --fail "$OLR_BASE_URL/readyz"
-curl --fail "$OLR_BASE_URL/portal/api/auth"
-```
-
-Open `$OLR_BASE_URL/portal/login/local`, sign in as `admin`, complete the required
-password change, and sign in again. Create a local **staff** user, complete its
-first login, and issue its API key as in the Compose walkthrough. Remove the
-bootstrap password entry from your Secret source after changing it, reapply the
-Secret and restart the Deployment. Retain the encryption key.
-
-```sh
 export OLR_API_KEY='PASTE_THE_ROUTER_KEY_HERE'
 curl --fail "$OLR_BASE_URL/v1/models" \
   -H "Authorization: Bearer $OLR_API_KEY"
@@ -356,57 +330,107 @@ curl --fail -N "$OLR_BASE_URL/v1/chat/completions" \
   -d '{"model":"chat-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Expect incremental events and `[DONE]`; verify usage in the portal. Repeat through
-the public HTTPS ingress before onboarding users: a successful port-forward
-does not establish ingress streaming. Chart defaults enforce one replica and
-`Recreate` rollouts, so upgrades have a short availability gap.
+Expect incremental events and `[DONE]`, with deterministic demo text. Usage should
+appear in the portal. No real model is downloaded or run by this chart.
+
+### 4. Configure real endpoints or production services
+
+To use Ollama, vLLM or SGLang, set `demoBackend.enabled: false` and replace the
+upstream model and **complete** `pool` list in your values file, then run the same
+Helm command. For example:
+
+```yaml
+demoBackend:
+  enabled: false
+config:
+  models:
+    chat-model:
+      upstream_model: exact-installed-model-name
+      pool:
+        - url: http://ollama.models.svc.cluster.local:11434
+          health_path: /
+          weight: 1
+          max_inflight: 1
+```
+
+For an authenticated backend, add its token under `secrets.env.GPU_API_TOKEN` and
+`bearer_token_env: GPU_API_TOKEN` to the pool entry. `localhost` inside a pod is
+that pod; use a Service DNS name or another reachable server address. Use `/` for
+Ollama health checks and the backend's actual health path for other servers.
+Saved Admin endpoint revisions override YAML pools until restored to file
+configuration in the endpoint editor.
+
+For public production access, start with the
+[production values example](../charts/open-llm-router/examples/production.yaml).
+It disables the bundled demo backend, development Keycloak and PostgreSQL, and
+uses external services with a pre-existing `olr-secrets` Secret containing
+`OLR_DATABASE_URL`, bootstrap/encryption credentials, and any OIDC/backend secrets.
+You may keep bundled PostgreSQL enabled if you provide its required Secret keys
+and manage its backups. The [chart reference](../charts/open-llm-router/README.md)
+lists the Secret contract and external-database alternative.
+
+The bundled Keycloak uses `start-dev` and a persistent H2 database for evaluation.
+Use a production Keycloak service for public deployments. Register the portal
+client, PKCE, groups mapper and redirect/logout URLs as described in
+[external Keycloak setup](ADMIN_GUIDE.md). Set `keycloak.enabled: false` and supply
+its `env.OIDC_*` settings and client secret. Local admin remains available.
+
+Use an HTTPS `portal.baseURL`, `portal.cookieSecure: true`, an existing maintained
+ingress controller, DNS and a TLS Secret. The production example includes F5 NGINX
+streaming annotations; adapt them for your controller. Disable response buffering
+and allow long read/send timeouts. Repeat the streaming check through the public
+HTTPS endpoint before onboarding users. The chart does not install an ingress
+controller, certificates or GPU workloads.
 
 ### Upgrade and rollback
 
-1. Back up PostgreSQL, your private values and the stable encryption key. Record
-   the current image digest and `helm history olr -n olr`.
-2. Select a tested checkout, build/push its new image, and update the private
-   `image.tag` or `image.digest`. Use the chart from that same checkout.
-3. Apply the complete values file and repeat the health, login and stream checks:
+Keep the release name, namespace, database identity and encryption key stable.
+Back up PostgreSQL, Keycloak state, the credentials Secret and your private values
+before an upgrade; see the [backup/restore runbook](RUNBOOK.md). Choose a tested
+checkout, build its images, update their tags/digests, and apply the complete file:
 
 ```sh
 helm upgrade --install olr charts/open-llm-router \
-  -n olr -f "$OLR_SITE/values.yaml" --wait --timeout 5m
+  -n olr -f "$OLR_SITE/values.yaml" --wait --timeout 10m
 helm history olr -n olr
+# Choose a revision from that history if a rollback is needed.
+helm rollback olr PREVIOUS_REVISION -n olr --wait --timeout 10m
 ```
 
-YAML changes update the pod checksum. A changed external Secret needs a restart
-because environment variables are loaded at process creation:
+When upgrading from chart **0.1.x**, explicitly set `postgresql.enabled: false`,
+`keycloak.enabled: false`, `demoBackend.enabled: false`, your original
+`existingSecret`, and your full real model pool to preserve the external-service
+setup. Enabling a bundled database does not migrate an external database.
+
+Configuration changes update the router pod checksum. The router uses one
+process and `Recreate` rollouts, so upgrades have a short availability gap.
+Credential changes need an explicit workload restart. Database passwords and
+Keycloak clients/users are initialized once: changing values does not rotate an
+initialized database password or update an imported realm. Change them in the
+service and Secret together. Changing portal origins later also requires updating
+the Keycloak client's redirect and logout URLs in its console.
 
 ```sh
 kubectl -n olr rollout restart deployment/olr-open-llm-router
-kubectl -n olr rollout status deployment/olr-open-llm-router --timeout=300s
 ```
 
-To restore a previous Helm revision, choose its number from `helm history`:
+`helm template` is an offline preview and cannot reuse installed generated
+credentials. Use Helm install/upgrade against the cluster; do not apply an offline
+render over an existing installation. Rollback restores chart resources, **not
+PostgreSQL migrations/data, Keycloak state or Admin-saved endpoint revisions**.
 
 ```sh
-helm rollback olr PREVIOUS_REVISION -n olr --wait --timeout 5m
-```
-
-Rollback restores chart-managed Kubernetes resources, **not PostgreSQL data,
-database migrations, external Secrets or Admin-saved endpoint revisions**. The
-router migrates at startup; check schema compatibility with the previous image
-and follow the [backup/restore runbook](RUNBOOK.md) when a database restore is
-needed. Admin-saved pools still override file/Helm configuration until restored
-to file configuration in the endpoint editor.
-
-```sh
-# Removes the chart's router resources, preserving external PostgreSQL/Secrets.
 helm uninstall olr -n olr
 ```
 
-The existing [Kustomize manifests](../deploy/k8s/base) remain an alternative;
-avoid having Helm and Kustomize manage the same Deployment. The older
-`tests/k8s/acceptance.sh` targets community ingress-nginx, which
-[retired in March 2026](https://kubernetes.io/blog/2026/03/30/kubernetes-v1-36-sneak-peek/).
-The Helm example uses a separate maintained controller; adapt settings for your
-cluster rather than installing that legacy acceptance controller.
+Uninstall removes workloads and Services but retains the chart-created credentials
+Secret and both enabled PVCs. Reinstall the same release in the same namespace
+with the same values to reuse the data and keys. Deleting those PVCs/Secret or the
+namespace deletes that recovery path. Setting `persistence.enabled: false` uses
+ephemeral storage; use it only for disposable demos.
+
+The [Kustomize manifests](../deploy/k8s/base) remain an alternative; avoid having
+Helm and Kustomize manage the same Deployment.
 
 ## Production Compose
 
@@ -420,6 +444,7 @@ development stack or use the development credentials on a public server.
 
 | Symptom | Practical check |
 |---|---|
+| Bundled database or Keycloak stays Pending | Check `kubectl -n olr get pvc` and `kubectl -n olr describe pod POD_NAME`; choose an available StorageClass and sufficient cluster memory. |
 | Router never becomes ready | `docker compose logs --tail=100 router` or `kubectl -n olr logs deployment/olr-open-llm-router --tail=100`; check database URL/TLS, backend DNS/routing and health paths. Every configured model needs a healthy replica. |
 | `ImagePullBackOff` / wrong architecture | Check the repository/tag/digest, registry pull Secret and that the image architecture matches the nodes. |
 | `404 model not found` | Use `/v1/models` with a router key. Distinguish the public `chat-model` from the exact upstream model name. Use Admin model detection against every replica. |

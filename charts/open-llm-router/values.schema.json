@@ -2,66 +2,375 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "replicaCount", "existingSecret", "portal", "config"],
+  "required": [
+    "image",
+    "replicaCount",
+    "existingSecret",
+    "portal",
+    "config"
+  ],
   "properties": {
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "required": [
+        "repository",
+        "tag",
+        "digest",
+        "pullPolicy"
+      ],
       "properties": {
-        "repository": {"type": "string", "minLength": 1},
-        "tag": {"type": "string", "minLength": 1},
-        "digest": {"type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$"},
-        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^(sha256:[a-f0-9]{64})?$"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
       }
     },
-    "imagePullSecrets": {"type": "array", "items": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
-    "nameOverride": {"type": "string"},
-    "fullnameOverride": {"type": "string"},
-    "replicaCount": {"type": "integer", "enum": [1], "description": "Only one router process is supported; limits, queues and affinity are in memory."},
-    "existingSecret": {"type": "string", "minLength": 1},
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "replicaCount": {
+      "type": "integer",
+      "enum": [
+        1
+      ],
+      "description": "Only one router process is supported; limits, queues and affinity are in memory."
+    },
+    "existingSecret": {
+      "type": "string"
+    },
     "portal": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["baseURL", "cookieSecure"],
+      "required": [
+        "baseURL",
+        "cookieSecure"
+      ],
       "properties": {
-        "baseURL": {"type": "string", "pattern": "^https?://[^/?#]+/?$"},
-        "cookieSecure": {"type": "boolean"}
+        "baseURL": {
+          "type": "string",
+          "pattern": "^https?://[^/?#]+/?$"
+        },
+        "cookieSecure": {
+          "type": "boolean"
+        }
       }
     },
-    "env": {"type": "object", "additionalProperties": {"type": "string"}},
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "config": {
       "type": "object",
-      "required": ["models", "groups"],
+      "required": [
+        "models",
+        "groups"
+      ],
       "properties": {
-        "models": {"type": "object", "minProperties": 1},
-        "groups": {"type": "object"}
+        "models": {
+          "type": "object",
+          "minProperties": 1
+        },
+        "groups": {
+          "type": "object"
+        }
       }
     },
     "service": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "type": {"enum": ["ClusterIP", "NodePort", "LoadBalancer"]},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+        "type": {
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       }
     },
     "ingress": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": {"type": "boolean"},
-        "className": {"type": "string"},
-        "host": {"type": "string"},
-        "annotations": {"type": "object", "additionalProperties": {"type": "string"}},
-        "tlsSecretName": {"type": "string"}
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tlsSecretName": {
+          "type": "string"
+        }
       }
     },
-    "resources": {"type": "object"},
-    "podAnnotations": {"type": "object", "additionalProperties": {"type": "string"}},
-    "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
-    "tolerations": {"type": "array", "items": {"type": "object"}},
-    "affinity": {"type": "object"}
+    "resources": {
+      "type": "object"
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bootstrapAdminPassword": {
+          "type": "string",
+          "anyOf": [{"const": ""}, {"minLength": 15, "maxLength": 1024}]
+        },
+        "apiKeyEncryptionKey": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9+/]{43}=$"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "username",
+        "database",
+        "password",
+        "persistence",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "username": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]*$"
+        },
+        "database": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]*$"
+        },
+        "password": {
+          "type": "string"
+        },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "size",
+            "storageClass"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+            },
+            "storageClass": {
+              "type": "string"
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "externalDatabase": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      }
+    },
+    "keycloak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "baseURL",
+        "adminPassword",
+        "clientSecret",
+        "demoUserPassword",
+        "persistence",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseURL": {
+          "type": "string",
+          "pattern": "^https?://[^/?#]+/?$"
+        },
+        "adminPassword": {
+          "type": "string"
+        },
+        "clientSecret": {
+          "type": "string"
+        },
+        "demoUserPassword": {
+          "type": "string"
+        },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "size",
+            "storageClass"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+            },
+            "storageClass": {
+              "type": "string"
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "demoBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "tag",
+            "pullPolicy"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pullPolicy": {
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    }
   }
 }

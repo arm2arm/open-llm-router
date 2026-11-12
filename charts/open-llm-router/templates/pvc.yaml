@@ -1,0 +1,22 @@
+{{- range $component, $settings := dict "postgresql" .Values.postgresql "keycloak" .Values.keycloak }}
+{{- if and $settings.enabled $settings.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "olr.componentName" (dict "root" $ "component" $component) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "olr.componentSelector" (dict "root" $ "component" $component) | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $settings.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $settings.persistence.size }}
+{{- end }}
+{{- end }}

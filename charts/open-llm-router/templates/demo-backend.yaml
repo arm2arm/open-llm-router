@@ -1,0 +1,63 @@
+{{- if .Values.demoBackend.enabled }}
+{{- $component := dict "root" . "component" "demo" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "olr.componentName" $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "olr.componentSelector" $component | nindent 4 }}
+spec:
+  selector:
+    {{- include "olr.componentSelector" $component | nindent 4 }}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "olr.componentName" $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "olr.componentSelector" $component | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "olr.componentSelector" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "olr.componentSelector" $component | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mock
+          image: {{ printf "%s:%s" .Values.demoBackend.image.repository .Values.demoBackend.image.tag | quote }}
+          imagePullPolicy: {{ .Values.demoBackend.image.pullPolicy }}
+          env:
+            - {name: MOCK_MODELS, value: chat-model}
+            - {name: MOCK_TOKENS, value: "16"}
+            - {name: MOCK_TOKEN_DELAY, value: 20ms}
+          ports:
+            - {name: http, containerPort: 8000}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+          resources:
+            {{- toYaml .Values.demoBackend.resources | nindent 12 }}
+{{- end }}

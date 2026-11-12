@@ -12,10 +12,60 @@ fullnameOverride: ""
 # The router's limits, queue and affinity are process-local. Only 1 is supported.
 replicaCount: 1
 
-# Create this Secret separately in the release namespace. It must contain
-# OLR_DATABASE_URL. Add bootstrap, encryption, OIDC and backend secrets as needed.
-# The chart never generates passwords or stores secrets in Helm values/history.
-existingSecret: olr-secrets
+# Empty: create a release-scoped Secret and generate any blank credentials once.
+# Set a name to use an existing Secret instead (see README for required keys).
+existingSecret: ""
+secrets:
+  bootstrapAdminPassword: ""
+  apiKeyEncryptionKey: ""
+  # Additional secret environment variables, e.g. backend tokens or OIDC secrets.
+  env: {}
+
+# Bundled PostgreSQL is ready to use; requires a default StorageClass.
+postgresql:
+  enabled: true
+  image: postgres:17
+  username: olr
+  database: olr
+  password: ""
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+# Used only when postgresql.enabled=false and existingSecret is empty.
+externalDatabase:
+  url: ""
+
+# Development SSO, including an imported realm, portal client and staff user.
+# Keep baseURL stable after initialization; realm import does not update a realm.
+keycloak:
+  enabled: true
+  image: quay.io/keycloak/keycloak:26.8.2
+  baseURL: http://localhost:8081
+  adminPassword: ""
+  clientSecret: ""
+  demoUserPassword: ""
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 1Gi}
+
+# Deterministic OpenAI-compatible replies; no GPU or downloaded models required.
+demoBackend:
+  enabled: true
+  image:
+    repository: olr-mock-llm
+    tag: local
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 32Mi}
+    limits: {memory: 128Mi}
 
 # Defaults support localhost port-forwarding. Use an HTTPS origin and true for
 # cookieSecure when publishing the portal.
@@ -25,13 +75,14 @@ portal:
 
 # Non-secret environment variables, e.g. OIDC_ISSUER, OIDC_PORTAL_CLIENT_ID,
 # OIDC_GROUPS_CLAIM, OLR_BACKEND_ALLOWED_CIDRS, OLR_BACKEND_TOKEN_ENVS, OTEL_*.
-# OLR_CONFIG and PORTAL_* below are managed by the chart.
+# OLR_CONFIG, PORTAL_* and bundled service connection variables are managed by
+# the chart. Disable bundled Keycloak to supply external OIDC_* values.
 env: {}
 
 # The same router YAML as config.example.yaml. ${ENV_VAR} references are passed
-# unchanged to the router. Do not put credentials here; use existingSecret.
-# This example expects an existing Ollama Service named ollama in this namespace.
-# Replace its origin/upstream_model with a backend reachable from the router pod.
+# unchanged to the router. Put credentials in secrets.env or existingSecret.
+# The default endpoint resolves to this release's bundled demo backend.
+# For a real backend, disable demoBackend and replace upstream_model/pool.
 config:
   auth:
     default_key_lifetime_days: 90
@@ -39,17 +90,17 @@ config:
     timezone: UTC
   models:
     chat-model:
-      upstream_model: replace-with-installed-model
+      upstream_model: chat-model
       protocols: [openai]
       timeout_s: 900
       idle_timeout_s: 120
       queue_timeout_s: 120
       session_affinity: true
       pool:
-        - url: http://ollama:11434
-          health_path: /
+        - url: ${OLR_DEMO_BACKEND_URL}
+          health_path: /health
           weight: 1
-          max_inflight: 1
+          max_inflight: 4
   groups:
     staff:
       models: [chat-model]
