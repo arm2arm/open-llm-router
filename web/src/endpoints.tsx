@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Settings2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { UpstreamModels } from './upstream-models'
 import {
   Dialog,
   DialogContent,
@@ -69,6 +70,15 @@ function Editor({
     entry.configuration.pool.map((value, index) => ({ id: index, value })),
   )
   const nextID = useRef(replicas.length)
+  const [upstream, setUpstream] = useState(
+    entry.configuration.upstream_model || '',
+  )
+  const sources = JSON.stringify(
+    replicas.map(({ value }) => ({
+      url: value.url,
+      bearer_token_env: value.bearer_token_env || '',
+    })),
+  )
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [result, setResult] = useState<TestResult | null>(null)
@@ -146,7 +156,8 @@ function Editor({
           <Input
             name="upstream_model"
             aria-label="Upstream model name"
-            defaultValue={entry.configuration.upstream_model}
+            value={upstream}
+            onChange={(event) => setUpstream(event.target.value)}
             placeholder={entry.model}
             maxLength={256}
           />
@@ -154,6 +165,13 @@ function Editor({
             Use the name served by Ollama or vLLM. Empty forwards {entry.model}.
           </span>
         </label>
+        <UpstreamModels
+          key={sources}
+          model={entry.model}
+          sources={sources}
+          value={upstream}
+          onChoose={setUpstream}
+        />
         <fieldset className="grid gap-2 rounded-md border p-3">
           <legend className="px-1 text-sm">Native backend protocols</legend>
           {(['openai', 'anthropic'] as const).map((protocol) => (
@@ -251,7 +269,22 @@ function Editor({
                 type="url"
                 required
                 placeholder="http://ollama:11434"
-                defaultValue={value.url}
+                value={value.url}
+                onChange={(event) =>
+                  setReplicas((current) =>
+                    current.map((replica) =>
+                      replica.id === id
+                        ? {
+                            ...replica,
+                            value: {
+                              ...replica.value,
+                              url: event.target.value,
+                            },
+                          }
+                        : replica,
+                    ),
+                  )
+                }
                 maxLength={512}
               />
             </label>
@@ -297,7 +330,22 @@ function Editor({
               <select
                 name={`bearer_token_env.${id}`}
                 className="select"
-                defaultValue={value.bearer_token_env}
+                value={value.bearer_token_env || ''}
+                onChange={(event) =>
+                  setReplicas((current) =>
+                    current.map((replica) =>
+                      replica.id === id
+                        ? {
+                            ...replica,
+                            value: {
+                              ...replica.value,
+                              bearer_token_env: event.target.value,
+                            },
+                          }
+                        : replica,
+                    ),
+                  )
+                }
               >
                 <option value="">No backend authentication</option>
                 {credentials.map((name) => (

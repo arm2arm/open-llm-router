@@ -16,7 +16,7 @@ When you use the LLM router at `<https://router.example.org>`, it stores:
 | Data | Content | Kept for | How you delete it |
 |---|---|---|---|
 | Account | identity-provider issuer and subject, username, email, group memberships, enabled flag, last login | while you have access | ask `<contact>`; the operator deletes the account with everything below |
-| API keys | label, first 12 characters, a one-way hash of the key, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
+| API keys | label, first 12 characters, a one-way hash, optional encrypted copy for administrator recovery, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
 | Sessions | a hash of the session cookie, creation and expiry | 8 hours, or until you sign out | sign out |
 | Per-request records | time, model, replica, protocol, status, input and output token counts, latency, time to first token, the key used, and the end user if a trusted application made the call for you | `<90>` days | **Usage → Delete my activity**, at any time |
 | Daily totals | per day and model: number of requests and tokens | `<400>` days | not deletable by you: needed to enforce today's and this month's quotas and for accounting; the operator deletes them with your account |

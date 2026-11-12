@@ -11,6 +11,7 @@ services:
       - "127.0.0.1:${OLR_PORT:-8080}:8080"
     environment:
       OLR_DATABASE_URL: ${OLR_DATABASE_URL:-postgres://olr:olr-dev-only@postgres:5432/olr?sslmode=disable}
+      OLR_API_KEY_ENCRYPTION_KEY: ${OLR_API_KEY_ENCRYPTION_KEY:-}
       OLR_BOOTSTRAP_ADMIN_PASSWORD: ${OLR_BOOTSTRAP_ADMIN_PASSWORD:-}
       OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE: ${OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:${KEYCLOAK_PORT:-8081}/realms/olr-dev}

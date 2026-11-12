@@ -41,8 +41,10 @@ docker compose exec -T router olr admin user disable -id "$user_id"
 ```
 
 Key creation prints the plaintext once on stdout. Keys contain 32 bytes from `crypto/rand`,
-encoded as 43 base62 characters after `olr-`. Only the SHA-256 hash and a 12-character display
-prefix are stored; listing returns metadata only. Request logs contain neither credentials nor
+encoded as 43 base62 characters after `olr-`. The SHA-256 hash and a 12-character display
+prefix are stored. With `OLR_API_KEY_ENCRYPTION_KEY`, newly issued keys also store
+AES-256-GCM ciphertext for explicit Admin copy; older keys remain unrecoverable.
+Listing returns metadata only. Request logs contain neither credentials nor
 hashes. Keys expire after `auth.default_key_lifetime_days` (default 90; range 1–36500), unless
 `key create -lifetime` supplies a positive Go duration. The CLI reads this setting from
 `-config` / `OLR_CONFIG`, or uses 90 days without a config file. No command issues indefinite keys.
@@ -173,7 +175,8 @@ before the login finishes. Sessions check the stored enabled flag on every reque
 
 The portal's JSON API is described in [PORTAL_API.md](PORTAL_API.md).
 It covers current user/limits, owned keys, per-model daily/monthly usage and allowed models.
-Mutations require JSON and the configured origin; API keys are returned once at creation.
+Mutations require JSON and the configured origin; API keys are returned at creation
+and through the explicit Admin copy route when encrypted recovery is configured.
 Logout invalidates the local session and returns a discovered Keycloak logout URL for the
 browser to visit. Keycloak asks for confirmation because no ID token is retained or sent
 to the browser as a logout hint. `make portal-check` verifies the resulting SSO session is

@@ -469,12 +469,18 @@ must retain at least one replica; at most 32 replicas are accepted.
    the same upstream model and native protocols.
 2. Choose a server-provided **Credential reference**, or **None** for an
    unauthenticated backend. Secret values cannot be entered or read in the UI.
-3. Click **Test connections**. This checks HTTP-200 health responses, not whether
+3. The editor automatically detects models after origins or credentials change.
+   Choose **Detected upstream models** or click **Refresh models**. Only names
+   available on every replica are offered. One detected name fills an empty
+   **Upstream model name**; an existing/manual name is never replaced automatically.
+   OpenAI-compatible `/v1/models` and Ollama `/api/tags` catalogs are supported.
+   Discovery failures leave manual entry available and do not save a revision.
+4. Click **Test connections**. This checks HTTP-200 health responses, not whether
    the named model is installed or supports tools. No revision is saved.
-4. Click **Save and apply**. The server validates and checks again, commits a new
+5. Click **Save and apply**. The server validates and checks again, commits a new
    revision, then switches new requests to it. Existing streams finish with their
    original configuration. User concurrency, quotas and usage accounting continue.
-5. Make a real completion with a permitted user's router key. Clients keep using
+6. Make a real completion with a permitted user's router key. Clients keep using
    the public model name and the router's `/v1` URL.
 
 A failed validation/check keeps the active revision. If another admin saved first,
@@ -491,6 +497,54 @@ capacity defaults** to set health path `/`, capacity `1`, header timeout `900`
 seconds and idle timeout `120` seconds. Use weight `1` and no credential for an
 unauthenticated Ollama. Test, save, then send an actual completion. Hermes should
 still use the router base URL `http://localhost:8080/v1` and model `chat-model`.
+
+Streaming, thinking, tool calling and images use the backend's native API. The
+router preserves those request fields and response events; it cannot add a
+capability the selected model lacks. For OpenAI clients, request `stream: true`,
+read SSE incrementally, and display `delta.reasoning_content` separately from
+`delta.content`; tools arrive in `delta.tool_calls`. Images use image content
+parts. Anthropic clients keep their native thinking/image/tool blocks. For a
+command-line stream check, use `curl -N` (without output buffering).
+
+For Hermes, configure the selected profile's `display.streaming: true` and
+`display.show_reasoning: true`. Messaging gateways also require
+`streaming.enabled: true`; restart the affected Hermes session/gateway after
+changing its configuration. Reasoning controls must match the selected backend
+model; for example use `agent.reasoning_effort: low` if that level is supported.
+
+### Copy user API keys as Admin
+
+In **Admin → Manage user → API keys**, **Copy key** appears beside **Active**.
+Only a full admin session can request the plaintext, and only for an active key
+belonging to an enabled user who has completed any required password change.
+Copy requires HTTPS or localhost and browser clipboard permission. The key is
+sent only in the explicit copy response, never in lists, page text or browser
+storage. Treat the clipboard as a credential and clear it after use.
+
+Enable encryption before issuing keys:
+
+```sh
+# Generate once and store privately in your secret manager / root .env.
+openssl rand -base64 32
+# OLR_API_KEY_ENCRYPTION_KEY=<generated value>
+docker compose up -d --no-deps --force-recreate router
+```
+
+`OLR_API_KEY_ENCRYPTION_KEY` is a base64-encoded 32-byte AES-256-GCM key. Pass the
+same value to every router process and to CLI key issuance. Compose forwards the
+root `.env` setting; production deployments must inject it as a secret. Back it
+up separately from PostgreSQL and keep it stable across upgrades. A different or
+missing encryption key disables recovery of previously encrypted keys; changing
+it does not invalidate their normal SHA-256 authentication. Key re-encryption and
+master-key rotation are not implemented, so retain the original key until its
+API keys have been replaced. Invalid nonempty values fail startup.
+
+New API keys retain their authentication hash and additionally store randomized,
+authenticated ciphertext bound to the owner and hash. Without the setting, new
+keys remain hash-only. Existing hash-only keys cannot be recovered. Issue a new
+key through the user's **API keys** page or `olr admin key create -user UUID`,
+update the client, verify it works, then revoke the old key. No key is replaced
+or revoked automatically. Revoked and expired keys cannot be copied.
 
 #### Destination and credential setup
 
@@ -557,7 +611,7 @@ group-policy editors, provider adapters and Keycloak settings remain planned wor
   outstanding requests divided by weight, subject to each replica's `max_inflight`.
   Queueing is per logical model. A connection failure before response commitment
   can be retried once on another replica; an already-started stream is not replayed.
-- There is no shared provider budget, money billing, provider discovery or
+- There is no shared provider budget, money billing, provider registry or
   provider-specific retry/rate-limit integration. Pools are independent per model:
   using one origin in several models does not create a shared capacity cap.
 - The current scope is locally hosted models. A remote service must satisfy all

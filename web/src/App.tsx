@@ -558,8 +558,9 @@ function Keys() {
       <div className="hint">
         <ShieldCheck size={18} className="shrink-0 mt-1" />
         <p>
-          Full keys appear only once, when you create them. Revoking a key takes
-          effect immediately; a revoked key can then be removed for good.
+          Save your key when you create it. Administrators can copy keys when
+          encrypted recovery is enabled. Revoking a key takes effect
+          immediately; a revoked key can then be removed for good.
           <br />
           <NavLink
             to="/connect"
@@ -577,7 +578,7 @@ function Keys() {
             </DialogTitle>
             <DialogDescription>
               {secret
-                ? 'Copy this key now. You won’t be able to see it again.'
+                ? 'Copy and store this key securely before closing.'
                 : 'Give your key a name so you can recognize it later.'}
             </DialogDescription>
           </DialogHeader>

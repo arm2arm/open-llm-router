@@ -97,6 +97,7 @@ no limit.
 |---|---|
 | `OLR_CONFIG` | config file path (image: `/etc/olr/config.yaml`) |
 | `OLR_DATABASE_URL` | Postgres URL — **secret** |
+| `OLR_API_KEY_ENCRYPTION_KEY` | optional base64 32-byte AES key for Admin copy of newly issued keys — **secret**; keep stable and back up separately from PostgreSQL |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` | owner-only file for one-time protected local administrator bootstrap; preferred over environment password |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | alternative bootstrap password — **secret**; configure only one source; ignored once initialized |
 | `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables SSO; the portal is always mounted |
@@ -239,7 +240,9 @@ principals can take up to one minute to refresh.
 
 ### Back up Postgres
 
-The database holds users, API-key/password hashes, sessions, overrides and usage.
+The database holds users, API-key/password hashes, optional encrypted API keys,
+sessions, overrides and usage. Back up the API-key encryption secret separately;
+losing it prevents Admin copy but does not invalidate API-key authentication.
 Protect dumps as secrets and back it up daily:
 
 ```sh

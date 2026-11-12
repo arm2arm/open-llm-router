@@ -101,6 +101,8 @@ async function startFixture(
       'OLR_BOOTSTRAP_ADMIN_PASSWORD',
       '-e',
       'OIDC_PORTAL_CLIENT_SECRET=browser-test-only',
+      '-e',
+      'OLR_API_KEY_ENCRYPTION_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=',
       '-v',
       `${config}:/etc/olr/config.yaml:ro`,
       image,
@@ -450,6 +452,28 @@ test('administrator creates a local user and manages memberships, keys, disablem
     await managePerson()
     const keys = page.getByRole('region', { name: 'User API keys' })
     await expect(keys).toContainText('laptop')
+    await keys
+      .getByRole('button', { name: 'Copy key laptop', exact: true })
+      .click()
+    await expect(keys.getByRole('status')).toHaveText(
+      'API key copied to clipboard.',
+    )
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(key)
+    expect(
+      await page.evaluate(() =>
+        JSON.stringify({ ...localStorage, ...sessionStorage }),
+      ),
+    ).not.toContain(key)
+    const fixture = fixtures.find((fixture) => fixture.base === base)!
+    sql(
+      fixture.database,
+      "UPDATE api_keys SET key_ciphertext=NULL,key_encryption_id=NULL WHERE label='laptop'",
+    )
+    await managePerson()
+    await expect(
+      keys.getByRole('button', { name: 'Copy key laptop', exact: true }),
+    ).toBeDisabled()
+    expect(await apiStatus(key)).toBe(200)
     expect((await page.locator('body').innerText()).includes(key)).toBe(false)
     await keys
       .getByRole('button', { name: 'Revoke laptop', exact: true })
@@ -646,6 +670,32 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
     name: 'Edit model endpoints',
     exact: true,
   })
+  const detected = form.getByLabel('Detected upstream models', { exact: true })
+  await expect(detected).toBeVisible()
+  await expect(detected.locator('option')).toContainText([
+    'Choose a model',
+    'chat-model',
+  ])
+  await form
+    .getByLabel('Upstream model name', { exact: true })
+    .fill('missing-model')
+  await form
+    .getByRole('button', { name: 'Refresh models', exact: true })
+    .click()
+  await expect(
+    form.getByRole('region', { name: 'Upstream model discovery' }),
+  ).toContainText('not found on every replica')
+  await expect(
+    form.getByLabel('Upstream model name', { exact: true }),
+  ).toHaveValue('missing-model')
+  await detected.selectOption('chat-model')
+  await form.getByLabel('Upstream model name', { exact: true }).fill('')
+  await form
+    .getByRole('button', { name: 'Refresh models', exact: true })
+    .click()
+  await expect(
+    form.getByLabel('Upstream model name', { exact: true }),
+  ).toHaveValue('chat-model')
   await form.getByRole('button', { name: 'Add replica', exact: true }).click()
   const second = form.getByRole('group', { name: 'Replica 2', exact: true })
   await second

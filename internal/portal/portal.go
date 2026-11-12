@@ -12,10 +12,12 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
 	"github.com/arm2arm/open-llm-router/internal/limits"
@@ -40,6 +42,7 @@ type Handler struct {
 	// Pools is shown on the admin pages; installed before serving.
 	Pools     *pool.Manager
 	Endpoints *endpoints.Service
+	keyCipher *auth.KeyCipher
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
@@ -47,6 +50,11 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 		return nil, err
 	}
 	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), done: make(chan struct{}), passwordSlots: make(chan struct{}, 2)}
+	var err error
+	h.keyCipher, err = auth.LoadKeyCipher(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
 	h.startSSO()
 	h.mux.HandleFunc("GET /portal/login", h.login)
 	h.mux.HandleFunc("GET /portal/login/local", func(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +83,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/groups", h.admin(h.setLocalGroups))
 	h.mux.HandleFunc("POST /portal/api/admin/users/{id}/password", h.admin(h.resetLocalPassword))
 	h.mux.HandleFunc("DELETE /portal/api/admin/users/{id}/keys/{key}", h.admin(h.revokeUserKey))
+	h.mux.HandleFunc("POST /portal/api/admin/users/{id}/keys/{key}/copy", h.admin(h.copyUserKey))
 	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/overrides/{field}", h.admin(h.setOverride))
 	h.mux.HandleFunc("DELETE /portal/api/admin/users/{id}/overrides/{field}", h.admin(h.setOverride))
 	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/enabled", h.admin(h.setEnabled))
@@ -83,6 +92,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("GET /portal/api/admin/endpoints", h.admin(h.endpointList))
 	h.mux.HandleFunc("PUT /portal/api/admin/endpoints", h.admin(h.endpointSave))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/test", h.admin(h.endpointTest))
+	h.mux.HandleFunc("POST /portal/api/admin/endpoints/models", h.admin(h.endpointModels))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/restore", h.admin(h.endpointRestore))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {

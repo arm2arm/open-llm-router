@@ -43,7 +43,10 @@ func (s postgresStore) touch(ctx context.Context, keyID string) error {
 
 // Admin uses the same store as the server; it never returns database errors
 // containing query arguments, credentials, or hashes to a caller or log.
-type Admin struct{ Pool *pgxpool.Pool }
+type Admin struct {
+	Pool      *pgxpool.Pool
+	KeyCipher *KeyCipher
+}
 
 func (a Admin) AddUser(ctx context.Context, username, email string, groups []string) (string, error) {
 	if strings.TrimSpace(username) == "" {
@@ -89,20 +92,21 @@ func (a Admin) SetEnabled(ctx context.Context, userID string, enabled bool) erro
 
 // KeyInfo contains displayable metadata only. Hashes are deliberately excluded.
 type KeyInfo struct {
-	ID       string     `json:"id"`
-	Prefix   string     `json:"prefix"`
-	Label    string     `json:"label"`
-	Created  time.Time  `json:"created"`
-	LastUsed *time.Time `json:"last_used"`
-	Expires  *time.Time `json:"expires"`
-	Revoked  bool       `json:"revoked"`
-	Expired  bool       `json:"expired"`
-	Class    string     `json:"class"`
+	ID            string     `json:"id"`
+	Prefix        string     `json:"prefix"`
+	Label         string     `json:"label"`
+	Created       time.Time  `json:"created"`
+	LastUsed      *time.Time `json:"last_used"`
+	Expires       *time.Time `json:"expires"`
+	Revoked       bool       `json:"revoked"`
+	Expired       bool       `json:"expired"`
+	CopyAvailable bool       `json:"copy_available"`
+	Class         string     `json:"class"`
 	// TrustedForwarder keys may name the end user of a call.
 	TrustedForwarder bool `json:"trusted_forwarder"`
 }
 
-// CreateKey is the only operation that returns a plaintext key. A positive
+// CreateKey returns a plaintext key. Admin copy can recover encrypted keys. A positive
 // lifetime is mandatory; indefinite bootstrap keys cannot be created.
 func (a Admin) CreateKey(ctx context.Context, userID, label string, lifetime time.Duration) (string, error) {
 	return a.CreateKeyOfClass(ctx, userID, label, "interactive", lifetime)
@@ -138,10 +142,19 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND enabled FOR SHARE`, userID).Scan(&id); err != nil {
 			return err
 		}
-		result, err := tx.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
-		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
+		var sealed []byte
+		var encryptionID *string
+		if a.KeyCipher != nil {
+			sealed, err = a.KeyCipher.seal(key, id, hash[:])
+			if err != nil {
+				return err
+			}
+			encryptionID = &a.KeyCipher.id
+		}
+		result, err := tx.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder,key_ciphertext,key_encryption_id)
+		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7,$8,$9
 		FROM users WHERE id = $1 AND enabled AND NOT EXISTS
-		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted, sealed, encryptionID)
 		if err != nil {
 			return err
 		}
@@ -157,8 +170,9 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 }
 
 func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class, trusted_forwarder,COALESCE(expires<=clock_timestamp(),false)
-		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID)
+	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class, trusted_forwarder,COALESCE(expires<=clock_timestamp(),false),
+		COALESCE(key_encryption_id=$2 AND $2<>'' AND key_ciphertext IS NOT NULL AND NOT revoked AND (expires IS NULL OR expires>clock_timestamp()),false)
+		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID, a.cipherID())
 	if err != nil {
 		return nil, errors.New("list API keys failed")
 	}
@@ -166,7 +180,7 @@ func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 	keys := []KeyInfo{}
 	for rows.Next() {
 		var k KeyInfo
-		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class, &k.TrustedForwarder, &k.Expired); err != nil {
+		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class, &k.TrustedForwarder, &k.Expired, &k.CopyAvailable); err != nil {
 			return nil, errors.New("read API key metadata failed")
 		}
 		keys = append(keys, k)

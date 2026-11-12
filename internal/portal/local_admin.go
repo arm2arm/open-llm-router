@@ -141,3 +141,27 @@ func (h *Handler) revokeUserKey(w http.ResponseWriter, r *http.Request, _ user) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *Handler) copyUserKey(w http.ResponseWriter, r *http.Request, _ user) {
+	var body struct{}
+	if !h.jsonBody(w, r, &body) {
+		return
+	}
+	id, ok := pathUUID(w, r, "id", "user not found")
+	if !ok {
+		return
+	}
+	keyID, ok := pathUUID(w, r, "key", "key not found")
+	if !ok {
+		return
+	}
+	key, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher}).CopyKey(r.Context(), id, keyID)
+	if errors.Is(err, auth.ErrKeyUnavailable) {
+		fail(w, 409, "key_unavailable", auth.ErrKeyUnavailable.Error())
+		return
+	}
+	if localAdminError(w, err) {
+		return
+	}
+	respond(w, 200, map[string]string{"key": key})
+}

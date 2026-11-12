@@ -119,7 +119,7 @@ func (h *Handler) adminUser(w http.ResponseWriter, r *http.Request, _ user) {
 		}
 		return
 	}
-	admin := auth.Admin{Pool: h.pool}
+	admin := auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher}
 	overrides, err := admin.ListOverrides(r.Context(), id)
 	if err != nil {
 		unavailable(w)
