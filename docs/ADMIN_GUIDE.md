@@ -20,7 +20,7 @@ working functionality.
 | Issue/revoke a user's API key as an operator | `olr admin key create/revoke` | No restart |
 | Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment | Router restart/recreation |
 | Configure Keycloak, endpoints or group policies from the Admin page | **Not implemented** | See the feature plan |
-| Log in with a local administrator password, including without Keycloak | Portal JSON API | Browser forms are pending in #74 |
+| Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
 
 The portal and local password API run without OIDC and during a Keycloak outage.
@@ -86,16 +86,35 @@ hashes and must be protected as secrets.
 
 ### Use local authentication without Keycloak
 
-Issue #73 adds the JSON authentication handlers. The browser sign-in and
-password-change forms remain in [#74](https://github.com/arm2arm/open-llm-router/issues/74).
-Until then, use the operator CLI or the API workflow below.
+Open `/portal/` to choose a sign-in method. **Continue with Keycloak** is the
+primary option when Keycloak is configured; the local username/password form
+remains visible. With no Keycloak configuration, only local sign-in is offered.
+During an outage the Keycloak action is disabled and local login stays available.
+Use `/portal/login/local` to go directly to local sign-in without contacting or
+redirecting to Keycloak. This route also lets an already signed-in Keycloak user
+switch to a local account; successful local login replaces the old session.
+
+Sign in as `admin` with the bootstrap password. The portal requires a replacement
+of at least 15 characters before allowing workspace or Admin access. Enter the
+bootstrap password in **Current password**, choose and confirm the replacement,
+then sign in again. Later changes are under **Account** and sign out all local
+sessions. **Sign out** invalidates the current session; local logout never needs
+Keycloak. Session cookies are HttpOnly and passwords are not put in URLs or
+browser storage.
+
+The sidebar and **Account** page label the identity as **Protected local
+administrator**, **Local account**, or **Keycloak account**. The bundled realm's
+`admin` is a Keycloak account with a separate UUID and credentials. Keycloak users
+manage their password through their organization, rather than this local form.
+Additional local password-user management is tracked in #75; ordinary CLI API-key
+users do not automatically acquire password credentials.
 
 Set `PORTAL_BASE_URL` to the public HTTPS origin. For local HTTP only, explicitly
 set `PORTAL_COOKIE_SECURE=false`. An HTTP origin with secure cookies leaves the
 API server running but refuses cookie-issuing login operations. Omitting `oidc`
 enables local-only authentication; no Keycloak realm is needed.
 
-Create owner-only JSON files with your secret manager outside the checkout:
+For API-based access, create owner-only JSON files with your secret manager outside the checkout:
 `local-login.json` holds `{"username":"admin","password":"<current password>"}`;
 `local-change.json` holds `{"current_password":"<current password>","new_password":"<replacement>"}`.
 Keep those values out of shell arguments/history. Use a private cookie jar:
@@ -138,7 +157,8 @@ and stored in PostgreSQL; two password operations can run concurrently per proce
 OIDC discovery, API-token verification initialization and group-sync initialization
 run independently of listening. Failed initialization retries every ten seconds.
 `GET /portal/api/auth` reports SSO discovery availability separately; affected SSO
-routes return 503 during an outage. Existing local sessions, local login, Admin,
+API login routes return 503 during an outage; the browser Keycloak entry returns
+to the sign-in page with the local alternative. Existing local sessions, local login, Admin,
 API keys and readiness remain independent of Keycloak. Discovery health is polled
 every ten seconds, and SSO can recover without a router restart.
 
@@ -146,9 +166,9 @@ every ten seconds, and SSO can recover without a router restart.
 
 ```mermaid
 flowchart TD
-    Browser[User or administrator browser] -->|Portal sign-in| KC[Keycloak: bundled for development, external for production]
+    Browser[User or administrator browser] -->|Keycloak sign-in| KC[Keycloak: bundled for development, external for production]
     KC -->|Verified identity and groups| Portal[Portal embedded in the Go router]
-    Local[Protected local administrator] -->|Password API and server-side session| Portal
+    Browser -->|Local sign-in and server-side session| Portal
     Client[SDK, coding client or trusted application] -->|Router API key or configured OIDC access token| Auth[Authenticate caller]
     Auth --> Policy[Resolve groups and user overrides]
     Policy --> Model[Resolve model alias and logical model]
@@ -603,10 +623,10 @@ Full erasure is an operator CLI operation; see [RUNBOOK.md](RUNBOOK.md#erase-a-u
 | OIDC startup/login fails | Discovery and logout metadata, issuer reachability, client secret, exact redirects and secure cookies |
 | Stream stalls behind HTTPS | TLS proxy buffering/timeouts and backend idle timeout |
 | Group policy changes unexpectedly | Multiple memberships, omitted limits and group-sync name/path consistency |
-| Keycloak unavailable | Use the local authentication API or operator CLI; inspect `/portal/api/auth` for SSO availability; browser forms are pending in #74 |
+| Keycloak unavailable | Open `/portal/login/local` or use the local API/operator CLI; inspect `/portal/api/auth` for SSO availability |
 
-Protected credentials, local session APIs and independent portal startup are implemented;
-browser forms, dual-login UI and Admin-managed external Keycloak configuration remain in
+Protected credentials, local sessions, independent portal startup and dual-login
+browser forms are implemented. Admin-managed external Keycloak configuration remains in
 [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
 local tests and this documentation do not replace deployed acceptance and two
 weeks of real user activity.

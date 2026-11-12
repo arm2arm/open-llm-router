@@ -12,8 +12,8 @@ The current administration interfaces and setup are described in
 administrator, dual login, Admin-managed Keycloak connections, endpoints and group
 policies is tracked separately in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md);
 These extend the first release. Protected credentials (#72) and independent local
-session APIs (#73) are implemented; browser forms and the configuration editors
-remain in the linked delivery plan.
+session APIs (#73) and browser sign-in/password flows (#74) are implemented;
+local user management and the configuration editors remain in the linked delivery plan.
 
 ## 0. Changes
 

@@ -98,6 +98,6 @@ func (h *Handler) requireSSO(w http.ResponseWriter) *ssoProvider {
 func (h *Handler) authMethods(w http.ResponseWriter, _ *http.Request) {
 	respond(w, 200, map[string]any{
 		"local": map[string]any{"available": h.safeCookies(), "login_url": "/portal/login/local", "password_url": "/portal/password"},
-		"oidc":  map[string]any{"configured": h.cfg.OIDC != nil, "available": h.safeCookies() && h.ssoAvailable.Load(), "login_url": "/portal/login"},
+		"oidc":  map[string]any{"configured": h.cfg.OIDC != nil, "available": h.safeCookies() && h.ssoAvailable.Load(), "login_url": "/portal/sign-in/keycloak"},
 	})
 }

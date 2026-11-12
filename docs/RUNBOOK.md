@@ -160,7 +160,9 @@ The first change is required before session/API-key access. Later rotations use
 the same command and revoke existing sessions. The current password is required;
 there is no recovery-reset command yet (#76). Local JSON login/password/logout
 handlers work without Keycloak; [the guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak)
-shows their use. Browser forms remain in #74. The reserved local administrator cannot be deleted, disabled, demoted or
+shows their use. Browser local sign-in is at `/portal/login/local`; the first login
+requires a replacement password, and later rotation is under **Account**. The
+reserved local administrator cannot be deleted, disabled, demoted or
 converted to an SSO identity through ordinary application/SQL operations.
 
 ### Add a model or a replica

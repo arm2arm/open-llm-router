@@ -123,6 +123,24 @@ func TestLocalAuthenticationRejectsCrossOriginBeforePasswords(t *testing.T) {
 	}
 }
 
+func TestBrowserLoginRoutesRetainLocalAlternativeDuringOutage(t *testing.T) {
+	h, err := New(t.Context(), &config.Config{Portal: config.Portal{BaseURL: "https://portal.example", CookieSecure: true}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	for _, tc := range []struct{ path, location string }{
+		{"/portal/login/local", "/portal/sign-in/local"},
+		{"/portal/sign-in/keycloak", "/portal/sign-in?sso=unavailable"},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "https://portal.example"+tc.path, nil))
+		if w.Code != http.StatusSeeOther || w.Header().Get("Location") != tc.location || len(w.Result().Cookies()) != 0 {
+			t.Fatalf("%s did not retain a local sign-in path", tc.path)
+		}
+	}
+}
+
 func TestPasswordWorkIsBoundedAndForwardingHeadersIgnored(t *testing.T) {
 	h := &Handler{passwordSlots: make(chan struct{}, 2)}
 	h.passwordSlots <- struct{}{}

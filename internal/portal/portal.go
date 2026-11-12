@@ -47,7 +47,10 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), done: make(chan struct{}), passwordSlots: make(chan struct{}, 2)}
 	h.startSSO()
 	h.mux.HandleFunc("GET /portal/login", h.login)
-	h.mux.HandleFunc("GET /portal/login/local", h.authMethods)
+	h.mux.HandleFunc("GET /portal/login/local", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/portal/sign-in/local", http.StatusSeeOther)
+	})
+	h.mux.HandleFunc("GET /portal/sign-in/keycloak", h.browserLogin)
 	h.mux.HandleFunc("POST /portal/login/local", h.localLogin)
 	h.mux.HandleFunc("GET /portal/callback", h.callback)
 	h.mux.HandleFunc("GET /portal/api/auth", h.authMethods)
