@@ -1,0 +1,76 @@
+# open-llm-router example configuration. It is the config of the local Compose
+# stack and points at the two mock backends.
+#
+# - ${NAME} is replaced by the environment variable NAME; start-up fails if it
+#   is not set. Inside {...} or [...] put the reference in quotes: "${NAME}".
+# - Unknown keys are errors. Settings from docs/PLAN.md §9 that are not built
+#   yet are refused until they are.
+# - Secrets are not set here. They are read from the environment only:
+#   OLR_DATABASE_URL and OIDC_PORTAL_CLIENT_SECRET.
+
+# Every /v1/* route requires an API key. Admin-created keys expire by default.
+auth:
+  default_key_lifetime_days: 90
+
+# IANA timezone for both daily accounting and day/month quota resets.
+limits:
+  timezone: UTC                    # default; e.g. Europe/Berlin
+
+# How long usage records are kept. A job deletes older rows at startup and
+# daily at run_at (limits.timezone). State these periods in the privacy notice.
+retention:
+  usage_days: 90                   # per-request records (default 90)
+  usage_daily_days: 400            # daily totals for quotas/accounting (default 400, min 62)
+  run_at: "03:00"                  # default
+
+# No portal in the acceptance overlay: API keys only.
+
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    timeout_s: 900
+    idle_timeout_s: 30             # max silence between response chunks
+    queue_timeout_s: 10            # wait for a free replica when all are full (0: 503 at once)
+    session_affinity: true         # same X-Session-Id -> same replica while it has capacity
+    # priority: {interactive: 0, batch: 10}  # sent as "priority" to vLLM started
+    #                                        # with --scheduling-policy priority
+    # upstream_model: backend-served-name  # optional, also applied to aliases
+    pool:
+      # weight is the relative throughput of a replica; max_inflight caps the
+      # requests it serves at once.
+      - {url: http://mock-llm-a:8000, weight: 2.0, max_inflight: 64}
+      - {url: http://mock-llm-b:8000, weight: 1.0, max_inflight: 32}
+      # For a vLLM --api-key backend, add bearer_token_env: VLLM_API_KEY
+      # to its replica and export that variable in the router's environment.
+      # health_path defaults to /health (vLLM/SGLang); use / for Ollama.
+
+# Policy per group: model access is the union over matching memberships; no
+# matching group means no access. Aliases inherit access to their target model.
+# Limits take the largest value per field; an omitted limit in any matching
+# group means unlimited. Limits apply per user across all their keys/replicas.
+#   tokens_per_day, tokens_per_month  quotas (input + output tokens)
+#   rpm, tpm                          requests and tokens per minute
+#   max_concurrent                    calls at once with interactive keys
+#   max_concurrent_batch              ... with batch keys (default: max_concurrent)
+#   strict_quota: true                reserve max_tokens + request size before a
+#                                     call, so the quota cannot be overshot; such
+#                                     calls must set max_tokens. Strict only if
+#                                     every matching group is strict.
+# `olr admin override set` replaces one of these for one user.
+groups:
+  staff:    {models: ["*"], tokens_per_day: 2000000, rpm: 60, max_concurrent: 4, max_concurrent_batch: 8}
+  students: {models: [chat-model], tokens_per_day: 300000, rpm: 20, tpm: 20000, max_concurrent: 2}
+  admins:   {models: ["*"], admin: true}  # admin: portal admin pages
+
+# Applications such as Open WebUI can call for their users with one key
+# created by `olr admin key create -trusted-forwarder`. Such a key may name
+# the end user in X-OLR-End-User (a username) or a header mapped here; the
+# call is then authorized, limited and recorded as that user. The headers are
+# ignored from other keys and never reach a backend. An email that several
+# users share counts as unknown.
+forwarders:
+  header_map: {X-OpenWebUI-User-Email: email}   # attribute: id, username or email
+  unknown_user: reject                          # or forwarder_policy
+
+# Names that clients send by default, mapped to a model above.
+aliases: {claude-sonnet-4-5: chat-model}

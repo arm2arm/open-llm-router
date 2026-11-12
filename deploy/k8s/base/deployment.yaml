@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: olr-router
+spec:
+  # One instance: concurrency, rate counters, the queue and session affinity
+  # are in memory (docs/RUNBOOK.md#known-limitations). Recreate never runs two
+  # routers at once during a rollout.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/component: router}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/component: router}
+    spec:
+      # A little longer than the router's own shutdown grace of 30 s.
+      terminationGracePeriodSeconds: 35
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: router
+          image: olr
+          args: [serve]
+          ports:
+            - {name: http, containerPort: 8080}
+          envFrom:
+            - configMapRef: {name: olr-env}
+            - secretRef: {name: olr-secrets}
+          env:
+            - {name: OLR_CONFIG, value: /etc/olr/config.yaml}
+          volumeMounts:
+            - {name: config, mountPath: /etc/olr, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests: {cpu: 500m, memory: 256Mi}
+            limits: {memory: 1Gi}
+      volumes:
+        - name: config
+          configMap: {name: olr-config}
+        - name: tmp
+          emptyDir: {}

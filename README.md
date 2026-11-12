@@ -11,7 +11,7 @@ tokens; group policy with per-user overrides; concurrency, RPM, TPM and day/mont
 (optionally strict); usage records with timing, retention and user-driven deletion; trusted
 forwarders such as Open WebUI; group sync from Keycloak; Prometheus metrics, a Grafana
 dashboard and OTLP traces. Security review: [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
-Requirements in [docs/PLAN.md](docs/PLAN.md),
+Kubernetes manifests: [deploy/k8s](deploy/k8s). Requirements in [docs/PLAN.md](docs/PLAN.md),
 work items in the [issues](https://github.com/arm2arm/open-llm-router/issues).
 
 Authors: A. Khalatyan (AIP), with Hermes agent.
