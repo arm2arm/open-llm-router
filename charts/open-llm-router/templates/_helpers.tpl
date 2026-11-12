@@ -30,11 +30,21 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "olr.secretName" -}}
-{{- default (printf "%s-credentials" (include "olr.fullname" . | trunc 48 | trimSuffix "-")) .Values.existingSecret -}}
+{{- default (printf "%s-credentials" (include "olr.resourcePrefix" .)) .Values.existingSecret -}}
 {{- end -}}
 
 {{- define "olr.componentName" -}}
-{{- printf "%s-%s" (include "olr.fullname" .root | trunc 48 | trimSuffix "-") .component -}}
+{{- printf "%s-%s" (include "olr.resourcePrefix" .root) .component -}}
+{{- end -}}
+
+{{/* Retain release identity when reserving space for component suffixes. */}}
+{{- define "olr.resourcePrefix" -}}
+{{- $name := include "olr.fullname" . -}}
+{{- if gt (len $name) 48 -}}
+{{- printf "%s-%s" ($name | trunc 39 | trimSuffix "-") ($name | sha256sum | trunc 8) -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Separate app names preserve the original router selector on upgrades. */}}

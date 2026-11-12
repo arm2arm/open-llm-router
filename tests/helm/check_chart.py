@@ -164,6 +164,11 @@ class HelmChart(unittest.TestCase):
         for _, name in resources:
             self.assertLessEqual(len(name), 63)
 
+    def test_long_release_names_are_isolated(self):
+        first = self.render(release="r" * 52 + "a")
+        second = self.render(release="r" * 52 + "b")
+        self.assertFalse(set(first) & set(second))
+
     def test_invalid_values_fail_before_install(self):
         invalid = [{"replicaCount": 2}, {"postgresql": {"enabled": False}},
                    {"env": {"PORTAL_BASE_URL": "https://wrong.invalid"}},
