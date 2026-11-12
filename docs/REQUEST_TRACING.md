@@ -14,10 +14,17 @@ timings are not a performance benchmark. [Capture workflow](images/README.md).*
 ## Use the trace viewer
 
 1. Set **Capture enabled/disabled** and **Keep traces for**, then **Save settings**.
-2. Make a call using an OpenAI or Anthropic client. Completed requests appear in the
-   table, which refreshes every 5 seconds while the page is open. Background capture
-   becomes available shortly after completion. Existing historical requests cannot
-   be backfilled.
+2. Make a call using an OpenAI or Anthropic client. With **Live** on (the default),
+   the request appears at the top of the table as soon as the router accepts it, with
+   a ticking elapsed time, whether it is still waiting for the model or receiving,
+   and the bytes and chunks received so far. When it finishes, the completed row
+   replaces it and is briefly highlighted. The trace becomes available shortly after
+   completion, and a trace you opened while the request was running loads by itself.
+   **Live** pauses updates (kept in the page address as `?live=off`; use **Refresh**);
+   the button shows *Connecting*, *Reconnecting* or *Live unavailable · polling* when
+   the stream is interrupted, and the page then refreshes every 5 seconds instead.
+   Live events carry only metadata (IDs, model, timing, byte counts, status), never
+   content. Existing historical requests cannot be backfilled.
 3. Select a request ID in the table. The trace opens in a side panel with its own
    address (`/portal/requests/<request id>`), so a reload or bookmark reopens it. Press
    **j** / **k** or the arrow buttons to move to the next older or newer request.
@@ -167,6 +174,19 @@ Supported calls are `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` 
 personal content traces. Router admission errors and upstream errors are traced for
 authenticated, attributed inference requests. Usage records retain their separate
 site-configured lifetime (90 days by default), daily totals 400 days by default.
+
+Live updates use one server-sent event stream per open **My requests** page, at most
+4 per user and router instance. The forwarding path does a clock read per write and,
+at most every 500 ms and only while the user has the page open, a nonblocking
+in-memory publish. Lifecycle events (started, finished, trace ready) reach users
+connected to other router instances through Postgres `NOTIFY` on the `olr_activity`
+channel, batched every 250 ms; each instance keeps one database connection in
+`LISTEN` state. Progress ticks stay on the instance serving the request. Events a
+slow connection cannot take are dropped; the page reconciles with the request list
+on every finished event and every 30 seconds. Streams recheck the session every 15
+seconds, end on sign-out, and close at shutdown, so they never delay a graceful stop.
+Reverse proxies must not buffer `text/event-stream` responses (the router sends
+`X-Accel-Buffering: no`); a read timeout above 15 seconds suffices.
 
 See [PORTAL_API.md](PORTAL_API.md#personal-trace-settings-and-content) for the API,
 [PRIVACY.md](PRIVACY.md) for the notice template, and

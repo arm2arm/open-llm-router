@@ -123,3 +123,66 @@ test('trace viewer: overview, tool pairing, raw request and deep links', async (
   ).toBe(true)
   expect(errors).toEqual([])
 })
+
+test('live updates show running requests and can be paused', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await login(page)
+  const live = page.getByRole('button', { name: /^Live$/ })
+  await expect(live).toHaveAttribute('aria-pressed', 'true')
+  const key = await apiKey(context, baseURL!)
+  // Slow enough to be observed while running: the mock streams 40 tokens at
+  // 100 ms each; a real backend counts slowly enough as well.
+  const pending = context.request.post('/v1/chat/completions', {
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'X-Mock-Tokens': '40',
+      'X-Mock-Token-Delay': '100ms',
+    },
+    data: {
+      model: 'chat-model',
+      stream: true,
+      max_tokens: 200,
+      messages: [
+        {
+          role: 'user',
+          content: 'Count from 1 to 60, one number per line.',
+        },
+      ],
+    },
+  })
+  const running = page.getByRole('button', {
+    name: /^Inspect running request/,
+  })
+  await expect(running).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.trace-row-running')).toContainText('elapsed')
+  // Opening a running request waits, then shows the trace once it is stored.
+  await running.click()
+  await expect(page.getByText(/still running/)).toBeVisible()
+  const id = (await pending).headers()['x-request-id']
+  await expect(page.getByRole('heading', { name: 'Routing' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page).toHaveURL(new RegExp(`/portal/requests/${id}`))
+  await page.keyboard.press('Escape')
+  await expect(
+    page.getByRole('button', { name: `Inspect request ${id}` }),
+  ).toBeVisible()
+  await expect(page.locator('.trace-row-running')).toHaveCount(0)
+
+  // Paused: the choice is in the URL and no stream is open.
+  await live.click()
+  await expect(page).toHaveURL(/live=off/)
+  const paused = page.getByRole('button', { name: /^Paused$/ })
+  await expect(paused).toHaveAttribute('aria-pressed', 'false')
+  await page.reload()
+  await expect(paused).toBeVisible()
+  await paused.click()
+  await expect(page).not.toHaveURL(/live=off/)
+  await expect(live).toBeVisible()
+  expect(errors).toEqual([])
+})

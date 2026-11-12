@@ -1591,3 +1591,65 @@ progress::-moz-progress-bar {
     padding-right: 32px;
   }
 }
+
+/* ---- Live updates ---- */
+.trace-live {
+  gap: 7px;
+}
+.trace-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--muted-foreground);
+}
+.trace-live-live .trace-live-dot {
+  background: var(--phase-generate);
+  box-shadow: 0 0 0 0 var(--phase-generate);
+  animation: trace-pulse 2s infinite;
+}
+.trace-live-connecting .trace-live-dot,
+.trace-live-reconnecting .trace-live-dot {
+  background: var(--phase-queue);
+}
+.trace-live-unavailable .trace-live-dot {
+  background: var(--phase-failover);
+}
+@keyframes trace-pulse {
+  0% {
+    box-shadow: 0 0 0 0
+      color-mix(in srgb, var(--phase-generate) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+.trace-row-running td {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.trace-badge-running {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.trace-spin {
+  animation: trace-rotate 1s linear infinite;
+}
+@keyframes trace-rotate {
+  to {
+    rotate: 360deg;
+  }
+}
+.trace-row-new td {
+  animation: trace-arrive 4s ease-out;
+}
+@keyframes trace-arrive {
+  from {
+    background: color-mix(in srgb, var(--phase-generate) 22%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trace-live-live .trace-live-dot,
+  .trace-spin,
+  .trace-row-new td {
+    animation: none;
+  }
+}

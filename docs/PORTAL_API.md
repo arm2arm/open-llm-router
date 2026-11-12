@@ -178,6 +178,13 @@ content type. All access is scoped to the session user; admin status adds no con
   `upstream_status`, `content_type`), `result` (`id`, `model`, `system_fingerprint`,
   `finish_reasons`, numeric `usage` flattened with dots) and `summary`. Messages carry a
   `hash`. Traces without `v` were stored by older routers.
+- `GET /portal/api/requests/events`: `text/event-stream` of the caller's request
+  lifecycle, metadata only. After `event: ready`, each `data:` line is a JSON object with
+  `type` (`started`, `progress`, `finished`, `trace_ready`), `request_id` and, depending on
+  the type, `time`, `model`, `operation`, `protocol`, `elapsed_ms`, `bytes`, `writes`,
+  `stream`, `status`, `input_tokens`, `output_tokens`, `latency_ms`, `ttfb_ms`. Comments
+  (`: ping`) arrive every 15 seconds; `event: end` (session ended or server stopping)
+  closes the stream. More than 4 open streams per user and instance return 429.
 - `DELETE /portal/api/request-traces` with `{}`: 204, permanently clears only the caller's
   content and invalidates pending writes. `DELETE /portal/api/usage` also clears content;
   daily quota totals remain.

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
@@ -162,8 +163,15 @@ func serve(args []string) error {
 		return err
 	}
 	defer traces.Close()
+	// Live portal updates end with the signal context, so open event streams
+	// never hold up graceful shutdown.
+	liveCtx, stopLive := context.WithCancel(ctx)
+	live := activity.New(liveCtx.Done(), database, log)
+	defer func() { stopLive(); live.Wait() }()
+	traces.Activity = live
 	forwarder := proxy.New(cfg)
 	forwarder.Traces = traces
+	forwarder.Activity = live
 	forwarder.ConfigureDestinations(destinations)
 	forwarder.Usage = accounting
 	forwarder.Limits = limits.New(database, cfg.Limits.Location, time.Now)
@@ -214,6 +222,7 @@ func serve(args []string) error {
 	}
 	defer portalHandler.Close()
 	portalHandler.Traces = traces
+	portalHandler.Activity = live
 	portalHandler.Pools = forwarder.Pools
 	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: fileConfig, Policy: destinations, Runtime: forwarder}
 	srv.Handle("/portal", portalHandler)
