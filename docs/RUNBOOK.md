@@ -36,15 +36,24 @@ Terminate TLS in a reverse proxy and keep the router's port internal. The proxy 
 
 - response buffering **off** (the router also sends `X-Accel-Buffering: no`);
 - read/send timeouts **at least** the largest model `timeout_s` (default 900 s);
-- request body limit **32 MiB**, the router's own limit;
+- request body limit **4 MiB**, the router's own limit;
 - HTTP/1.1 to the router, keep-alive on; `/metrics` not exposed publicly, or only with its token;
-- rate limiting per client address here if wanted: the router does not trust `X-Forwarded-For`.
+- per-client connection and request-rate limits, with a bounded upload timeout;
+  the router does not trust `X-Forwarded-For`.
 
 ```nginx
+# http context
+limit_conn_zone $binary_remote_addr zone=olr_clients:10m;
+limit_req_zone $binary_remote_addr zone=olr_requests:10m rate=10r/s;
 server {
     listen 443 ssl;
     server_name llm.example.org;
-    client_max_body_size 32m;
+    client_max_body_size 4m;
+    client_body_timeout 120s;
+    limit_conn olr_clients 20;
+    limit_conn_status 429;
+    limit_req zone=olr_requests burst=20 nodelay;
+    limit_req_status 429;
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
@@ -59,22 +68,50 @@ server {
 }
 ```
 
+The edge timeout bounds gaps between upload reads; the router additionally applies a
+two-minute absolute upload deadline. Disable request buffering so that deadline covers
+the client upload. Connection limits also count long streams; tune them and rate limits
+for shared NATs and your workload. Configure real client IP restoration only from trusted
+load balancers; otherwise limit the connecting address. Limits are per edge instance.
+
+For the F5 NGINX controller, merge the data in
+[`deploy/nginx/f5-controller-config.yaml`](../deploy/nginx/f5-controller-config.yaml) into
+the ConfigMap referenced by its `-nginx-configmaps` argument, and use the chart
+production ingress annotations. ConfigMap keys are documented in the
+[F5 controller reference](https://docs.nginx.com/nginx-ingress-controller/configuration/global-configuration/configmap-resource/).
+For community ingress-nginx, the base Ingress includes connection/rate limits; merge
+[`deploy/nginx/ingress-nginx-controller-config.yaml`](../deploy/nginx/ingress-nginx-controller-config.yaml)
+into its controller ConfigMap (this is a controller setting,
+not an Ingress annotation). Verify the generated NGINX config before public exposure.
+
 Set `PORTAL_BASE_URL=https://llm.example.org` (secure cookies are the default and require
 HTTPS). In the identity provider, register the confidential client `olr-portal` with redirect URI
 `https://llm.example.org/portal/callback`, post-logout redirect `https://llm.example.org/`,
 PKCE S256 and a groups mapper. Switching from the dev Keycloak to a production one is
 configuration only: `OIDC_ISSUER`, client ID and secret (and remove `OIDC_BACKCHANNEL_URL`).
 
+Uploads acquire both slots before any body read, including unknown-length/chunked uploads.
+Excess user uploads receive 429; a full process upload budget returns 503. Both include
+`Retry-After: 1`. Slots remain held until normal admission finishes and are released on all
+errors and disconnects. The default pre-admission payload ceiling is 128 MiB globally and
+16 MiB per user (4 MiB for concurrency one), plus buffer growth, JSON/tracing copies and
+runtime overhead. Admitted requests and backend queues need additional memory headroom.
+All three upload settings must be positive and require a restart to change. Increase the
+body cap only for a measured workload, reducing reader counts to fit the memory budget.
+
 ### Configuration reference
 
 The config file is YAML, read strictly: unknown keys, unset `${VAR}` references and invalid
-values stop the start with a list of every problem. Limits of 0 are refused; leave a key out for
-no limit.
+values stop the start with a list of every problem. Limits of 0 are refused. Omitted group
+limits mean unlimited; the process upload bounds above always have finite defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `auth.default_key_lifetime_days` | 90 | lifetime of new API keys (1–36500) |
 | `limits.timezone` | UTC | IANA zone of daily/monthly quotas and daily totals |
+| `limits.max_body_bytes` | 4194304 (4 MiB) | maximum proxied body size; match the edge cap |
+| `limits.max_body_readers` | 32 | simultaneous uploads, parsing and normal admission per process |
+| `limits.max_body_readers_per_user` | 4 | upload slots shared across keys/classes, further capped by effective class concurrency |
 | `retention.usage_days` / `usage_daily_days` / `run_at` | 90 / 400 / `03:00` | how long records and daily totals are kept; when the nightly job runs |
 | `oidc.issuer`, `portal_client_id` | — / `olr-portal` | identity provider; leave `oidc` out for local portal authentication and API keys |
 | `oidc.groups_claim`, `username_claim` | `groups`, `preferred_username` | claim names |
@@ -128,7 +165,7 @@ translate their streaming settings to your maintained ingress controller.
 [`deploy/k8s/base`](../deploy/k8s/base) is a kustomize base with the same image and
 environment as Compose: a single-replica Deployment (`Recreate`, non-root, read-only root
 file system, restricted Pod Security), a Service, and an ingress-nginx Ingress with buffering
-off, 960 s read/send timeouts and a 32 MiB body limit. Postgres is external. In the site's
+off, 960 s read/send timeouts and a 4 MiB body limit. Postgres is external. In the site's
 private overlay:
 
 ```sh
@@ -333,8 +370,9 @@ Anthropic clients get the same inside `{"type":"error","error":{…}}`. `limit` 
 `reset_at` is when it opens again (for concurrency an estimate of one second). Other answers:
 401 bad or missing credentials; 403 model not allowed, or unknown/disabled forwarded user;
 400 malformed body or, with `strict_quota`, a call without `max_tokens`; 408 a body not sent
-within two minutes; 413 a body over 32 MiB; 503 no replica free after `queue_timeout_s`, or the
-database is unreachable. Users see their own limits and use in the portal and at `/v1/me/usage`.
+within two minutes; 413 a body over the configured limit (4 MiB by default); 503 the body-reader
+budget is full, no replica is free after `queue_timeout_s`, or the database is unreachable.
+Users see their own limits and use in the portal and at `/v1/me/usage`.
 
 ## Known limitations
 

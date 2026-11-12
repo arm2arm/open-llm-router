@@ -393,7 +393,8 @@ its `env.OIDC_*` settings and client secret. Local admin remains available.
 
 Use an HTTPS `portal.baseURL`, `portal.cookieSecure: true`, an existing maintained
 ingress controller, DNS and a TLS Secret. The production example includes F5 NGINX
-streaming annotations; adapt them for your controller. Disable response buffering
+streaming and rate-limit annotations; also apply the controller connection/upload settings
+in [the runbook](RUNBOOK.md#behind-a-tls-reverse-proxy). Adapt these for your controller. Disable response buffering
 and allow long read/send timeouts. Repeat the streaming check through the public
 HTTPS endpoint before onboarding users. The chart does not install an ingress
 controller, certificates or GPU workloads.

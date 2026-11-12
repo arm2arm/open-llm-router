@@ -120,6 +120,18 @@ Add other OIDC, backend, metrics or OTLP secrets as needed. To use an external
 database while generating the other credentials in Helm, leave `existingSecret`
 empty, set `postgresql.enabled: false` and supply `externalDatabase.url`.
 
+### Public ingress
+
+Public ingress also requires the controller settings in
+[`deploy/nginx/f5-controller-config.yaml`](../../deploy/nginx/f5-controller-config.yaml),
+merged into the F5 controller's existing ConfigMap. The production annotations set a
+4 MiB body cap and per-client request rate; the controller config sets a 120 s body
+inactivity timeout, disables request buffering and limits concurrent requests per client.
+See the [runbook](../../docs/RUNBOOK.md#behind-a-tls-reverse-proxy) for other controllers,
+client IP handling and memory sizing. Match `config.limits.max_body_bytes` and the edge
+body cap. Upload admission defaults to 32 globally and 4 per user, further capped by the
+user's effective inference concurrency; these settings remain bounded for unlimited groups.
+
 ## Credentials and data lifecycle
 
 Blank credentials are generated on first install; Helm `lookup` reuses their

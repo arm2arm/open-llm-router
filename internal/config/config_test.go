@@ -495,3 +495,28 @@ func TestForwarders(t *testing.T) {
 		}
 	}
 }
+
+func TestBodyLimits(t *testing.T) {
+	cfg, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.MaxBodyBytes != 4<<20 || cfg.Limits.MaxBodyReaders != 32 || cfg.Limits.MaxBodyReadersPerUser != 4 {
+		t.Fatalf("upload defaults: %+v", cfg.Limits)
+	}
+	for _, field := range []string{"max_body_bytes", "max_body_readers", "max_body_readers_per_user"} {
+		for _, value := range []string{"0", "-1"} {
+			_, err := Parse([]byte(valid+"limits: {"+field+": "+value+"}\n"), lookupIn(validEnv))
+			if err == nil || !strings.Contains(err.Error(), field) {
+				t.Errorf("%s=%s accepted: %v", field, value, err)
+			}
+		}
+	}
+	cfg, err = Parse([]byte(valid+"limits: {max_body_bytes: 1024, max_body_readers: 2, max_body_readers_per_user: 1}\n"), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Limits.MaxBodyBytes != 1024 || cfg.Limits.MaxBodyReaders != 2 || cfg.Limits.MaxBodyReadersPerUser != 1 {
+		t.Fatalf("upload overrides: %+v", cfg.Limits)
+	}
+}

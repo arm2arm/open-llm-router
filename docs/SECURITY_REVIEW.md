@@ -107,7 +107,7 @@ updates for Go modules, npm, Docker digests and Actions.
 - [x] Backend URLs come only from the config, as origins without path or query. The proxy uses
   `Transport.RoundTrip`, which does not follow redirects; health checks and OIDC clients
   refuse redirects.
-- [x] Body size limits: 32 MiB on the proxy, 8 KiB on the portal API. Timeouts: header 10 s,
+- [x] Body size limits: 4 MiB by default on the proxy, 8 KiB on the portal API. Timeouts: header 10 s,
   body 2 min (finding 2), backend connect 5 s, response headers `timeout_s`, idle between
   chunks `idle_timeout_s`, blocked client writes `idle_timeout_s`, portal requests 10 s,
   readiness 2 s, OIDC requests 10 s.
@@ -134,3 +134,22 @@ updates for Go modules, npm, Docker digests and Actions.
   reports none (both run in CI). The images run as the distroless `nonroot` user. No secrets
   in the image (`.dockerignore` admits only sources) or in Git; Compose credentials are public
   development defaults, marked as such.
+
+### Follow-up: body buffering before admission (#113)
+
+Uploads now acquire global and per-user slots before reading any bytes. Defaults are 32
+uploads per process and 4 per user, with the user cap further reduced by the effective key
+class concurrency. Different keys and classes share a user's upload budget. Slots are held
+through JSON parsing, rewriting and quota admission, then released; all error/panic and
+cancellation exits release them. Excess readers are rejected immediately (user: 429,
+global: 503), with `Retry-After: 1` and no draining of the rejected HTTP/1 upload.
+Declared oversized requests get 413 before any read; chunked requests have the same byte cap.
+
+The body limit defaults to 4 MiB. These are pre-admission bounds, not a total process memory
+budget: admitted requests, JSON copies, tracing and runtime overhead need separate headroom.
+The existing inference concurrency and replica limits still govern admitted work.
+`TestConcurrentLargeUploadsHaveFixedMemoryCeiling` holds a nearly full body for a user with
+`max_concurrent: 1`, rejects 128 simultaneous uploads without reading them, checks the active
+reader/byte ceiling and live heap, then verifies cancellation cleanup. Network regression
+tests cover stalled fixed-length and chunked uploads and immediate oversized rejection.
+See [edge configuration](RUNBOOK.md#behind-a-tls-reverse-proxy) for the matching limits.

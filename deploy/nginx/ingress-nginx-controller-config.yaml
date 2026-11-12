@@ -1,0 +1,9 @@
+# Community ingress-nginx: merge data into the existing controller ConfigMap
+# referenced by its --configmap argument. Pair with deploy/k8s/base/ingress.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  client-body-timeout: "120"

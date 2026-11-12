@@ -32,7 +32,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/usage"
 )
 
-const MaxBody = 32 << 20
+const MaxBody = config.DefaultMaxBodyBytes
 
 var errHeaderTimeout = errors.New("upstream response headers timed out")
 var errIdleTimeout = errors.New("upstream response stalled")
@@ -48,6 +48,8 @@ type Handler struct {
 	Limits   *limits.Manager   // installed before serving
 	Metrics  *metrics.Observer // installed before serving
 	active   sync.WaitGroup
+	bodies   *bodyAdmission
+	maxBody  int64
 	routing  atomic.Pointer[routingSnapshot]
 }
 
@@ -59,7 +61,19 @@ func New(cfg *config.Config) *Handler {
 	// A cancellable timer below applies each model's header timeout while
 	// retaining a single shared transport and its connection pool.
 	t.ResponseHeaderTimeout = 0
-	return &Handler{cfg: cfg, transport: t, Pools: pool.New(cfg, t)}
+	maxBody, readers, perUser := cfg.Limits.MaxBodyBytes, cfg.Limits.MaxBodyReaders, cfg.Limits.MaxBodyReadersPerUser
+	// Programmatic configurations, including tests, may omit these defaults.
+	if maxBody <= 0 {
+		maxBody = MaxBody
+	}
+	if readers <= 0 {
+		readers = config.DefaultMaxBodyReaders
+	}
+	if perUser <= 0 {
+		perUser = config.DefaultMaxBodyReadersPerUser
+	}
+	return &Handler{cfg: cfg, transport: t, Pools: pool.New(cfg, t), maxBody: maxBody,
+		bodies: &bodyAdmission{maximum: readers, perUser: perUser, users: make(map[string]int)}}
 }
 
 // Close waits for handlers after the HTTP server stops, then closes idle
@@ -143,11 +157,34 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			panic(p)
 		}
 	}()
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBody))
+	if r.ContentLength > h.maxBody {
+		w.Header().Set("Connection", "close") // do not drain a rejected upload
+		apierr.Write(w, protocol, 413, "request_too_large", fmt.Sprintf("request body exceeds %d bytes", h.maxBody))
+		return
+	}
+	if r.Context().Err() != nil {
+		return
+	}
+	principal, _ := auth.FromContext(r.Context())
+	access := h.callerPolicy(r)
+	slot, gate := h.bodies.acquire(principal.UserID, access.Concurrency(principal.KeyClass))
+	if slot == nil {
+		w.Header().Set("Connection", "close")
+		if gate == "body_readers_per_user" {
+			limits.WriteError(w, protocol, &limits.Rejection{Limit: gate, RetryAfter: 1, ResetAt: time.Now().Add(time.Second)})
+		} else {
+			w.Header().Set("Retry-After", "1")
+			apierr.Write(w, protocol, 503, "overloaded_error", "request body reader capacity is exhausted")
+		}
+		return
+	}
+	defer slot.release()
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxBody))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			apierr.Write(w, protocol, 413, "request_too_large", "request body exceeds 32 MiB")
+			w.Header().Set("Connection", "close")
+			apierr.Write(w, protocol, 413, "request_too_large", fmt.Sprintf("request body exceeds %d bytes", h.maxBody))
 		} else if errors.Is(err, os.ErrDeadlineExceeded) {
 			w.Header().Set("Connection", "close")
 			apierr.Write(w, protocol, 408, "invalid_request_error", "request body was not received in time")
@@ -178,7 +215,6 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		return
 	}
 	account.record.Model = name
-	access := h.callerPolicy(r)
 	if !access.AllowsModel(name) {
 		apierr.Write(w, protocol, 403, "permission_error", "access to this model is forbidden")
 		return
@@ -193,7 +229,6 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	}
 	// Queue order and backend priority: the key class's value (batch after
 	// interactive by default) plus the group's.
-	principal, _ := auth.FromContext(r.Context())
 	priority := access.Priority
 	if principal.KeyClass == "batch" {
 		priority += 10
@@ -237,7 +272,6 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 	}
 	if h.Limits != nil {
-		principal, _ := auth.FromContext(r.Context())
 		admission := limits.Admission{User: principal.UserID, Class: principal.KeyClass}
 		if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {
 			// The request size bounds its input tokens: a token covers at
@@ -260,6 +294,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			return
 		}
 	}
+	// Parsing and quota admission retain the upload slots. From here on the
+	// normal user concurrency lease owns the buffered request, including queues.
+	slot.release()
 	var previous *pool.Lease
 	for attempt := 0; attempt < 2; attempt++ {
 		if r.Context().Err() != nil {

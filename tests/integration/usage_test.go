@@ -36,12 +36,14 @@ type usageRouter struct {
 }
 
 type usageOptions struct {
-	group      *config.Group
-	location   *time.Location
-	clock      func() time.Time
-	configure  func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
-	forwarders *config.Forwarders
-	tokens     func(*pgxpool.Pool) func(*auth.Authenticator)
+	// bodyReaders sizes upload admission for synthetic accounting bursts.
+	bodyReaders int
+	group       *config.Group
+	location    *time.Location
+	clock       func() time.Time
+	configure   func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
+	forwarders  *config.Forwarders
+	tokens      func(*pgxpool.Pool) func(*auth.Authenticator)
 	// portal adjusts a portal handler before it serves requests.
 	portal func(*portal.Handler, *config.Config, *pgxpool.Pool, *proxy.Handler)
 }
@@ -82,8 +84,10 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	}
 	f.writer = usage.NewWriterInLocation(f.pool, log, location)
 	cfg := &config.Config{
-		Auth:   config.Auth{DefaultKeyLifetimeDays: 90},
-		Limits: config.Limits{Timezone: location.String(), Location: location},
+		Auth: config.Auth{DefaultKeyLifetimeDays: 90},
+		Limits: config.Limits{Timezone: location.String(), Location: location,
+			MaxBodyBytes: config.DefaultMaxBodyBytes, MaxBodyReaders: config.DefaultMaxBodyReaders,
+			MaxBodyReadersPerUser: config.DefaultMaxBodyReadersPerUser},
 		Models: map[string]config.Model{"chat-model": {
 			Protocols: []string{"openai", "anthropic"}, TimeoutS: 3, IdleTimeoutS: 2,
 			Pool: []config.Replica{{URL: backend.URL, Weight: 1, MaxInflight: 256}},
@@ -93,6 +97,11 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	}
 	if len(options) > 0 && options[0].group != nil {
 		cfg.Groups["staff"] = *options[0].group
+	}
+	if len(options) > 0 && options[0].bodyReaders > 0 {
+		cfg.Limits.MaxBodyReaders = options[0].bodyReaders
+		cfg.Limits.MaxBodyReadersPerUser = options[0].bodyReaders
+		cfg.Limits.MaxBodyBytes = 65536 // small synthetic prompts
 	}
 	forwarder := proxy.New(cfg)
 	forwarder.Usage = f.writer
@@ -226,7 +235,7 @@ func TestUsagePersistenceAndPrivacy(t *testing.T) {
 }
 
 func TestUsageDailyMatches100ConcurrentRequests(t *testing.T) {
-	f := startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 7}))
+	f := startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 7}), usageOptions{bodyReaders: 100})
 	// Warm authentication before the concurrent phase so this test measures
 	// inference and the accounting writer, not 100 simultaneous cold lookups.
 	f.request(t, "/v1/models", "")

@@ -407,7 +407,9 @@ func TestSlowReplicaReceivesLessAndCapsHold(t *testing.T) {
 		mocks = append(mocks, m)
 		urls = append(urls, b.URL)
 	}
-	_, router := setup(t, urls...)
+	cfg := testConfig(urls...)
+	cfg.Limits = config.Limits{MaxBodyReaders: 256, MaxBodyReadersPerUser: 256}
+	_, router := configured(t, cfg)
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
@@ -425,7 +427,7 @@ func TestSlowReplicaReceivesLessAndCapsHold(t *testing.T) {
 		t.Fatalf("3x slower backend received %d/240 (>40%%)", slow)
 	}
 	// Separate router with a small cap under 200 simultaneous requests.
-	cfg := &config.Config{Models: map[string]config.Model{"chat-model": {Protocols: []string{"openai"}, TimeoutS: 3, IdleTimeoutS: 2, Pool: []config.Replica{{URL: urls[0], Weight: 1, MaxInflight: 3}, {URL: urls[1], Weight: 1, MaxInflight: 3}}}}}
+	cfg = &config.Config{Limits: config.Limits{MaxBodyReaders: 256, MaxBodyReadersPerUser: 256}, Models: map[string]config.Model{"chat-model": {Protocols: []string{"openai"}, TimeoutS: 3, IdleTimeoutS: 2, Pool: []config.Replica{{URL: urls[0], Weight: 1, MaxInflight: 3}, {URL: urls[1], Weight: 1, MaxInflight: 3}}}}}
 	h, capped := configured(t, cfg)
 	for _, m := range mocks {
 		m.Reset()
