@@ -1,0 +1,45 @@
+# Copy to the private OLR_SITE_CONFIG path and adapt to the site's models/groups.
+# Variables are supplied by pilot.env; credentials stay in that environment.
+auth:
+  default_key_lifetime_days: 90
+limits:
+  timezone: ${OLR_TIMEZONE}
+retention:
+  usage_days: ${OLR_USAGE_DAYS}
+  usage_daily_days: ${OLR_USAGE_DAILY_DAYS}
+  run_at: "03:00"
+oidc:
+  issuer: ${OIDC_ISSUER}
+  groups_claim: groups
+  username_claim: preferred_username
+  sync_interval_s: 900
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    upstream_model: ${OLR_UPSTREAM_MODEL}
+    timeout_s: 900
+    idle_timeout_s: 60
+    queue_timeout_s: 10
+    session_affinity: true
+    pool:
+      - url: ${OLR_BACKEND_A_URL}
+        weight: ${OLR_BACKEND_A_WEIGHT}
+        max_inflight: ${OLR_BACKEND_A_MAX_INFLIGHT}
+        bearer_token_env: VLLM_A_API_KEY
+      - url: ${OLR_BACKEND_B_URL}
+        weight: ${OLR_BACKEND_B_WEIGHT}
+        max_inflight: ${OLR_BACKEND_B_MAX_INFLIGHT}
+        bearer_token_env: VLLM_B_API_KEY
+groups:
+  # Map the Keycloak groups claim to this exact name; no match means no access.
+  pilot:
+    models: [chat-model]
+    tokens_per_day: ${OLR_PILOT_TOKENS_PER_DAY}
+    tokens_per_month: ${OLR_PILOT_TOKENS_PER_MONTH}
+    rpm: ${OLR_PILOT_RPM}
+    tpm: ${OLR_PILOT_TPM}
+    max_concurrent: ${OLR_PILOT_MAX_CONCURRENT}
+aliases:
+  claude-sonnet-4-5: chat-model
+  claude-haiku-4-5: chat-model
+  claude-opus-4-1: chat-model

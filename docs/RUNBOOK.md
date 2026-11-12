@@ -12,6 +12,11 @@ file at `/etc/olr/config.yaml` and pass secrets in the environment. A private de
 holds the site's values for the keys of [config.example.yaml](../config.example.yaml); it does
 not belong in this repository. Run one router instance (see [Known limitations](#known-limitations)).
 
+The standalone [production Compose template](../deploy/compose/pilot.yml), private site
+configuration examples, onboarding checks and two-week closure record are in
+[PILOT.md](PILOT.md). Use that file for a production realm and real GPU pools; the root
+Compose stack includes development Keycloak and mock backends.
+
 Startup applies database migrations, checks the OIDC discovery, and fails before listening if
 any of it fails. `/healthz` is liveness; `/readyz` needs the database and one healthy replica
 per model. A first `SIGTERM` gives streams 30 s (`-shutdown-grace`) to finish.

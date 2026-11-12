@@ -1,0 +1,51 @@
+# Standalone production pilot: external PostgreSQL, Keycloak and GPU backends.
+# Do not combine this with docker-compose.yml (the development stack).
+# Setup and acceptance: docs/PILOT.md.
+name: olr-pilot
+
+services:
+  router:
+    image: ${OLR_IMAGE:?Set OLR_IMAGE to the tested image digest}
+    command: [serve]
+    # Also passes site-specific variables referenced by the mounted YAML,
+    # including arbitrary bearer_token_env names. Keep this file private.
+    env_file:
+      - ${OLR_PILOT_ENV_FILE:?Set the absolute path of the private pilot environment file}
+    environment:
+      OLR_CONFIG: /etc/olr/config.yaml
+      OLR_DATABASE_URL: ${OLR_DATABASE_URL:?Set the production PostgreSQL URL}
+      OIDC_ISSUER: ${OIDC_ISSUER:?Set the production realm issuer}
+      OIDC_PORTAL_CLIENT_ID: ${OIDC_PORTAL_CLIENT_ID:-olr-portal}
+      OIDC_PORTAL_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:?Set the production portal client secret}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-olr-api}
+      OIDC_SYNC_CLIENT_ID: ${OIDC_SYNC_CLIENT_ID:-olr-sync}
+      OIDC_SYNC_CLIENT_SECRET: ${OIDC_SYNC_CLIENT_SECRET:?Set the production group sync client secret}
+      OIDC_REQUIRED_CLAIM: ${OIDC_REQUIRED_CLAIM-}
+      # Use public discovery and secure cookies, without the dev overrides.
+      OIDC_BACKCHANNEL_URL: ""
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:?Set the public HTTPS portal origin}
+      PORTAL_COOKIE_SECURE: "true"
+      OLR_METRICS_TOKEN: ${OLR_METRICS_TOKEN:?Set a dedicated metrics secret}
+    ports:
+      - "127.0.0.1:${OLR_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: ${OLR_SITE_CONFIG:?Set the absolute path of the private pilot YAML}
+        target: /etc/olr/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    pids_limit: 256
+    restart: unless-stopped
+    stop_grace_period: 35s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -375,6 +375,36 @@ func TestExpansion(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
+	t.Run("the private pilot template is valid", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "compose", "pilot.config.example.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := map[string]string{
+			"OIDC_ISSUER":           "https://login.example.org/realms/pilot",
+			"OIDC_PORTAL_CLIENT_ID": "olr-portal", "OIDC_AUDIENCE": "olr-api", "OIDC_SYNC_CLIENT_ID": "olr-sync",
+			"PORTAL_BASE_URL": "https://router.example.org", "OIDC_PORTAL_CLIENT_SECRET": "test-portal",
+			"OLR_TIMEZONE": "Europe/Berlin", "OLR_USAGE_DAYS": "90", "OLR_USAGE_DAILY_DAYS": "400",
+			"OLR_UPSTREAM_MODEL": "served-model", "OLR_BACKEND_A_URL": "https://gpu-a.example.org",
+			"OLR_BACKEND_B_URL": "https://gpu-b.example.org", "OLR_BACKEND_A_WEIGHT": "2",
+			"OLR_BACKEND_B_WEIGHT": "1", "OLR_BACKEND_A_MAX_INFLIGHT": "4", "OLR_BACKEND_B_MAX_INFLIGHT": "2",
+			"VLLM_A_API_KEY": "test-a", "VLLM_B_API_KEY": "test-b", "OLR_PILOT_TOKENS_PER_DAY": "500000",
+			"OLR_PILOT_TOKENS_PER_MONTH": "5000000", "OLR_PILOT_RPM": "20", "OLR_PILOT_TPM": "20000",
+			"OLR_PILOT_MAX_CONCURRENT": "2",
+		}
+		cfg, err := Parse(data, lookupIn(env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.Portal.CookieSecure || cfg.OIDC.BackchannelURL != "" {
+			t.Fatal("pilot must use secure cookies and public discovery")
+		}
+		model := cfg.Models["chat-model"]
+		if model.UpstreamModel != "served-model" || model.Pool[0].BearerToken != "test-a" || model.Pool[1].MaxInflight != 2 {
+			t.Fatal("site model, credentials or capacity did not reach the pool")
+		}
+	})
+
 	t.Run("the example config is valid", func(t *testing.T) {
 		t.Setenv("OIDC_ISSUER", "http://keycloak:8080/realms/olr-dev")
 		t.Setenv(EnvDatabaseURL, "postgres://olr:hunter2@postgres/olr")
