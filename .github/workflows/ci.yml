@@ -165,6 +165,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: v4.3.1
       - name: Test fail-closed image signature and attestation deployment gate
         run: |
           python3 -m venv /tmp/olr-release

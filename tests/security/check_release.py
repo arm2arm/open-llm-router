@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,7 @@ IMAGE = "ghcr.io/arm2arm/open-llm-router@sha256:" + "a" * 64
 
 
 class DeploymentVerification(unittest.TestCase):
-    def invoke(self, manifest, fail="", policy=None):
+    def invoke(self, manifest, fail="", policy=None, helm=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
             for executable in ("cosign", "gh"):
@@ -33,7 +34,19 @@ class DeploymentVerification(unittest.TestCase):
             calls = path / "calls"
             env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"],
                        CALLS=str(calls), FAIL=fail)
-            result = subprocess.run([sys.executable, str(VERIFIER), "--policy", str(policy_path)],
+            command = [sys.executable, str(VERIFIER), "--policy", str(policy_path)]
+            if helm:
+                plugins = path / "plugins"
+                plugins.mkdir()
+                (plugins / "olr-verify-images").symlink_to(VERIFIER.parent, target_is_directory=True)
+                env.update(HELM_PLUGINS=str(plugins), OLR_IMAGE_POLICY=str(policy_path))
+                env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env["PATH"]
+                command = [os.environ.get("HELM", "helm"), "template", "trial", str(ROOT / "charts/open-llm-router"),
+                           "-f", str(ROOT / "charts/open-llm-router/examples/production.yaml"),
+                           "--set", "image.repository=ghcr.io/arm2arm/open-llm-router",
+                           "--set", "image.digest=sha256:" + "a" * 64,
+                           "--post-renderer", "olr-verify-images"]
+            result = subprocess.run(command,
                                     input=manifest, text=True, capture_output=True, env=env)
             commands = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
             return result, commands
@@ -88,6 +101,16 @@ class DeploymentVerification(unittest.TestCase):
         result, _ = self.invoke("---\n")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
+
+    @unittest.skipUnless(shutil.which(os.environ.get("HELM", "helm")), "requires Helm 4")
+    def test_real_helm_plugin_gates_rendered_production_resources(self):
+        result, commands = self.invoke("", helm=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("kind: Deployment", result.stdout)
+        self.assertEqual(len(commands), 3)
+        denied, _ = self.invoke("", fail="gh", helm=True)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(denied.stdout, "")
 
 
 class WorkflowPolicy(unittest.TestCase):
