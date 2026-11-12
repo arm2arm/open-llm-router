@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Plus, KeyRound, Copy, Check } from 'lucide-react'
+import { Plus, KeyRound } from 'lucide-react'
+import { AdminKeyCopyButton, useAdminKeyCopy } from '@/key-copy'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -410,47 +411,7 @@ export function AdminUserKeys({
   onSaved: () => Promise<void>
 }) {
   const [selected, setSelected] = useState<Key | null>(null)
-  const [copying, setCopying] = useState<string | null>(null)
-  const [copied, setCopied] = useState<string | null>(null)
-  const [copyError, setCopyError] = useState<Error | null>(null)
-  async function copyKey(key: Key) {
-    setCopying(key.id)
-    setCopied(null)
-    setCopyError(null)
-    try {
-      // Start the clipboard write during the click gesture (Safari requires it).
-      // The raw key stays out of React state, query caches and browser storage.
-      const value = api<{ key: string }>(
-        `admin/users/${id}/keys/${key.id}/copy`,
-        'POST',
-      )
-      // A denied clipboard permission may reject before the HTTP request does.
-      void value.catch(() => {})
-      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-        const content = value.then(
-          ({ key }) => new Blob([key], { type: 'text/plain' }),
-        )
-        void content.catch(() => {})
-        await navigator.clipboard.write([
-          new ClipboardItem({
-            'text/plain': content,
-          }),
-        ])
-      } else {
-        const result = await value
-        if (!navigator.clipboard?.writeText)
-          throw new Error('Clipboard access requires HTTPS or localhost.')
-        await navigator.clipboard.writeText(result.key)
-      }
-      setCopied(key.id)
-    } catch (error) {
-      setCopyError(
-        error instanceof Error ? error : new Error('Could not copy the key.'),
-      )
-    } finally {
-      setCopying(null)
-    }
-  }
+  const keyCopy = useAdminKeyCopy(id)
   const revoke = useMutation({
     mutationFn: (key: string) => api(`admin/users/${id}/keys/${key}`, 'DELETE'),
     onSuccess: onSaved,
@@ -459,12 +420,12 @@ export function AdminUserKeys({
     <section aria-label="User API keys">
       <h3 className="font-semibold mb-3">API keys</h3>
       <Failure error={revoke.error} />
-      <Failure error={copyError} />
+      <Failure error={keyCopy.error} />
       <p className="subtitle mb-3">
         Copy is available for keys issued with encryption enabled. Older keys
         need replacement; they continue to work until revoked.
       </p>
-      {copied && (
+      {keyCopy.copied && (
         <p role="status" className="subtitle">
           API key copied to clipboard.
         </p>
@@ -505,26 +466,7 @@ export function AdminUserKeys({
                   <td>
                     {key.revoked ? 'Revoked' : expired ? 'Expired' : 'Active'}
                     {!key.revoked && !expired && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="ml-2"
-                        disabled={!key.copy_available || copying !== null}
-                        title={
-                          key.copy_available
-                            ? 'Copy API key'
-                            : 'Key is not recoverable with this server’s encryption key. Issue a replacement.'
-                        }
-                        aria-label={`Copy key ${key.label || key.prefix}`}
-                        onClick={() => void copyKey(key)}
-                      >
-                        {copied === key.id ? (
-                          <Check aria-hidden="true" />
-                        ) : (
-                          <Copy aria-hidden="true" />
-                        )}
-                        {copying === key.id ? 'Copying…' : 'Copy key'}
-                      </Button>
+                      <AdminKeyCopyButton keyInfo={key} copy={keyCopy} />
                     )}
                   </td>
                   <td>

@@ -75,12 +75,15 @@ async function startFixture(
     config,
     `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
-  const image = docker([
-    'inspect',
-    '--format',
-    '{{.Image}}',
-    docker([...compose, 'ps', '-q', 'router']),
-  ])
+  // Test a new image without restarting the developer's running router.
+  const image =
+    process.env.OLR_TEST_ROUTER_IMAGE ??
+    docker([
+      'inspect',
+      '--format',
+      '{{.Image}}',
+      docker([...compose, 'ps', '-q', 'router']),
+    ])
   docker(
     [
       'run',
@@ -230,6 +233,82 @@ test('local-only first password change, rotation, revocation and logout', async 
   await expect(
     page.getByText('Protected local administrator', { exact: true }),
   ).toBeVisible()
+  const created = await context.request.post(`${local}/portal/api/keys`, {
+    headers: { Origin: local },
+    data: { label: 'admin personal key' },
+  })
+  expect(created.status()).toBe(201)
+  const secret = (await created.json()).key as string
+  expect(
+    (
+      await context.request.post(`${local}/portal/api/keys`, {
+        headers: { Origin: local },
+        data: { label: 'legacy personal key' },
+      })
+    ).status(),
+  ).toBe(201)
+  const fixture = fixtures.find((fixture) => fixture.base === local)!
+  sql(
+    fixture.database,
+    "UPDATE api_keys SET key_ciphertext=NULL,key_encryption_id=NULL WHERE label='legacy personal key'",
+  )
+  await page.reload()
+  const personalKey = page
+    .getByRole('table', { name: 'Personal API keys' })
+    .getByRole('row')
+    .filter({ hasText: 'admin personal key' })
+  const copy = personalKey.getByRole('button', {
+    name: 'Copy key admin personal key',
+    exact: true,
+  })
+  await expect(copy).toBeEnabled()
+  await expect(personalKey.getByRole('cell').nth(4)).toContainText('Active')
+  await expect(personalKey.getByRole('cell').nth(4)).toContainText('Copy key')
+  await copy.click()
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'API key copied to clipboard.' }),
+  ).toBeVisible()
+  expect(
+    await page.evaluate(
+      async (key) => (await navigator.clipboard.readText()) === key,
+      secret,
+    ),
+  ).toBe(true)
+  expect((await page.locator('body').innerText()).includes(secret)).toBe(false)
+  expect(
+    await page.evaluate(
+      (key) =>
+        [...Object.values(localStorage), ...Object.values(sessionStorage)].some(
+          (value) => value.includes(key),
+        ),
+      secret,
+    ),
+  ).toBe(false)
+  await expect(
+    page.getByRole('button', {
+      name: 'Copy key legacy personal key',
+      exact: true,
+    }),
+  ).toBeDisabled()
+  sql(
+    fixture.database,
+    "UPDATE api_keys SET expires=clock_timestamp()-interval '1 day' WHERE label='legacy personal key'",
+  )
+  await page.reload()
+  await expect(
+    page.getByRole('button', {
+      name: 'Copy key legacy personal key',
+      exact: true,
+    }),
+  ).toHaveCount(0)
+  await personalKey
+    .getByRole('button', { name: 'Revoke admin personal key', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Revoke key', exact: true }).click()
+  await expect(personalKey).toContainText('Revoked')
+  await expect(copy).toHaveCount(0)
   await page.getByRole('link', { name: 'Admin', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Admin', exact: true }),
@@ -448,6 +527,23 @@ test('administrator creates a local user and manages memberships, keys, disablem
       person.getByRole('link', { name: 'Admin', exact: true }),
     ).toHaveCount(0)
     const key = await createKey('laptop')
+    await expect(person.getByRole('button', { name: /^Copy key/ })).toHaveCount(
+      0,
+    )
+    const owner = (
+      await (await personContext.request.get(`${base}/portal/api/me`)).json()
+    ).user.id
+    const metadata = (
+      await (await personContext.request.get(`${base}/portal/api/keys`)).json()
+    ).keys as { id: string; label: string }[]
+    expect(
+      (
+        await personContext.request.post(
+          `${base}/portal/api/admin/users/${owner}/keys/${metadata.find((item) => item.label === 'laptop')!.id}/copy`,
+          { headers: { Origin: base }, data: {} },
+        )
+      ).status(),
+    ).toBe(403)
     expect(await apiStatus(key)).toBe(200)
     await managePerson()
     const keys = page.getByRole('region', { name: 'User API keys' })
