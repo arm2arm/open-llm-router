@@ -1,3 +1,6 @@
+{{- if and (dig "security" "require_tls" false .Values.config) (or .Values.postgresql.enabled .Values.keycloak.enabled .Values.demoBackend.enabled (not .Values.networkPolicy.enabled)) }}
+{{- fail "production TLS requires external TLS services and networkPolicy.enabled=true; bundled services are disposable demos only" }}
+{{- end }}
 {{- range $name, $_ := .Values.env }}
 {{- if or (eq $name "OLR_CONFIG") (eq $name "PORTAL_BASE_URL") (eq $name "PORTAL_COOKIE_SECURE") (eq $name "OLR_DEMO_BACKEND_URL") (eq $name "OLR_DATABASE_URL") (and $.Values.keycloak.enabled (hasPrefix "OIDC_" $name)) }}
 {{- fail (printf "env.%s is managed by the chart; use the dedicated chart values instead" $name) }}
@@ -127,6 +130,9 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.tls.caSecretName }}
+            - {name: ca, mountPath: /etc/olr/ca, readOnly: true}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -146,6 +152,10 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if .Values.tls.caSecretName }}
+        - name: ca
+          secret: {secretName: {{ .Values.tls.caSecretName | quote }}}
+        {{- end }}
         - name: config
           configMap:
             name: {{ include "olr.fullname" . | trunc 56 | trimSuffix "-" }}-config

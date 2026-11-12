@@ -543,3 +543,33 @@ func TestContentTracingPolicy(t *testing.T) {
 		t.Fatal("invalid redaction accepted")
 	}
 }
+
+func TestProductionDatabaseTLS(t *testing.T) {
+	for _, mode := range []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"} {
+		err := ValidateDatabaseTLS("postgres://user:secret@db.example.org/router?sslmode=" + mode)
+		if (err == nil) != (mode == "verify-full") {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+	if err := ValidateDatabaseTLS("private-secret-invalid-dsn"); err == nil || strings.Contains(err.Error(), "private-secret") {
+		t.Fatal("unsafe error", err)
+	}
+}
+
+func TestProductionTransportPolicy(t *testing.T) {
+	env := map[string]string{"OIDC_ISSUER": "https://login.example.org/realm", "PORTAL_BASE_URL": "https://router.example.org"}
+	secure := strings.ReplaceAll(valid, "http://backend-", "https://backend-") + "security: {require_tls: true}\n"
+	cfg, err := Parse([]byte(secure), lookupIn(env))
+	if err != nil || !cfg.OIDC.RequireTLS {
+		t.Fatal("secure config rejected", err)
+	}
+	for _, bad := range []string{strings.Replace(secure, "https://backend-a", "http://backend-a", 1), strings.Replace(secure, "issuer: ${OIDC_ISSUER}", "issuer: http://identity.invalid", 1)} {
+		if _, err := Parse([]byte(bad), lookupIn(env)); err == nil {
+			t.Fatal("plaintext config accepted")
+		}
+	}
+	env["PORTAL_BASE_URL"] = "http://router.example.org"
+	if _, err := Parse([]byte(secure), lookupIn(env)); err == nil {
+		t.Fatal("plaintext portal accepted")
+	}
+}

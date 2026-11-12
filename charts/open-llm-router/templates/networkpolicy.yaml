@@ -1,0 +1,88 @@
+{{- if .Values.networkPolicy.enabled }}
+# Isolate every workload belonging to this release, including supporting services.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "olr.resourcePrefix" . }}-deny
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "olr.resourcePrefix" . }}-router
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "olr.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- with concat .Values.networkPolicy.ingressPeers .Values.networkPolicy.monitoringPeers }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports: [{protocol: TCP, port: 8080}]
+    {{- else }}
+    []
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    {{- range $component, $port := dict "postgresql" 5432 "keycloak" 8080 "demo" 8000 }}
+    {{- $enabled := false }}
+    {{- if eq $component "demo" }}{{- $enabled = $.Values.demoBackend.enabled }}
+    {{- else }}{{- $enabled = (index $.Values $component).enabled }}{{- end }}
+    {{- if $enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "olr.componentSelector" (dict "root" $ "component" $component) | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ $port }}}]
+    {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- range $component, $port := dict "postgresql" 5432 "keycloak" 8080 "demo" 8000 }}
+{{- $enabled := false }}
+{{- if eq $component "demo" }}{{- $enabled = $.Values.demoBackend.enabled }}
+{{- else }}{{- $enabled = (index $.Values $component).enabled }}{{- end }}
+{{- if $enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "olr.componentName" (dict "root" $ "component" $component) }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "olr.componentSelector" (dict "root" $ "component" $component) | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "olr.selectorLabels" $ | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ $port }}}]
+    {{- if eq $component "keycloak" }}
+    {{- with $.Values.networkPolicy.ingressPeers }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports: [{protocol: TCP, port: 8080}]
+    {{- end }}
+    {{- end }}
+  egress: []
+{{- end }}
+{{- end }}
+{{- end }}

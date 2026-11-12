@@ -15,13 +15,14 @@ import (
 )
 
 type Policy struct {
-	trusted  map[string]bool
-	networks []netip.Prefix
-	tokens   map[string]string
+	requireTLS bool
+	trusted    map[string]bool
+	networks   []netip.Prefix
+	tokens     map[string]string
 }
 
 func New(cfg *config.Config, lookup func(string) (string, bool)) (*Policy, error) {
-	p := &Policy{trusted: map[string]bool{}, tokens: map[string]string{}}
+	p := &Policy{requireTLS: cfg.Security.RequireTLS, trusted: map[string]bool{}, tokens: map[string]string{}}
 	for _, model := range cfg.Models {
 		for _, r := range model.Pool {
 			u, _ := url.Parse(r.URL)
@@ -142,6 +143,9 @@ func (p *Policy) Check(ctx context.Context, origin string) error {
 	u, err := url.Parse(origin)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("backend URL must be an HTTP(S) origin without credentials, path, query or fragment")
+	}
+	if p.requireTLS && u.Scheme != "https" {
+		return errors.New("production backend requires HTTPS")
 	}
 	_, err = p.addresses(ctx, address(u))
 	return err

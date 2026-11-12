@@ -22,6 +22,7 @@ import (
 	"time"
 	_ "time/tzdata" // IANA zones also work in the static runtime image.
 
+	"github.com/jackc/pgx/v5"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -45,6 +46,7 @@ const (
 // Config is the content of the config file plus the secrets from the
 // environment.
 type Config struct {
+	Security       Security          `yaml:"security"`
 	ContentTracing ContentTracing    `yaml:"content_tracing"`
 	Auth           Auth              `yaml:"auth"`
 	Limits         Limits            `yaml:"limits"`
@@ -82,6 +84,10 @@ const (
 	UnknownUserReject      = "reject"
 	UnknownForwarderPolicy = "forwarder_policy"
 )
+
+type Security struct {
+	RequireTLS bool `yaml:"require_tls"`
+}
 
 // ContentTracing is a site-wide content-capture gate. User consent is also required.
 type ContentTracing struct {
@@ -129,6 +135,7 @@ type Limits struct {
 
 // OIDC describes the identity provider used for portal login.
 type OIDC struct {
+	RequireTLS     bool   `yaml:"-"`
 	Issuer         string `yaml:"issuer"`
 	PortalClientID string `yaml:"portal_client_id"`
 	GroupsClaim    string `yaml:"groups_claim"`   // default "groups"
@@ -246,6 +253,14 @@ func Load(path string) (*Config, error) {
 	cfg.DatabaseURL = os.Getenv(EnvDatabaseURL)
 	cfg.OIDCClientSecret = os.Getenv(EnvOIDCClientSecret)
 	cfg.OIDCSyncSecret = os.Getenv(EnvOIDCSyncSecret)
+	if cfg.Security.RequireTLS {
+		if err := ValidateDatabaseTLS(cfg.DatabaseURL); err != nil {
+			return nil, err
+		}
+		if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); endpoint != "" && !strings.HasPrefix(endpoint, "https://") {
+			return nil, errors.New("security.require_tls requires HTTPS telemetry")
+		}
+	}
 	return cfg, nil
 }
 
@@ -492,6 +507,21 @@ func (c *Config) validate() Problems {
 			add("content_tracing.redact_patterns: invalid regular expression")
 		}
 	}
+	if c.Security.RequireTLS {
+		if !strings.HasPrefix(c.Portal.BaseURL, "https://") || !c.Portal.CookieSecure {
+			add("security.require_tls: portal requires HTTPS and secure cookies")
+		}
+		if c.OIDC != nil && (!strings.HasPrefix(c.OIDC.Issuer, "https://") || c.OIDC.BackchannelURL != "" && !strings.HasPrefix(c.OIDC.BackchannelURL, "https://")) {
+			add("security.require_tls: OIDC issuer and backchannel require HTTPS")
+		}
+		for _, m := range c.Models {
+			for _, r := range m.Pool {
+				if !strings.HasPrefix(r.URL, "https://") {
+					add("security.require_tls: inference backends require HTTPS")
+				}
+			}
+		}
+	}
 	if c.Limits.MaxBodyBytes <= 0 {
 		add("limits.max_body_bytes: must be positive")
 	}
@@ -535,6 +565,7 @@ func (c *Config) validate() Problems {
 	}
 
 	if c.OIDC != nil {
+		c.OIDC.RequireTLS = c.Security.RequireTLS
 		if !isIssuerURL(c.OIDC.Issuer) {
 			add("oidc.issuer: must be an http or https URL without credentials, query or fragment")
 		}
@@ -679,4 +710,14 @@ func isIssuerURL(s string) bool {
 func isBackendURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && isHTTPURL(s) && u.User == nil && u.RawQuery == "" && u.Fragment == "" && (u.Path == "" || u.Path == "/")
+}
+
+// ValidateDatabaseTLS rejects plaintext, unverified TLS and fallback connections.
+// Parse errors are deliberately redacted because DSNs contain credentials.
+func ValidateDatabaseTLS(dsn string) error {
+	c, err := pgx.ParseConfig(dsn)
+	if err != nil || c.TLSConfig == nil || c.TLSConfig.InsecureSkipVerify || c.TLSConfig.ServerName == "" || len(c.Fallbacks) > 0 {
+		return errors.New("security.require_tls requires PostgreSQL sslmode=verify-full without plaintext or unverified fallbacks")
+	}
+	return nil
 }

@@ -70,3 +70,13 @@ func TestInvalidDestinationPolicySettings(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionPolicyRejectsPlaintextBackend(t *testing.T) {
+	p, err := New(&config.Config{Security: config.Security{RequireTLS: true}}, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Check(t.Context(), "http://example.org"); err == nil {
+		t.Fatal("plaintext inference allowed")
+	}
+}

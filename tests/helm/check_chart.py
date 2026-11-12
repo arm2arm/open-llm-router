@@ -38,7 +38,7 @@ class HelmChart(unittest.TestCase):
 
     def test_default_stack_and_generated_credentials(self):
         resources = self.render()
-        self.assertEqual(len(resources), 13)
+        self.assertEqual(len(resources), 18)
         for kind, suffix in [("Deployment", ""), ("StatefulSet", "-postgresql"),
                              ("Deployment", "-keycloak"), ("Deployment", "-demo")]:
             self.assertIn((kind, NAME + suffix), resources)
@@ -143,7 +143,7 @@ class HelmChart(unittest.TestCase):
 
     def test_production_example_external_services(self):
         rendered = self.render(yaml.safe_load((CHART / "examples/production.yaml").read_text()))
-        self.assertEqual(len(rendered), 4)
+        self.assertEqual(len(rendered), 6)
         ingress = rendered["Ingress", NAME]
         self.assertEqual(ingress["spec"]["tls"][0]["secretName"], "olr-tls")
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "llm.example.org")
@@ -178,6 +178,23 @@ class HelmChart(unittest.TestCase):
         first = self.render(release="r" * 52 + "a")
         second = self.render(release="r" * 52 + "b")
         self.assertFalse(set(first) & set(second))
+
+    def test_network_policy_restricts_release_and_dependencies(self):
+        resources = self.render()
+        deny = resources["NetworkPolicy", NAME + "-deny"]["spec"]
+        self.assertEqual(deny["policyTypes"], ["Ingress", "Egress"])
+        self.assertEqual(deny["ingress"], [])
+        self.assertEqual(deny["egress"], [])
+        router = resources["NetworkPolicy", NAME + "-router"]["spec"]
+        dns = router["egress"][0]
+        self.assertEqual(dns["ports"], [{"port": 53, "protocol": "UDP"}, {"port": 53, "protocol": "TCP"}])
+        for peer in router["ingress"][0]["from"]:
+            self.assertIn("namespaceSelector", peer)
+            self.assertIn("podSelector", peer)
+        for suffix in ["-postgresql", "-demo"]:
+            policy = resources["NetworkPolicy", NAME + suffix]["spec"]
+            self.assertEqual(policy["egress"], [])
+            self.assertEqual(policy["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"], "open-llm-router")
 
     def test_invalid_values_fail_before_install(self):
         invalid = [{"replicaCount": 2}, {"postgresql": {"enabled": False}},

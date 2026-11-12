@@ -67,6 +67,9 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 		transport.DialContext = dialer.DialContext
 	}
 	var rt http.RoundTripper = transport
+	if cfg.RequireTLS {
+		rt = httpsOnly{next: rt}
+	}
 	if cfg.BackchannelURL != "" {
 		public, err := url.Parse(cfg.Issuer)
 		if err != nil {
@@ -76,7 +79,7 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 		if err != nil {
 			return nil, errors.New("invalid OIDC backchannel URL")
 		}
-		rt = backchannel{public, internal, transport}
+		rt = backchannel{public, internal, rt}
 	}
 	client := &http.Client{Transport: rt, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, client), cfg.Issuer)
@@ -124,4 +127,15 @@ func (b backchannel) RoundTrip(r *http.Request) (*http.Response, error) {
 		r.Host = ""
 	}
 	return b.next.RoundTrip(r)
+}
+
+// Validate the actual destination, including provider-advertised token/JWKS URLs
+// and rewritten back-channel requests, before sending any credentials.
+type httpsOnly struct{ next http.RoundTripper }
+
+func (h httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Scheme != "https" {
+		return nil, errors.New("production identity-provider requests require HTTPS")
+	}
+	return h.next.RoundTrip(r)
 }

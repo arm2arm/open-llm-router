@@ -789,3 +789,48 @@ WHERE NOT revoked AND
  (expires IS NULL OR expires <= clock_timestamp()+interval '7 days'
   OR coalesce(last_used,created) < clock_timestamp()-interval '30 days');
 ```
+
+## Kubernetes network and transport policy
+
+Helm installs release-scoped default-deny ingress/egress and explicit router/dependency
+allowances. Kustomize applies namespace-wide default deny: dedicate the namespace to the
+router. DNS is allowed only to kube-system/kube-dns (UDP/TCP 53). Router ingress is allowed
+from ingress-nginx controller pods and monitoring/Prometheus pods, using namespace AND
+pod selectors. Bundled PostgreSQL and mock backends accept only router traffic; bundled
+Keycloak additionally accepts the ingress controller. Supporting workloads have no egress.
+
+Production uses external TLS services. Set `security.require_tls: true` (already enabled
+in production Helm/Kustomize examples). Startup then rejects non-verifying PostgreSQL,
+HTTP backends, HTTP OIDC issuer/backchannel, HTTP telemetry and insecure portal cookies.
+Use `sslmode=verify-full&sslrootcert=/etc/olr/ca/ca.crt` in the database URL, a matching DNS
+hostname, and the correct CA. `require` and `verify-ca` are insufficient. Set
+`tls.caSecretName` in Helm to mount that CA Secret; private HTTPS CAs can use a mounted
+PEM bundle through `SSL_CERT_FILE`. Kustomize sites must mount their CA Secret explicitly.
+The Go HTTPS clients verify certificates and names; do not introduce TLS-skip overrides.
+
+The default bundled Helm stack and `deploy/k8s/test` are explicitly disposable demos;
+they use plaintext service links and cannot be enabled with production TLS mode. Keep
+those namespaces isolated. Production must disable all bundled services. Add exact
+PostgreSQL, IdP, inference and optional OTLP peers/ports to `networkPolicy.egress` or edit
+`deploy/k8s/base/networkpolicy.yaml`. Replace documentation-only 192.0.2.x addresses.
+Use namespace+pod selectors for in-cluster dependencies and maintain their ingress policy
+in the owning namespace, including approved migration/backup jobs. Do not grant a whole
+namespace to a backup job. NetworkPolicy cannot enforce DNS names: update approved IP
+ranges when endpoints change, or use your CNI's reviewed FQDN policy. NodeLocal DNS needs
+its own exact resolver allowance. Policy changes must track endpoints and CA rotation.
+
+NetworkPolicy filters ports, not HTTP paths. The public inference ingress must deny
+`/portal` and `/metrics` unless intentionally published. Prefer a separate internal
+portal hostname/ingress with an internal load balancer or source restrictions, matching
+PORTAL_BASE_URL and OIDC redirects. Monitoring can reach the listener, so retain metrics
+authentication and portal session/Origin checks. For stronger separation, place an
+internal reverse proxy in front of the portal. Cluster administrators can change policy
+or pod labels; RBAC must restrict that authority.
+
+Validate on a policy-enforcing CNI. `tests/security/network_policy.sh` creates an isolated
+kind+Calico cluster and tests both rendered formats: router→database/backend and DNS
+succeed; unrelated pod→database/backend/router and ingress→private backend fail. It uses
+its own kubeconfig and deletes the cluster. See [Calico on kind](https://docs.tigera.io/calico/latest/getting-started/kubernetes/kind).
+Repeat these probes on the target cluster before production, including ingress/monitoring,
+migration/backup and external endpoints. Test wrong CA and wrong hostname rejection for
+PostgreSQL/OIDC/inference/OTLP. Rendering alone is not proof of network enforcement.
