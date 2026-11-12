@@ -1,0 +1,54 @@
+# Copy to a private site values file. Replace the image, host, issuer, model and
+# backend origin. Credentials belong in the separately created olr-secrets Secret.
+image:
+  repository: registry.example.org/olr
+  tag: REPLACE_WITH_TESTED_GIT_SHA
+  # digest: sha256:...  # 64 hexadecimal digits; preferred for deployments
+existingSecret: olr-secrets
+portal:
+  baseURL: https://llm.example.org
+  cookieSecure: true
+env:
+  OLR_BACKEND_ALLOWED_CIDRS: 192.168.1.0/24
+  # Optional external Keycloak; remove these lines for local-only login.
+  OIDC_ISSUER: https://login.example.org/realms/example
+  OIDC_PORTAL_CLIENT_ID: olr-portal
+  OIDC_GROUPS_CLAIM: groups
+  OIDC_USERNAME_CLAIM: preferred_username
+  # OIDC_AUDIENCE: olr-api
+  # OIDC_SYNC_CLIENT_ID: olr-sync
+config:
+  models:
+    chat-model:
+      upstream_model: replace-with-installed-model
+      # Enable anthropic only if the backend implements its native API too.
+      protocols: [openai]
+      pool:
+        - url: http://192.168.1.50:11434
+          health_path: /
+          weight: 1
+          max_inflight: 1
+  # Group names must match the Keycloak groups claim or local memberships.
+  groups:
+    staff:
+      models: [chat-model]
+      tokens_per_day: 2000000
+      tokens_per_month: 20000000
+      rpm: 60
+      max_concurrent: 4
+    admins:
+      models: ["*"]
+      admin: true
+
+# This example targets F5 NGINX Ingress Controller (NGINX Open Source).
+# Other controllers need their own equivalent streaming/body/timeout settings.
+ingress:
+  enabled: true
+  className: nginx
+  host: llm.example.org
+  tlsSecretName: olr-tls
+  annotations:
+    nginx.org/proxy-buffering: "False"
+    nginx.org/proxy-read-timeout: "960s"
+    nginx.org/proxy-send-timeout: "960s"
+    nginx.org/client-max-body-size: "32m"

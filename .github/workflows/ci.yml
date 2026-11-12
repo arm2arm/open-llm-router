@@ -105,3 +105,24 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down --volumes
+
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: v4.3.1
+      - uses: helm/kind-action@0b5c88445f37b7e12a2ce1ecca7805b9046a74db # v1
+        with:
+          version: v0.33.0
+          kubectl_version: v1.37.0
+          install_only: true
+      - name: Validate chart rendering, schema, security and package
+        run: |
+          python3 -m venv /tmp/olr-helm
+          /tmp/olr-helm/bin/pip install PyYAML==6.0.3
+          /tmp/olr-helm/bin/python tests/helm/check_chart.py
+      - name: Install, upgrade and roll back in disposable Kubernetes
+        run: bash tests/helm/acceptance.sh
