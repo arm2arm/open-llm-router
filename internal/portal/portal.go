@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
@@ -42,6 +43,7 @@ type Handler struct {
 	mux           *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
 	Traces    *requesttrace.Service
+	Activity  *activity.Broker
 	Pools     *pool.Manager
 	Endpoints *endpoints.Service
 	keyCipher *auth.KeyCipher
@@ -79,6 +81,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("DELETE /portal/api/usage", h.authenticated(h.deleteUsage))
 	h.mux.HandleFunc("GET /portal/api/usage/daily", h.authenticated(h.daily))
 	h.mux.HandleFunc("GET /portal/api/requests", h.authenticated(h.requests))
+	h.mux.HandleFunc("GET /portal/api/requests/events", h.authenticated(h.requestEvents))
 	h.mux.HandleFunc("GET /portal/api/requests/{id}", h.authenticated(h.requestTrace))
 	h.mux.HandleFunc("GET /portal/api/trace-preferences", h.authenticated(h.tracePreferences))
 	h.mux.HandleFunc("PUT /portal/api/trace-preferences", h.authenticated(h.saveTracePreferences))

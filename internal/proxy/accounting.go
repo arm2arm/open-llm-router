@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
@@ -29,6 +30,35 @@ type accounting struct {
 	span      trace.Span
 	selection time.Duration
 	capture   *requesttrace.Capture
+	live      *live
+}
+
+// live publishes metadata-only progress of one request to its user's portal.
+type live struct {
+	broker *activity.Broker
+	user   string
+	id     string
+	began  time.Time
+	model  *string
+	last   time.Time
+	bytes  int64
+	writes int
+}
+
+func (l *live) event(kind string) activity.Event {
+	return activity.Event{Type: kind, RequestID: l.id, Model: *l.model, ElapsedMS: time.Since(l.began).Milliseconds(), Bytes: l.bytes, Writes: l.writes}
+}
+
+// write runs on the forwarding path: a clock read and, at most every 500 ms
+// and only while the user has the page open, a nonblocking publish.
+func (l *live) write(n int) {
+	l.bytes += int64(n)
+	l.writes++
+	now := time.Now()
+	if (l.writes == 1 || now.Sub(l.last) >= activity.ProgressInterval) && l.broker.Watching(l.user) {
+		l.last = now
+		l.broker.Publish(l.user, l.event("progress"))
+	}
 }
 
 func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol string) *accounting {
@@ -48,6 +78,11 @@ func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol strin
 		a.capture = h.Traces.Begin(p.UserID, strings.TrimPrefix(r.URL.Path, "/v1/"), a.began)
 		a.writer.capture = a.capture
 		a.capture.Session(r.Header.Get("X-Session-Id"))
+		if h.Activity != nil {
+			a.live = &live{broker: h.Activity, user: p.UserID, id: a.record.RequestID, began: a.began, model: &a.record.Model}
+			a.writer.live = a.live
+			h.Activity.Publish(p.UserID, activity.Event{Type: "started", RequestID: a.record.RequestID, Time: a.record.StartedAt, Operation: a.record.Operation, Protocol: protocol})
+		}
 	}
 	return a
 }
@@ -96,6 +131,11 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 	}
 	a.record.InputTokens, a.record.OutputTokens = totals.InputTokens, totals.Output()
 	a.capture.Finish(a.record)
+	if a.live != nil {
+		r := a.record
+		a.live.broker.Publish(a.live.user, activity.Event{Type: "finished", RequestID: r.RequestID, Time: r.StartedAt, Model: r.Model, Operation: r.Operation, Protocol: r.Protocol,
+			Stream: r.IsStream, Status: r.Status, InputTokens: r.InputTokens, OutputTokens: r.OutputTokens, LatencyMS: r.LatencyMS, TTFBMS: r.TTFBMS, Bytes: a.live.bytes, Writes: a.live.writes})
+	}
 	if details := reqid.DetailsFromContext(r.Context()); details != nil {
 		details.Record = a.record
 	}
@@ -129,6 +169,7 @@ type statusWriter struct {
 	status    int
 	capture   *requesttrace.Capture
 	traceType uint8 // 0 unknown, 1 JSON, 2 SSE, 3 unsupported
+	live      *live
 }
 
 func (w *statusWriter) WriteHeader(status int) {
@@ -143,6 +184,9 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 		w.status = http.StatusOK
 	}
 	n, err := w.ResponseWriter.Write(p)
+	if w.live != nil && n > 0 {
+		w.live.write(n)
+	}
 	if w.capture != nil && n > 0 {
 		if w.traceType == 0 {
 			value, _, _ := strings.Cut(w.Header().Get("Content-Type"), ";")

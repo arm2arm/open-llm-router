@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/apierr"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
@@ -42,10 +43,12 @@ type Handler struct {
 	Pools     *pool.Manager
 	Usage     usage.Recorder // installed before serving; nil disables persistence
 	Traces    *requesttrace.Service
-	Limits    *limits.Manager   // installed before serving
-	Metrics   *metrics.Observer // installed before serving
-	active    sync.WaitGroup
-	routing   atomic.Pointer[routingSnapshot]
+	// Activity streams live request metadata to the portal; nil disables it.
+	Activity *activity.Broker
+	Limits   *limits.Manager   // installed before serving
+	Metrics  *metrics.Observer // installed before serving
+	active   sync.WaitGroup
+	routing  atomic.Pointer[routingSnapshot]
 }
 
 func New(cfg *config.Config) *Handler {

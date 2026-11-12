@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
@@ -29,6 +30,9 @@ type portalFixture struct {
 	provider *identityProvider
 	cfg      *config.Config
 	traces   *requesttrace.Service
+	// The router and the portal use separate brokers, as two instances
+	// would: portal events arrive through Postgres NOTIFY only.
+	routerActivity, portalActivity *activity.Broker
 }
 type portalBrowser struct {
 	f      *portalFixture
@@ -61,6 +65,13 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		f.traces = traces
 		forwarder.Traces = traces
 		h.Traces = traces
+		done := make(chan struct{})
+		f.routerActivity = activity.New(done, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		f.portalActivity = activity.New(done, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		t.Cleanup(func() { close(done); f.routerActivity.Wait(); f.portalActivity.Wait() })
+		forwarder.Activity = f.routerActivity
+		traces.Activity = f.routerActivity
+		h.Activity = f.portalActivity
 		h.Pools = forwarder.Pools
 		t.Cleanup(h.Close)
 		s.Handle("/portal", h)

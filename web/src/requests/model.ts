@@ -80,6 +80,7 @@ export type Trace = { request_id: string; expires_at: string; detail: Detail }
 export type Row = RequestRecord & {
   trace_summary?: Summary | null
   conversation?: string | null
+  fresh?: boolean // client-side: arrived after the page loaded
 }
 
 export const n = (v: number) => new Intl.NumberFormat().format(v)
