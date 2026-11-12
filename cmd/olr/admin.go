@@ -22,6 +22,8 @@ import (
 )
 
 const adminUsage = `usage:
+  olr admin bootstrap [-password-file FILE]
+  olr admin password change -user USER_UUID -current-password-file FILE -password-file FILE
   olr admin user add -username NAME [-email EMAIL] [-groups staff,admins]
   olr admin user disable -id USER_UUID
   olr admin user delete -id USER_UUID
@@ -45,12 +47,20 @@ User delete erases the user with keys, sessions, usage records and daily
 totals (GDPR erasure); it cannot be undone.
 Default key lifetime: auth.default_key_lifetime_days in -config/$OLR_CONFIG,
 or 90 days without a config file. Revokes and disables invalidate router caches.
+Bootstrap creates the protected local admin once; later calls never reset it.
+Use OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE (preferred) or OLR_BOOTSTRAP_ADMIN_PASSWORD.
+Password files must be private (0400/0600); passwords need 15+ characters and
+at most 1024 bytes. Initial password change is required before session/API-key
+access. Password change requires the current password; recovery is separate.
 `
 
 func admin(args []string, out, errout io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		_, err := fmt.Fprint(out, adminUsage)
 		return err
+	}
+	if args[0] == "bootstrap" {
+		return bootstrapCommand(args[1:], out, errout)
 	}
 	if len(args) < 2 {
 		fmt.Fprint(errout, adminUsage)
@@ -60,9 +70,14 @@ func admin(args []string, out, errout io.Writer) error {
 	fs := flag.NewFlagSet("olr admin "+command, flag.ContinueOnError)
 	fs.SetOutput(errout)
 	var username, email, groups, userID, id, label, configPath, match, class, field, value, reason, by string
+	var passwordFile, currentPasswordFile string
 	var lifetime time.Duration
 	var trusted bool
 	switch command {
+	case "password change":
+		fs.StringVar(&userID, "user", "", "local user UUID (required)")
+		fs.StringVar(&currentPasswordFile, "current-password-file", "", "private current password file (required)")
+		fs.StringVar(&passwordFile, "password-file", "", "private new password file (required)")
 	case "user add":
 		fs.StringVar(&username, "username", "", "local username (required)")
 		fs.StringVar(&email, "email", "", "email attribute")
@@ -104,6 +119,9 @@ func admin(args []string, out, errout io.Writer) error {
 	}
 	if fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use named flags shown by -h")
+	}
+	if command == "password change" && (!validUUID(userID) || passwordFile == "" || currentPasswordFile == "") {
+		return errors.New("-user UUID, -current-password-file and -password-file are required")
 	}
 	if command == "user add" && strings.TrimSpace(username) == "" {
 		return errors.New("-username is required")
@@ -191,6 +209,18 @@ func admin(args []string, out, errout io.Writer) error {
 	defer pool.Close()
 	manager := auth.Admin{Pool: pool}
 	switch command {
+	case "password change":
+		current, err := readPasswordFile(currentPasswordFile)
+		if err != nil {
+			return err
+		}
+		defer clear(current)
+		next, err := readPasswordFile(passwordFile)
+		if err != nil {
+			return err
+		}
+		defer clear(next)
+		return manager.ChangeLocalPassword(ctx, userID, current, next)
 	case "user add":
 		id, err := manager.AddUser(ctx, username, email, groupNames)
 		if err != nil {

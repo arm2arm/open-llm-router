@@ -115,6 +115,12 @@ func serve(args []string) error {
 		return err
 	}
 	defer database.Close()
+	bootstrapCtx, cancelBootstrap := context.WithTimeout(ctx, 30*time.Second)
+	_, _, err = bootstrapAdministrator(bootstrapCtx, database, "", false)
+	cancelBootstrap()
+	if err != nil {
+		return err
+	}
 	authCtx, cancelAuth := context.WithTimeout(ctx, 10*time.Second)
 	authenticator, err := auth.New(authCtx, database)
 	cancelAuth()

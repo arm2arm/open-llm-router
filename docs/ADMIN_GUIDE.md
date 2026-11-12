@@ -1,0 +1,558 @@
+# Administrator guide
+
+This guide describes the implementation including issue #72 (12 November 2026). Start here
+for setup, endpoint connections, group policies and user limits. Detailed operations
+are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
+The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
+working functionality.
+
+## What an administrator can configure today
+
+| Task | Current interface | When it applies |
+|---|---|---|
+| Add/remove a model or backend endpoint; change credentials, weight or capacity | Private YAML and environment | Router restart/recreation |
+| Grant a group access to models; set group default limits | Private YAML | Router restart/recreation |
+| Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
+| View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
+| Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next API-key request; cached OIDC access-token principals can take up to one minute |
+| Disable/re-enable a router user | Portal **Admin** or portal API; CLI can disable | Portal/API-key access observes the change; OIDC token cache can take up to one minute |
+| Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
+| Issue/revoke a user's API key as an operator | `olr admin key create/revoke` | No restart |
+| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment | Router restart/recreation |
+| Configure Keycloak, endpoints or group policies from the Admin page | **Not implemented** | See the feature plan |
+| Log in with a local administrator password, including without Keycloak | **Not implemented** | See the feature plan |
+| Bootstrap a protected local administrator; rotate its password | `olr admin bootstrap`, `olr admin password change`, optional startup secret | No restart after CLI bootstrap; local browser login remains pending |
+
+The portal requires OIDC today. A local CLI user, even one in an `admin: true`
+group, cannot sign into it with a password. The development account named `admin`
+is a **Keycloak account**, not a protected local router administrator.
+
+### Bootstrap the protected local administrator
+
+Issue [#72](https://github.com/arm2arm/open-llm-router/issues/72) adds the reserved
+router identity `(local, admin)`. Its admin authority is stored independently of
+groups. API, CLI and database guards prevent deleting, disabling or demoting it,
+removing its credential, renaming it or converting it into an SSO identity.
+Database superusers, schema changes and intentional database destruction are
+outside this guarantee. Ordinary local and SSO users keep their normal lifecycle.
+
+With a built `olr` binary and `OLR_DATABASE_URL` pointing at the intended database,
+create an owner-only secret file outside the checkout using your secret manager.
+Passwords require at least 15 characters of valid UTF-8 and at most 1024 bytes.
+Files must be regular files with no group/other permissions (0400 or 0600);
+one final LF/CRLF is ignored and spaces are preserved. Keep password values out
+of command arguments and shell history.
+
+```sh
+export OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE=/private/secrets/olr-bootstrap
+olr admin bootstrap
+# Save the returned id; output contains identity metadata, never a password/hash.
+export OLR_LOCAL_ADMIN_ID='PASTE_RETURNED_UUID_HERE'
+olr admin password change -user "$OLR_LOCAL_ADMIN_ID" \
+  -current-password-file "$OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE" \
+  -password-file /private/secrets/olr-admin-new
+unset OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE
+```
+
+Securely retire the bootstrap file after the change and store the replacement
+password in your secret manager. The change requires the current password,
+rejects reusing it, revokes existing sessions and clears authentication caches.
+Until it succeeds, the account cannot establish a full portal session or issue
+or authenticate API keys. Password reset without the current password is tracked
+separately in [#76](https://github.com/arm2arm/open-llm-router/issues/76).
+
+`olr serve` also bootstraps when `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` or the secret
+environment variable `OLR_BOOTSTRAP_ADMIN_PASSWORD` is supplied. Configure exactly
+one source; there is no built-in password. Without either source, existing
+deployments continue running and an operator can run explicit bootstrap later.
+Once initialized, startup and repeated/concurrent bootstrap calls preserve the
+same UUID and password and ignore retired inputs. An existing unprotected
+`(local, admin)` is a conflict: bootstrap refuses to adopt it. An SSO account with
+the same username/email remains a separate identity.
+
+For containers, mount private files in a site-specific Compose override/secret
+volume, readable by router UID 65532 and with owner-only permissions. Paths refer
+to files **inside** the container. The development Compose file forwards both
+bootstrap environment variables but does not create or mount a password file.
+The production pilot passes variables from its private environment file.
+
+Credentials use versioned Argon2id hashes with a random 16-byte salt, 64 MiB,
+three passes, two lanes and a 32-byte result. `BenchmarkPasswordHash` measured
+about 94 ms on an Apple M5 Max during local validation; repeat the benchmark on
+deployment hardware when reviewing future hash versions. Verification accepts
+only the version's bounded parameters. PostgreSQL backups contain password
+hashes and must be protected as secrets.
+
+The credential foundation does not yet expose a local browser login. That flow
+and its password-change screen are tracked in
+[#73](https://github.com/arm2arm/open-llm-router/issues/73) and
+[#74](https://github.com/arm2arm/open-llm-router/issues/74); the portal still requires
+OIDC today.
+
+## How the project works
+
+```mermaid
+flowchart TD
+    Browser[User or administrator browser] -->|Portal sign-in| KC[Keycloak: bundled for development, external for production]
+    KC -->|Verified identity and groups| Portal[Portal embedded in the Go router]
+    Client[SDK, coding client or trusted application] -->|Router API key or configured OIDC access token| Auth[Authenticate caller]
+    Auth --> Policy[Resolve groups and user overrides]
+    Policy --> Model[Resolve model alias and logical model]
+    Model --> Limits[Check model access, quotas, rates and concurrency]
+    Limits --> Pool[Select a healthy endpoint from that model's pool]
+    Pool --> Backend[vLLM, SGLang, Ollama or compatible backend]
+    Backend -->|Stream response; propagate cancellation| Client
+    Portal --> DB[(PostgreSQL: identities, key hashes, sessions, overrides and usage)]
+    Limits --> DB
+```
+
+Keycloak establishes identity and group memberships. Router YAML defines what each
+group can use. A **logical model** is the public name used by clients; its **pool**
+contains one or more backend origins serving the configured `upstream_model`.
+Aliases map additional client names to the logical model and inherit its access rules.
+
+Group access is therefore **group → logical model → endpoint pool**. There is no
+independent provider registry, group-to-replica permission or per-provider quota.
+Use separate logical models and separate pools when groups must reach different
+backends. Every endpoint in one pool must serve the same upstream model and the
+protocols enabled for that logical model.
+
+The router forwards native OpenAI and Anthropic request/response formats. Enabling
+`anthropic` does not convert an OpenAI-only backend into an Anthropic backend.
+The supported inference routes are `/v1/chat/completions`, `/v1/completions`,
+`/v1/embeddings`, `/v1/messages` and `/v1/messages/count_tokens`.
+`/v1/responses` is not implemented.
+
+## 1. Start the complete local test environment
+
+Install Git and Docker with Compose 2.20 or later. The Docker build supplies the Go
+and Node toolchains; a local evaluation needs no GPU or external identity provider.
+
+```sh
+git clone https://github.com/arm2arm/open-llm-router
+cd open-llm-router
+docker compose up --build -d --wait --wait-timeout 180
+docker compose ps
+curl --fail http://localhost:8080/healthz
+curl --fail http://localhost:8080/readyz
+```
+
+| Component | Local address | Account/purpose |
+|---|---|---|
+| Router and portal | `http://localhost:8080/portal/` | Sign in through the local Keycloak |
+| Keycloak administration | `http://localhost:8081/admin/` | `admin` / `keycloak-admin-dev-only` |
+| Router administrator in realm `olr-dev` | Portal login | `admin` / `admin-dev-only`; group `admins` |
+| Regular users in realm `olr-dev` | Portal login | `staff` / `staff-dev-only`; `student` / `student-dev-only` |
+| PostgreSQL | `localhost:5432` | Database/user `olr`, password `olr-dev-only` |
+| Mock replicas | `http://localhost:8001`, `http://localhost:8002` | Deterministic responses, not real model inference |
+
+These are public development credentials. The Keycloak administration account and
+the `olr-dev` portal account are different accounts despite sharing the name `admin`.
+Keycloak imports `olr-dev` and the brokered `upstream-idp` test realm into its data
+volume. Editing realm JSON does not update an already initialized volume.
+
+1. Sign into the portal as the realm's `admin` user.
+2. Open **Admin** and inspect users, group totals and replica health.
+3. Open **API keys**, create a key, and save the value shown once.
+4. Use it from a terminal:
+
+```sh
+export OLR_API_KEY='PASTE_THE_ROUTER_KEY_HERE'
+curl --fail http://localhost:8080/v1/models \
+  -H "Authorization: Bearer $OLR_API_KEY"
+curl --fail -N http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer $OLR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"chat-model","messages":[{"role":"user","content":"Hello"}],"stream":true,"max_tokens":64}'
+```
+
+For overrides, copy [.env.example](../.env.example) to `.env` and adjust ports or
+development settings. Apply changed Compose environment values with
+`docker compose up -d --force-recreate router`. A plain `docker compose restart`
+does not update a container's environment. `docker compose down` stops the stack
+and preserves named volumes; `down --volumes` deletes its database and realm data.
+
+For a real local Ollama backend, follow the laptop setup in [README.md](../README.md).
+GPU server examples and client requirements are in [CLIENTS.md](CLIENTS.md).
+
+## 2. Prepare a production installation
+
+The standalone production Compose file runs **only the router**. Provision the
+following services separately before starting it:
+
+| Dependency | Required site values |
+|---|---|
+| PostgreSQL 17 | Dedicated database and login, TLS connection URL, backup/restore owner; the router login must be able to apply schema migrations |
+| Production Keycloak | Reachable HTTPS realm issuer, portal and sync client secrets, groups and claim mappings |
+| Model servers | Reachable origins, served model names, native protocols, authentication and health paths |
+| Docker host and TLS proxy | Public HTTPS origin, certificate, router listener restricted to loopback, firewall access to dependencies |
+| Operations | Tested image digest, quotas/capacities, metrics token, alerts, retention and privacy notice |
+
+Run **one router instance**. RPM, TPM, concurrency, queue and affinity state are
+in memory; multiple instances do not share those limits. The router migrates its
+database on startup. Keep the deployment files outside this public repository.
+
+### Configure the Keycloak realm
+
+In the site's Keycloak administration console:
+
+1. Create/select the production realm and record its issuer, such as
+   `https://sso.example.org/realms/llm`.
+2. Create groups for the YAML policies you will use. Start with distinct, flat
+   names such as `staff`, `students`, `external-users` and `admins`; assign pilot
+   users and at least one administrator.
+3. Create confidential client `olr-portal` with authorization-code login, client
+   authentication and PKCE S256. Register the exact redirect
+   `https://llm.example.org/portal/callback` and post-logout redirect
+   `https://llm.example.org/portal/`. Record its client secret.
+4. Add a group-membership mapper with claim name `groups`, included in ID tokens
+   and, where used, access tokens. Set **Full group path off** for this setup.
+   The router matches group strings exactly; its Keycloak sync currently reads
+   group names rather than full paths. Avoid nested groups with duplicate leaf names.
+5. For service access tokens, create audience client `olr-api`. Give each actual
+   service client an audience mapper adding `olr-api` to access tokens and the
+   required group memberships/claim. The audience client itself is not a login.
+6. Create confidential client `olr-sync` with service accounts and the
+   `realm-management` role `view-users`. For Keycloak 26.8+ add its `kc-admin-api`
+   client scope. Record the sync client secret. The production Compose template
+   requires this secret; the router itself can run without sync if it is omitted
+   in a different deployment definition.
+7. If federated institutional login is needed, configure the broker in Keycloak.
+   The router still trusts the one Keycloak issuer. Set an optional required
+   login claim with `OIDC_REQUIRED_CLAIM=name=value`.
+
+The current router does not create or edit Keycloak realms, users, groups or
+clients. It consumes their settings. Generic OIDC can provide portal login, but
+the periodic group-sync implementation specifically uses Keycloak's admin API.
+
+### Prepare the image and private files
+
+Build the current source and publish it to a registry accessible by the target host,
+or use a tested image already published by your team. For example, on a build host
+matching the deployment architecture:
+
+```sh
+docker build --target olr -t registry.example.org/team/olr:pilot .
+docker push registry.example.org/team/olr:pilot
+docker image inspect registry.example.org/team/olr:pilot --format '{{json .RepoDigests}}'
+```
+
+Use the matching `registry/image@sha256:...` repository digest as `OLR_IMAGE`.
+The host paths below are examples; the parent directory stays private and the
+non-root container must be able to read the mounted YAML.
+
+```sh
+umask 077
+mkdir -p "$HOME/.config/olr-pilot"
+cp deploy/compose/pilot.env.example "$HOME/.config/olr-pilot/pilot.env"
+cp deploy/compose/pilot.config.example.yaml "$HOME/.config/olr-pilot/config.yaml"
+chmod 700 "$HOME/.config/olr-pilot"
+chmod 600 "$HOME/.config/olr-pilot/pilot.env"
+chmod 644 "$HOME/.config/olr-pilot/config.yaml"
+export OLR_PILOT_ENV_FILE="$HOME/.config/olr-pilot/pilot.env"
+```
+
+Edit `pilot.env`. Fill every required empty value: image digest, absolute
+`OLR_SITE_CONFIG` path, PostgreSQL URL, HTTPS issuer and portal origin, OIDC secrets,
+metrics token, backend origins/keys and served model. Choose group limits,
+retention and measured replica capacity rather than adopting example values blindly.
+Single-quote values containing `$`, `#` or spaces. Do not `source` this file;
+Compose reads it as an environment file. Use a deployment shell without conflicting
+exported development settings, since shell values can override Compose interpolation.
+
+Set the TLS reverse proxy as described in [RUNBOOK.md](RUNBOOK.md#behind-a-tls-reverse-proxy):
+buffering off, 32 MiB body limit, timeouts at least the largest model timeout,
+and private access to `/metrics`. The pilot file forces secure cookies and clears
+the development `OIDC_BACKCHANNEL_URL`.
+
+```sh
+docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" config --quiet
+docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" pull
+docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" up -d
+docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" logs --tail=100 router
+```
+
+`config --quiet` checks Compose, **not the router YAML or external connectivity**.
+There is currently no standalone `olr config check` command. Startup parses YAML
+strictly, opens/migrates the database and configures OIDC. Poll `/healthz` and
+`/readyz` through the HTTPS origin with a bounded retry period; both must return
+200. Readiness requires the database and a healthy replica for **every** configured
+model. Then complete the production checks in [PILOT.md](PILOT.md#acceptance-before-onboarding).
+
+## 3. Add endpoints and assign them to groups
+
+The following is a complete example router YAML. Use it as a replacement for the
+private example when you need a local GPU model and a separate remote compatible
+backend. The remote origin is illustrative; this does not establish compatibility
+with a commercial provider. Keep the same private `pilot.env`, adding
+`REMOTE_API_ORIGIN`, `REMOTE_UPSTREAM_MODEL`, `REMOTE_API_KEY` and
+`REMOTE_HEALTH_PATH`. The pilot Compose file passes custom variables to the router.
+
+```yaml
+auth:
+  default_key_lifetime_days: 90
+limits:
+  timezone: Europe/Berlin
+retention:
+  usage_days: 90
+  usage_daily_days: 400
+  run_at: "03:00"
+oidc:
+  issuer: ${OIDC_ISSUER}
+  portal_client_id: olr-portal
+  groups_claim: groups
+  username_claim: preferred_username
+  audience: olr-api
+  sync_client_id: olr-sync
+  sync_interval_s: 900
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    upstream_model: ${OLR_UPSTREAM_MODEL}
+    timeout_s: 900
+    idle_timeout_s: 60
+    queue_timeout_s: 10
+    session_affinity: true
+    pool:
+      - url: ${OLR_BACKEND_A_URL}
+        health_path: /health
+        bearer_token_env: VLLM_A_API_KEY
+        weight: 2
+        max_inflight: 8
+      - url: ${OLR_BACKEND_B_URL}
+        health_path: /health
+        bearer_token_env: VLLM_B_API_KEY
+        weight: 1
+        max_inflight: 4
+  external-chat:
+    protocols: [openai]
+    upstream_model: ${REMOTE_UPSTREAM_MODEL}
+    timeout_s: 120
+    idle_timeout_s: 60
+    queue_timeout_s: 5
+    pool:
+      - url: ${REMOTE_API_ORIGIN}
+        health_path: ${REMOTE_HEALTH_PATH}
+        bearer_token_env: REMOTE_API_KEY
+        weight: 1
+        max_inflight: 4
+groups:
+  students:
+    models: [chat-model]
+    tokens_per_day: 300000
+    tokens_per_month: 6000000
+    rpm: 20
+    tpm: 20000
+    max_concurrent: 2
+    max_concurrent_batch: 2
+  staff:
+    models: [chat-model]
+    tokens_per_day: 2000000
+    tokens_per_month: 20000000
+    rpm: 60
+    tpm: 100000
+    max_concurrent: 4
+    max_concurrent_batch: 8
+  external-users:
+    models: [external-chat]
+    tokens_per_day: 300000
+    tokens_per_month: 6000000
+    rpm: 20
+    tpm: 20000
+    max_concurrent: 2
+    max_concurrent_batch: 2
+  admins:
+    models: [chat-model]
+    admin: true
+    tokens_per_day: 300000
+    tokens_per_month: 6000000
+    rpm: 20
+    tpm: 20000
+    max_concurrent: 2
+    max_concurrent_batch: 2
+aliases:
+  coding-assistant: chat-model
+```
+
+In this example students can use `chat-model` and `coding-assistant`; membership
+in `external-users` adds `external-chat`. An administrator needs that membership
+too to use `external-chat`: `admin: true` enables administration, while `models`
+controls inference access. The repository's development `admins` policy instead
+uses `models: ["*"]` and omits limits, intentionally granting unrestricted access.
+
+### Connection rules and current external-provider limits
+
+- `url` is an HTTP(S) **origin**, such as `https://inference.example.org`, without
+  `/v1`, credentials, query or fragment. The router sends the supported incoming
+  API path unchanged. A provider requiring a base path or deployment-specific URL
+  cannot be described by the present schema.
+- `bearer_token_env` names a nonempty secret in the **router container's**
+  environment. It is sent as `Authorization: Bearer ...` for requests and health
+  probes. Client API keys/cookies are stripped. Arbitrary server-side headers,
+  provider-specific API-key headers, request signing and per-endpoint mTLS settings
+  are not configurable. Omit `bearer_token_env` for an intentionally unauthenticated
+  backend.
+- The health path defaults to `/health`; Ollama uses `/`. A probe must return HTTP
+  200 within two seconds. Checks run every five seconds; a successful probe marks
+  a replica healthy and two failed probes mark it unhealthy. A remote API without
+  a suitable probe is not a supported drop-in backend today.
+- Weight is relative throughput, not a fixed traffic percentage. Selection uses
+  outstanding requests divided by weight, subject to each replica's `max_inflight`.
+  Queueing is per logical model. A connection failure before response commitment
+  can be retried once on another replica; an already-started stream is not replayed.
+- There is no shared provider budget, money billing, provider discovery or
+  provider-specific retry/rate-limit integration. Pools are independent per model:
+  using one origin in several models does not create a shared capacity cap.
+- The current scope is locally hosted models. A remote service must satisfy all
+  of the existing protocol, path, authentication and health requirements; named
+  cloud-provider support is a planned extension, not a current promise.
+
+### Apply an endpoint or group-policy change
+
+1. Save a private copy of the last working YAML/environment and the image digest.
+2. Edit the endpoint, model, alias and `groups.<name>.models` together. Group model
+   lists name canonical models, not aliases. Supply any new token variables.
+3. Check Compose, then recreate the router, even when the image is unchanged:
+
+```sh
+docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" config --quiet
+docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" up -d --force-recreate router
+```
+
+4. Check logs, readiness, **Admin → Replica health**, an allowed user's model
+   list and a real completion. Test a disallowed account too: the model should be
+   absent from its list, and a direct inference call should receive 403.
+5. If acceptance fails, restore the saved configuration/environment and recreate
+   the router. Schema upgrades require the separate backup/restore procedure.
+
+Configuration has no hot reload. Replacement interrupts streams that exceed the
+30-second application shutdown grace. Environment changes require recreation;
+a restart alone retains the old environment. The development Compose file does
+not pass arbitrary new backend secret variables automatically; add an explicit
+environment mapping in a private override when using it for real backends.
+
+## 4. Understand group and user limits
+
+| Setting | Meaning |
+|---|---|
+| `tokens_per_day`, `tokens_per_month` | Input plus output token totals per user across allowed models and keys |
+| `rpm` | Requests per minute per user |
+| `tpm` | Token-bucket token rate per user |
+| `max_concurrent` | Concurrent requests using interactive keys |
+| `max_concurrent_batch` | Concurrent requests using batch keys; defaults to `max_concurrent` |
+| `strict_quota` | Reserve the output allowance plus request size while a call runs |
+| Replica `max_inflight` | Backend capacity within this logical model's pool; separate from user concurrency |
+
+Policies are **per-user defaults**, not a shared group allowance. Ten members with
+`tokens_per_day: 300000` each have their own 300,000-token allowance. Limits are
+not independently configurable per user/model/provider combination.
+
+Memberships combine as follows:
+
+1. Model access is the union of matching groups; no match grants no model access.
+2. For each numeric limit, the largest value wins. An omitted value in **any**
+   matching group makes that limit unlimited. For example, students plus staff in
+   the example above receive 2,000,000 tokens/day and access to `chat-model`.
+3. Strict quota is on only when every matching group enables it. Group priority
+   uses the lowest numeric priority, and any matching `admin: true` grants admin access.
+4. A stored user override replaces that one effective limit, including lowering
+   it. It does not grant models, change groups or grant administration rights.
+
+Do not add an unrestricted group merely to grant one additional model unless
+unlimited limits are intended. All matching groups participate in limit resolution
+for every allowed model. Numeric limits must be positive; zero is rejected.
+Omitting a limit means unlimited. Strict quota is configured as a boolean in YAML
+and as `1`/`0` in a user override. With strict quota, generation requests must supply
+an output limit (`max_tokens` or supported `max_completion_tokens`); embeddings
+reserve input size and token-count requests do not reserve generation output.
+
+### Change one user's limits in the portal
+
+1. Sign in with a configured administrator's Keycloak account and open **Admin**.
+2. Search by username/email and expand the user.
+3. Inspect effective limits and existing overrides.
+4. Select the field, enter a positive value and a reason, then **Set override**.
+   Empty value means unlimited for numeric limits; strict quota requires `1` or `0`.
+5. Use **Clear** to return a field to the group policy. **Enable user** and
+   **Disable user** control router access; the UI prevents disabling yourself.
+
+Overrides record the actor, reason and time. They store the latest setting per
+field, not a full append-only change history. Existing API-key requests already
+running are not terminated when limits change. Verified OIDC access tokens cache
+their principal, including overrides, for up to one minute.
+
+### Use the operator CLI
+
+For production, define this convenience function from the repository root after
+setting `OLR_PILOT_ENV_FILE`:
+
+```sh
+olr_admin() {
+  docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" \
+    exec -T router olr admin "$@"
+}
+olr_admin user list -match alice
+export OLR_TARGET_USER_ID='PASTE_USER_UUID_HERE'
+olr_admin override set -user "$OLR_TARGET_USER_ID" -field tokens_per_day \
+  -value 5000000 -reason 'Approved research allocation' -by site-admin
+olr_admin override list -user "$OLR_TARGET_USER_ID"
+olr_admin override clear -user "$OLR_TARGET_USER_ID" -field tokens_per_day
+```
+
+For local development use `docker compose exec -T router olr admin ...` instead.
+The CLI uses the container's database credentials; it does not log into Keycloak.
+
+```sh
+olr_admin key list -user "$OLR_TARGET_USER_ID"
+# Substitute the UUID of the specific key being revoked.
+olr_admin key revoke -id KEY_UUID
+olr_admin user disable -id "$OLR_TARGET_USER_ID"
+```
+
+The admin UI shows key counts but does not provide an operator revoke button.
+Users revoke their own keys on **API keys**. Re-enable a router user through the
+Admin page/API; there is currently no `olr admin user enable` CLI command.
+
+For a local API-only account:
+
+```sh
+olr_admin user add -username automation -groups staff
+# Use the printed UUID; the key value is printed once.
+olr_admin key create -user USER_UUID -label automation -class batch
+```
+
+This creates identity `(local, automation)`, not a Keycloak identity or password.
+SSO identities use `(issuer, sub)`; the same username or email does not link them.
+Group membership for SSO accounts is managed in Keycloak. The public CLI has no
+group-edit command for an existing local user. Keycloak sync updates enabled
+users already known to this router; it is not a bulk realm-user import and never
+re-enables disabled users. Re-login or sync refreshes groups for API-key users;
+issued OIDC access tokens retain their embedded group claims until replaced.
+
+## 5. Routine operation and troubleshooting
+
+Configure a dedicated `OLR_METRICS_TOKEN`, a private Prometheus scrape and alerts for
+readiness, error rates and accounting loss. [OBSERVABILITY.md](OBSERVABILITY.md)
+contains the dashboard and metric names. Back up PostgreSQL before upgrades,
+exercise restores, and apply retention to logs, traces and backups as well as the
+database. Publish the completed privacy notice before inviting real users.
+Full erasure is an operator CLI operation; see [RUNBOOK.md](RUNBOOK.md#erase-a-user-on-request).
+
+| Symptom | Check |
+|---|---|
+| No Admin page | User's stored groups match a configured `admin: true` policy; renew portal login or check sync |
+| Empty model list / 403 | Exact group names, model grants, enabled user and required login claim |
+| 401 on API | Valid, unexpired router key or a token with the configured issuer/audience |
+| 429 | Error `limit`, `Retry-After` and `/v1/me/usage`; effective policy plus user override |
+| 503 / readiness failure | Database, health path, credentials, TLS trust and model pool capacity |
+| Changed environment has no effect | Recreate the container and check for exported shell overrides |
+| OIDC startup/login fails | Discovery and logout metadata, issuer reachability, client secret, exact redirects and secure cookies |
+| Stream stalls behind HTTPS | TLS proxy buffering/timeouts and backend idle timeout |
+| Group policy changes unexpectedly | Multiple memberships, omitted limits and group-sync name/path consistency |
+| Keycloak unavailable and no portal login works | No local portal login exists today; use the database-backed operator CLI while restoring the IdP |
+
+The protected local credential and CLI foundation is implemented; local browser
+login, dual login and Admin-managed external Keycloak configuration remain in
+[ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
+local tests and this documentation do not replace deployed acceptance and two
+weeks of real user activity.

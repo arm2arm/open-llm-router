@@ -30,17 +30,18 @@ func (h *Handler) admin(next func(http.ResponseWriter, *http.Request, user)) htt
 }
 
 type adminUser struct {
-	ID          string            `json:"id"`
-	Issuer      string            `json:"issuer"`
-	Username    string            `json:"username"`
-	Email       string            `json:"email"`
-	Groups      []string          `json:"groups"`
-	Enabled     bool              `json:"enabled"`
-	SyncedAt    time.Time         `json:"synced_at"`
-	ActiveKeys  int64             `json:"active_keys"`
-	TokensToday int64             `json:"tokens_today"`
-	TokensMonth int64             `json:"tokens_this_month"`
-	Overrides   map[string]*int64 `json:"overrides"`
+	ID             string            `json:"id"`
+	Issuer         string            `json:"issuer"`
+	Username       string            `json:"username"`
+	Email          string            `json:"email"`
+	Groups         []string          `json:"groups"`
+	Enabled        bool              `json:"enabled"`
+	SyncedAt       time.Time         `json:"synced_at"`
+	ActiveKeys     int64             `json:"active_keys"`
+	TokensToday    int64             `json:"tokens_today"`
+	TokensMonth    int64             `json:"tokens_this_month"`
+	Overrides      map[string]*int64 `json:"overrides"`
+	ProtectedAdmin bool              `json:"protected_admin"`
 }
 
 func (h *Handler) calendar() (day, month time.Time) {
@@ -54,7 +55,7 @@ func (h *Handler) calendar() (day, month time.Time) {
 func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 	match := strings.TrimSpace(r.URL.Query().Get("match"))
 	day, month := h.calendar()
-	rows, err := h.pool.Query(r.Context(), `SELECT u.id, u.issuer, u.username, u.email, u.groups, u.enabled, u.synced_at,
+	rows, err := h.pool.Query(r.Context(), `SELECT u.id, u.issuer, u.username, u.email, u.groups, u.enabled, u.synced_at,u.protected_admin,
 		(SELECT count(*) FROM api_keys k WHERE k.user_id = u.id AND NOT k.revoked AND (k.expires IS NULL OR k.expires > clock_timestamp())),
 		COALESCE((SELECT sum(d.input_tokens + d.output_tokens) FROM usage_daily d WHERE d.user_id = u.id AND d.day = $2::date), 0)::bigint,
 		COALESCE((SELECT sum(d.input_tokens + d.output_tokens) FROM usage_daily d WHERE d.user_id = u.id AND d.day >= $3::date), 0)::bigint,
@@ -70,7 +71,7 @@ func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 	users := make([]adminUser, 0)
 	for rows.Next() {
 		var u adminUser
-		if err := rows.Scan(&u.ID, &u.Issuer, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt,
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin,
 			&u.ActiveKeys, &u.TokensToday, &u.TokensMonth, &u.Overrides); err != nil {
 			unavailable(w)
 			return
@@ -99,9 +100,9 @@ func (h *Handler) adminUser(w http.ResponseWriter, r *http.Request, _ user) {
 	}
 	var target user
 	var enabled bool
-	err := h.pool.QueryRow(r.Context(), `SELECT id, username, email, groups, enabled,
+	err := h.pool.QueryRow(r.Context(), `SELECT id, username, email, groups, enabled,protected_admin,
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = users.id)
-		FROM users WHERE id = $1`, id).Scan(&target.ID, &target.Username, &target.Email, &target.Groups, &enabled, &target.Overrides)
+		FROM users WHERE id = $1`, id).Scan(&target.ID, &target.Username, &target.Email, &target.Groups, &enabled, &target.ProtectedAdmin, &target.Overrides)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "not_found_error", "user not found")
@@ -188,6 +189,10 @@ func (h *Handler) setEnabled(w http.ResponseWriter, r *http.Request, by user) {
 		return
 	}
 	err := (auth.Admin{Pool: h.pool}).SetEnabled(r.Context(), id, *body.Enabled)
+	if errors.Is(err, auth.ErrProtectedAdmin) {
+		fail(w, 403, "permission_error", "the protected local administrator cannot be disabled")
+		return
+	}
 	if errors.Is(err, auth.ErrNotFound) {
 		fail(w, 404, "not_found_error", "user not found")
 		return
