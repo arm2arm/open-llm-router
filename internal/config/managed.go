@@ -75,6 +75,7 @@ var AuthSettings = []AuthSetting{
 	{"portal_client_secret", "", EnvOIDCClientSecret},
 	{"audience", "audience", "OIDC_AUDIENCE"},
 	{"groups_claim", "groups_claim", "OIDC_GROUPS_CLAIM"},
+	{"group_names", "group_names", ""},
 	{"username_claim", "username_claim", "OIDC_USERNAME_CLAIM"},
 	{"required_claim", "required_claim", "OIDC_REQUIRED_CLAIM"},
 	{"sync_client_id", "sync_client_id", "OIDC_SYNC_CLIENT_ID"},

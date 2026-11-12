@@ -244,15 +244,14 @@ olr admin key revoke -id <key uuid>
 
 The portal's **Admin** page can disable or re-enable users; operator key revocation
 uses the CLI. Every router clears its API-key cache before the command returns.
-A cached OIDC access-token principal can remain valid for up to one minute.
+Cached OIDC access-token principals are refused on their next request too.
 A user disabled in Keycloak is disabled here by the group sync. Users can revoke their own keys.
 
 ### Change one user's limits
 
 `olr admin override set -user <uuid> -field tokens_per_day -value 5000000 -reason "thesis"`
 (`-value unlimited` lifts a limit), `override clear` and `override list`, or the **Admin** page.
-Changes apply at the user's next API-key request; cached OIDC access-token
-principals can take up to one minute to refresh.
+Changes apply at the user's next request, for API keys and OIDC access tokens alike.
 
 ### Rotate secrets
 

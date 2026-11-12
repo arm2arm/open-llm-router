@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"slices"
 	"sync"
 	"time"
 
@@ -18,8 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// cacheTTL bounds how long a verified token's user stays cached; a user
-// disabled in the router is refused within it.
+// cacheTTL bounds how long a verified token's principal stays cached. Admin
+// changes (disablement, overrides, memberships) invalidate it earlier: entries
+// carry the authenticator's cache generation and older generations are
+// discarded, so the next request observes the change.
 const cacheTTL = time.Minute
 const maxCached = 4096
 
@@ -34,20 +35,28 @@ type Verifier struct {
 	mu       sync.Mutex
 	cache    map[[32]byte]entry
 	now      func() time.Time
+	// fresh reports the invalidation generation and whether caching is safe
+	// (the invalidation listener is connected).
+	fresh func() (uint64, bool)
 }
 
 type entry struct {
-	principal auth.Principal
-	until     time.Time
+	principal  auth.Principal
+	until      time.Time
+	generation uint64
 }
 
-// New discovers the provider. Close releases its connections.
-func New(ctx context.Context, cfg *config.OIDC, pool *pgxpool.Pool) (*Verifier, error) {
+// New discovers the provider. fresh is normally Authenticator.Freshness;
+// nil disables caching. Close releases its connections.
+func New(ctx context.Context, cfg *config.OIDC, pool *pgxpool.Pool, fresh func() (uint64, bool)) (*Verifier, error) {
 	idp, err := oidcclient.New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Verifier{cfg: cfg, idp: idp, admin: auth.Admin{Pool: pool}, cache: map[[32]byte]entry{}, now: time.Now,
+	if fresh == nil {
+		fresh = func() (uint64, bool) { return 0, false }
+	}
+	return &Verifier{cfg: cfg, idp: idp, admin: auth.Admin{Pool: pool}, cache: map[[32]byte]entry{}, now: time.Now, fresh: fresh,
 		verifier: idp.Provider.Verifier(&oidc.Config{ClientID: cfg.Audience})}, nil
 }
 
@@ -57,10 +66,13 @@ func (v *Verifier) Close() { v.idp.Close() }
 // auth.ErrInvalidKey.
 func (v *Verifier) Authenticate(ctx context.Context, raw string) (auth.Principal, error) {
 	hash := sha256.Sum256([]byte(raw))
+	// Read the generation before any database lookup: an invalidation that
+	// races with this request makes the stored entry stale at once.
+	generation, cacheable := v.fresh()
 	v.mu.Lock()
 	cached, ok := v.cache[hash]
 	v.mu.Unlock()
-	if ok && v.now().Before(cached.until) {
+	if ok && cacheable && cached.generation == generation && v.now().Before(cached.until) {
 		return cached.principal, nil
 	}
 	token, err := v.verifier.Verify(v.idp.Context(ctx), raw)
@@ -83,13 +95,8 @@ func (v *Verifier) Authenticate(ctx context.Context, raw string) (auth.Principal
 	if username == "" {
 		username = token.Subject
 	}
-	if groups == nil {
-		groups = []string{}
-	}
-	slices.Sort(groups)
-	groups = slices.Compact(groups)
-	// The token's groups are current; store them like a portal login does.
-	id, err := v.admin.EnsureIdentity(ctx, token.Issuer, token.Subject, username, email, groups)
+	groups = auth.GroupNames(groups, v.cfg.GroupNames)
+	id, groups, err := v.admin.TokenIdentity(ctx, token.Issuer, token.Subject, username, email, groups, token.IssuedAt)
 	if errors.Is(err, auth.ErrNotFound) {
 		return auth.Principal{}, auth.ErrInvalidKey // disabled in the router
 	}
@@ -108,11 +115,14 @@ func (v *Verifier) Authenticate(ctx context.Context, raw string) (auth.Principal
 	if token.Expiry.Before(until) {
 		until = token.Expiry
 	}
+	if !cacheable {
+		return p, nil
+	}
 	v.mu.Lock()
 	if len(v.cache) >= maxCached {
 		v.cache = map[[32]byte]entry{}
 	}
-	v.cache[hash] = entry{principal: p, until: until}
+	v.cache[hash] = entry{principal: p, until: until, generation: generation}
 	v.mu.Unlock()
 	return p, nil
 }

@@ -585,9 +585,20 @@ func TestStoppedReplicaFailsOver(t *testing.T) {
 	if good.Stats().Requests != 20 {
 		t.Fatal(good.Stats().Requests)
 	}
-	for _, s := range h.Pools.Pools["chat-model"].Snapshot() {
-		if s.Inflight != 0 {
-			t.Fatal(s)
+	// A lease is released when the handler returns, which can be just after
+	// the client has read the response.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		inflight := 0
+		for _, s := range h.Pools.Pools["chat-model"].Snapshot() {
+			inflight += s.Inflight
 		}
+		if inflight == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("leases were not released", h.Pools.Pools["chat-model"].Snapshot())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

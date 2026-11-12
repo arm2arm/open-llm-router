@@ -290,6 +290,7 @@ export type AuthenticationDocument = {
   portal_client_secret: SecretRef
   audience: string
   groups_claim: string
+  group_names: 'leaf' | 'path'
   username_claim: string
   required_claim: { name: string; value: string } | null
   sync_client_id: string

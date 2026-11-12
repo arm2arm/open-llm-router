@@ -37,7 +37,7 @@ func startTokenRouter(t *testing.T) *tokenFixture {
 		},
 		tokens: func(pool *pgxpool.Pool) func(*auth.Authenticator) {
 			return func(a *auth.Authenticator) {
-				v, err := apitoken.New(t.Context(), f.oidc, pool)
+				v, err := apitoken.New(t.Context(), f.oidc, pool, a.Freshness)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -105,13 +105,120 @@ func TestAccessTokensOnTheAPI(t *testing.T) {
 	if status, _ := f.models(t, "not-a-jwt"); status != 401 {
 		t.Error("garbage token", status)
 	}
-	// Disabled in the router: refused once the token cache entry expires.
+	// Disabled in the router: the cached token is refused on the next request.
 	if err := (auth.Admin{Pool: f.pool}).DisableUser(t.Context(), user); err != nil {
 		t.Fatal(err)
+	}
+	if status, _ := f.models(t, good); status != 401 {
+		t.Error("disabled user's cached token", status)
 	}
 	fresh := f.token(t, func(c map[string]any) { c["jti"] = "new" })
 	if status, _ := f.models(t, fresh); status != 401 {
 		t.Error("disabled user's new token", status)
+	}
+}
+
+// Admin changes reach cached access tokens on the next request, and a token
+// issued before a membership change can never restore a removed group.
+func TestAccessTokenFreshnessAndGroupClaims(t *testing.T) {
+	f := startTokenRouter(t)
+	admin := auth.Admin{Pool: f.pool}
+	old := f.token(t, nil) // groups: staff (every model)
+	if status, body := f.models(t, old); status != 200 || !strings.Contains(body, "chat-model") {
+		t.Fatal("token", status, body)
+	}
+	var user string
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM users WHERE issuer=$1 AND sub='service-1'`, f.provider.issuer).Scan(&user); err != nil {
+		t.Fatal(err)
+	}
+	// A limit override applies to the cached principal at once.
+	one := int64(1)
+	if err := admin.SetOverride(t.Context(), user, "rpm", &one, "freshness test", "test"); err != nil {
+		t.Fatal(err)
+	}
+	statuses := []int{}
+	for range 2 {
+		resp := f.call(t, old, "POST", "/v1/chat/completions", `{"model":"chat-model","messages":[]}`)
+		statuses = append(statuses, resp.StatusCode)
+	}
+	if !slices.Equal(statuses, []int{200, 429}) {
+		t.Fatal("override not observed by the cached token", statuses)
+	}
+	if err := admin.ClearOverride(t.Context(), user, "rpm"); err != nil {
+		t.Fatal(err)
+	}
+	// Group sync removes staff: the older token keeps only what both still
+	// grant, and does not write staff back.
+	if err := admin.SetGroups(t.Context(), user, []string{"students"}); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := f.models(t, old); status != 200 || strings.Contains(body, "chat-model") {
+		t.Fatal("an old token kept a removed group", status, body)
+	}
+	var stored []string
+	if err := f.pool.QueryRow(t.Context(), `SELECT groups FROM users WHERE id=$1`, user).Scan(&stored); err != nil || !slices.Equal(stored, []string{"students"}) {
+		t.Fatal("an old token rewrote the stored groups", stored, err)
+	}
+	// A token issued after the change is the newest membership information:
+	// it may add groups and updates the stored ones. Full-path claims are
+	// normalized to leaf names.
+	newer := f.token(t, func(c map[string]any) {
+		c["iat"] = time.Now().Add(2 * time.Second).Unix()
+		c["groups"] = []string{"/staff", "/students"}
+	})
+	if status, body := f.models(t, newer); status != 200 || !strings.Contains(body, "chat-model") {
+		t.Fatal("newer token", status, body)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT groups FROM users WHERE id=$1`, user).Scan(&stored); err != nil || !slices.Equal(stored, []string{"staff", "students"}) {
+		t.Fatal("newer token groups", stored, err)
+	}
+	// Disable and re-enable: refused at once, then usable again.
+	if err := admin.SetEnabled(t.Context(), user, false); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := f.models(t, newer); status != 401 {
+		t.Fatal("disabled user's cached token", status)
+	}
+	if err := admin.SetEnabled(t.Context(), user, true); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := f.models(t, newer); status != 200 {
+		t.Fatal("re-enabled user's token", status)
+	}
+}
+
+// Group sync uses Keycloak paths with the same naming rule as tokens and
+// logins: leaf names by default, refusing a leaf reached by two paths.
+func TestGroupSyncNamesNestedGroupsConsistently(t *testing.T) {
+	for _, tc := range []struct {
+		format string
+		want   []string
+	}{
+		{"leaf", []string{"admins", "students"}},
+		{"path", []string{"/a/staff", "/admins", "/b/staff", "/org/students"}},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			f := startTokenRouter(t)
+			f.oidc.GroupNames = tc.format
+			admin := auth.Admin{Pool: f.pool}
+			id, err := admin.SyncIdentity(t.Context(), f.provider.issuer, "nested", "nested", "", []string{"staff"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.provider.setUser("nested", remoteUser{enabled: true, groups: []string{"a/staff", "b/staff", "admins", "org/students"}})
+			syncer, err := groupsync.New(t.Context(), f.oidc, "sync-secret", f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer syncer.Close()
+			if _, err := syncer.Sync(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var groups []string
+			if err := f.pool.QueryRow(t.Context(), `SELECT groups FROM users WHERE id=$1`, id).Scan(&groups); err != nil || !slices.Equal(groups, tc.want) {
+				t.Fatalf("%s: synced %v, want %v (%v)", tc.format, groups, tc.want, err)
+			}
+		})
 	}
 }
 

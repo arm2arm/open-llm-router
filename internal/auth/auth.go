@@ -318,3 +318,13 @@ func requestKey(r *http.Request) (string, error) {
 	}
 	return key, nil
 }
+
+// Freshness reports the cache generation and whether cached principals may
+// be used. Other caches of authorization data (such as API access tokens)
+// store the generation they read and discard entries from older generations,
+// so every invalidation published by an admin change reaches them as well.
+func (a *Authenticator) Freshness() (uint64, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.generation, a.listening
+}

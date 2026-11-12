@@ -24,6 +24,7 @@ const settingLabels: Record<string, string> = {
   portal_client_secret: 'Portal client secret',
   audience: 'API audience',
   groups_claim: 'Groups claim',
+  group_names: 'Group names',
   username_claim: 'Username claim',
   required_claim: 'Required claim',
   sync_client_id: 'Sync client ID',
@@ -202,6 +203,7 @@ function DraftEditor({
       portal_client_id: text('portal_client_id'),
       audience: text('audience'),
       groups_claim: text('groups_claim'),
+      group_names: text('group_names') === 'path' ? 'path' : 'leaf',
       username_claim: text('username_claim'),
       required_claim:
         text('required_claim.name') || text('required_claim.value')
@@ -313,6 +315,23 @@ function DraftEditor({
           'Empty: identity-provider tokens are not accepted on /v1',
         )}
         {field('groups_claim')}
+        <label className="grid gap-2 text-sm">
+          {settingLabels.group_names}
+          <select
+            name="group_names"
+            defaultValue={document.group_names}
+            disabled={disabled}
+            className="select"
+            aria-label={settingLabels.group_names}
+          >
+            <option value="leaf">Leaf names (staff)</option>
+            <option value="path">Full paths (/org/staff)</option>
+          </select>
+          <span className="subtitle">
+            Applies to sign-in, API tokens and group sync. Leaf names reached
+            through two paths are refused; use full paths for such realms.
+          </span>
+        </label>
         {field('username_claim')}
         <label className="grid gap-2 text-sm">
           Required claim name

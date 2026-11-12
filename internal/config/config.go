@@ -129,6 +129,9 @@ type OIDC struct {
 	// DefaultSignIn chooses the primary sign-in option: "keycloak" (the
 	// default) or "local". Both stay available.
 	DefaultSignIn string `yaml:"default_sign_in"`
+	// GroupNames is "leaf" (default: "/org/staff" is "staff") or "path"
+	// ("/org/staff"); login, API tokens and group sync all apply it.
+	GroupNames string `yaml:"group_names"`
 }
 
 // RequiredClaim names a claim and the value a user must have.
@@ -303,6 +306,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		}
 		if cfg.OIDC.DefaultSignIn == "" {
 			cfg.OIDC.DefaultSignIn = "keycloak"
+		}
+		if cfg.OIDC.GroupNames == "" {
+			cfg.OIDC.GroupNames = "leaf"
 		}
 	}
 	for name, model := range cfg.Models {
@@ -493,6 +499,9 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.DefaultSignIn != "" && c.OIDC.DefaultSignIn != "keycloak" && c.OIDC.DefaultSignIn != "local" {
 			add("oidc.default_sign_in: must be keycloak or local")
+		}
+		if c.OIDC.GroupNames != "" && c.OIDC.GroupNames != "leaf" && c.OIDC.GroupNames != "path" {
+			add("oidc.group_names: must be leaf or path")
 		}
 	}
 	if !isBackendURL(c.Portal.BaseURL) {
