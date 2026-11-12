@@ -22,6 +22,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/pool"
+	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,6 +41,7 @@ type Handler struct {
 	passwordSlots chan struct{}
 	mux           *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
+	Traces    *requesttrace.Service
 	Pools     *pool.Manager
 	Endpoints *endpoints.Service
 	keyCipher *auth.KeyCipher
@@ -77,6 +79,10 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("DELETE /portal/api/usage", h.authenticated(h.deleteUsage))
 	h.mux.HandleFunc("GET /portal/api/usage/daily", h.authenticated(h.daily))
 	h.mux.HandleFunc("GET /portal/api/requests", h.authenticated(h.requests))
+	h.mux.HandleFunc("GET /portal/api/requests/{id}", h.authenticated(h.requestTrace))
+	h.mux.HandleFunc("GET /portal/api/trace-preferences", h.authenticated(h.tracePreferences))
+	h.mux.HandleFunc("PUT /portal/api/trace-preferences", h.authenticated(h.saveTracePreferences))
+	h.mux.HandleFunc("DELETE /portal/api/request-traces", h.authenticated(h.clearTraces))
 	h.mux.HandleFunc("GET /portal/api/admin/users", h.admin(h.adminUsers))
 	h.mux.HandleFunc("POST /portal/api/admin/users", h.admin(h.createLocalUser))
 	h.mux.HandleFunc("GET /portal/api/admin/users/{id}", h.admin(h.adminUser))

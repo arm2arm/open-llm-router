@@ -1,6 +1,6 @@
 import { Fragment, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, RefreshCw, Server, ShieldCheck, Users } from 'lucide-react'
+import { Activity, Server, ShieldCheck, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EndpointSettingsPanel } from '@/endpoints'
@@ -16,7 +16,6 @@ import {
   type DailyTotal,
   type GroupTotals,
   type Replica,
-  type RequestRecord,
 } from '@/lib/api'
 
 const number = (value: number) => new Intl.NumberFormat().format(value)
@@ -24,14 +23,6 @@ const shortDay = (day: string) =>
   new Date(`${day}T00:00:00`).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
-  })
-const timestamp = (value: string) =>
-  new Date(value).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
   })
 
 function Failure({ error }: { error: Error | null }) {
@@ -173,105 +164,7 @@ export function DailyChart() {
   )
 }
 
-export function RequestsPage() {
-  const query = useQuery({
-    queryKey: ['requests'],
-    queryFn: () =>
-      api<{ requests: RequestRecord[]; limit: number }>('requests'),
-  })
-  const requests = query.data?.requests ?? []
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <div className="eyebrow">Metadata only</div>
-          <h1>My requests</h1>
-          <p className="subtitle">
-            Your last {query.data?.limit ?? 200} requests. Prompts and responses
-            are never stored.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          onClick={() => {
-            void query.refetch()
-          }}
-          disabled={query.isFetching}
-        >
-          <RefreshCw size={15} />
-          Refresh
-        </Button>
-      </div>
-      <Failure error={query.error} />
-      <section className="panel" aria-label="Recent requests">
-        {query.isPending ? (
-          <p role="status" className="empty">
-            Loading requests…
-          </p>
-        ) : requests.length === 0 ? (
-          <p className="empty">
-            No requests recorded. Records you delete on the Usage page are gone
-            from here too.
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table data-testid="requests-table">
-              <caption className="sr-only">Recent requests</caption>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Model</th>
-                  <th>Status</th>
-                  <th>Input</th>
-                  <th>Output</th>
-                  <th>First token</th>
-                  <th>Total</th>
-                  <th>Key</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((r, i) => (
-                  <tr key={`${r.time}-${i}`}>
-                    <td className="whitespace-nowrap">{timestamp(r.time)}</td>
-                    <td className="font-medium">
-                      {r.model || '—'}
-                      <span className="text-xs text-muted-foreground ml-2">
-                        {r.protocol}
-                        {r.stream ? ' · stream' : ''}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${r.status.startsWith('2') ? '' : 'inactive'}`}
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                    <td>{number(r.input_tokens)}</td>
-                    <td>{number(r.output_tokens)}</td>
-                    <td>
-                      {r.ttfb_ms === null ? '—' : `${number(r.ttfb_ms)} ms`}
-                    </td>
-                    <td>{number(r.latency_ms)} ms</td>
-                    <td>
-                      <code className="text-xs text-muted-foreground">
-                        {r.forwarded
-                          ? 'via application'
-                          : r.key_prefix
-                            ? `${r.key_prefix}…`
-                            : 'removed'}
-                      </code>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
-  )
-}
+export { RequestsPage } from '@/requests'
 
 const limitLabels: Record<string, string> = {
   tokens_per_day: 'Tokens per day',

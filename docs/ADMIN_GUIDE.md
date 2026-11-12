@@ -9,6 +9,15 @@ are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md
 The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
 working functionality.
 
+## Personal request tracing
+
+Every account has **My requests → Detailed logging**, enabled by default with a 7-day
+lifetime. Users may disable capture, choose 1–30 days, inspect conversation/reasoning/tool
+content and stream events, or delete their traces. Admin access does not permit reading
+other users' content. Publish the updated [privacy notice](PRIVACY.md), protect Postgres
+and backups as content-bearing storage, and see [the tracing guide](REQUEST_TRACING.md)
+for capture bounds and operational behavior. Server logs, metrics and OTLP stay content-free.
+
 ## What an administrator can configure today
 
 | Task | Current interface | When it applies |

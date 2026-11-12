@@ -166,6 +166,9 @@ export type Models = {
   models: { id: string; canonical_model: string; protocols: string[] }[]
 }
 export type RequestRecord = {
+  request_id: string | null
+  operation: string
+  trace_available: boolean
   time: string
   model: string
   protocol: string

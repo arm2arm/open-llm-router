@@ -955,7 +955,9 @@ function UsagePage() {
                   <h2 className="panel-title">Your activity records</h2>
                   <p className="subtitle">
                     The router keeps metadata of each request (time, model,
-                    tokens, timing), never prompts or responses. You can delete
+                    tokens, timing). Detailed logging on My requests also stores
+                    message text, reasoning and tool calls when enabled, with
+                    your chosen retention (7 days by default). You can delete
                     these records at any time; otherwise they are deleted after{' '}
                     {data.retention.usage_days} days. Daily totals stay for
                     quotas and accounting for {data.retention.usage_daily_days}{' '}
@@ -995,8 +997,9 @@ function UsagePage() {
               Delete all your activity records?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Every per-request record of yours is deleted. Today’s and this
-              month’s quota stay as they are. This cannot be undone.
+              Every per-request record and detailed trace of yours is deleted.
+              Today’s and this month’s quota stay as they are. This cannot be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ErrorMessage error={erase.error} />

@@ -73,7 +73,7 @@ async function startFixture(
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
+    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   // Test a new image without restarting the developer's running router.
   const image =
@@ -135,6 +135,8 @@ async function startFixture(
     database,
     `WITH added AS (INSERT INTO users(issuer,sub,username) VALUES('local','reader','reader') RETURNING id) INSERT INTO local_credentials(user_id,version,password_hash,must_change_password) SELECT added.id,c.version,c.password_hash,false FROM added CROSS JOIN local_credentials c JOIN users u ON u.id=c.user_id WHERE u.protected_admin`,
   )
+  if (suffix === 'tracing')
+    sql(database, "UPDATE users SET groups='{admins}' WHERE protected_admin")
   return fixture.base
 }
 
@@ -142,12 +144,14 @@ let local: string
 let outage: string
 let administration: string
 let endpointAdministration: string
+let tracing: string
 test.beforeAll(async () => {
   test.setTimeout(60_000)
   local = await startFixture(false)
   outage = await startFixture(true)
   administration = await startFixture(false, 'administration')
   endpointAdministration = await startFixture(false, 'endpoints')
+  tracing = await startFixture(false, 'tracing')
 })
 test.afterAll(() => {
   for (const fixture of fixtures.reverse()) {
@@ -185,6 +189,196 @@ async function passwordFields(
     .getByRole('button', { name: 'Change password', exact: true })
     .click()
 }
+
+test('personal traces, reasoning, tools, retention, opt-out and erasure', async ({
+  page,
+  context,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto(`${tracing}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const issued = await context.request.post(`${tracing}/portal/api/keys`, {
+    headers: { Origin: tracing },
+    data: { label: 'trace browser test' },
+  })
+  expect(issued.status()).toBe(201)
+  const key = (await issued.json()).key as string
+  await page.goto(`${tracing}/portal/requests`)
+  const toggle = page.getByRole('switch')
+  await expect(toggle).toBeChecked()
+  await expect(page.getByLabel('Trace retention days')).toHaveValue('7')
+  await page.getByLabel('Trace retention days').fill('14')
+  await page.getByRole('button', { name: 'Save settings' }).click()
+  await expect(
+    page.getByRole('button', { name: 'Save settings' }),
+  ).toBeDisabled()
+  await page.reload()
+  await expect(page.getByLabel('Trace retention days')).toHaveValue('14')
+  const send = async (anthropic = false) => {
+    const response = await context.request.post(
+      `${tracing}/v1/${anthropic ? 'messages' : 'chat/completions'}`,
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'X-Mock-Thinking': 'true',
+          'X-Private-Header': 'private-header-marker',
+        },
+        data: anthropic
+          ? {
+              model: 'test',
+              max_tokens: 7,
+              stream: true,
+              messages: [
+                {
+                  role: 'user',
+                  content: 'Reason about this synthetic request',
+                },
+              ],
+            }
+          : {
+              model: 'test',
+              max_tokens: 7,
+              stream: true,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: '<img src=x onerror=alert(1)> trace input',
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: {
+                        url: 'https://example.test/private-image?token=private-image-marker',
+                      },
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  tool_call_id: 'previous-tool',
+                  content: 'Earlier result',
+                },
+                { role: 'user', content: 'Look up weather' },
+              ],
+              tools: [
+                {
+                  type: 'function',
+                  function: { name: 'weather', parameters: { type: 'object' } },
+                },
+              ],
+            },
+      },
+    )
+    expect(response.status()).toBe(200)
+    expect(response.headers()['content-type']).toContain('text/event-stream')
+    return response.headers()['x-request-id']
+  }
+  const toolID = await send()
+  const thinkingID = await send(true)
+  const records = async () =>
+    (await (await context.request.get(`${tracing}/portal/api/requests`)).json())
+      .requests as { request_id: string; trace_available: boolean }[]
+  await expect
+    .poll(async () => (await records()).filter((r) => r.trace_available).length)
+    .toBe(2)
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page
+    .getByRole('button', { name: `Inspect request ${toolID}`, exact: true })
+    .click()
+  const dialog = page.getByRole('dialog')
+  await expect(
+    dialog.getByText('Tool call · weather', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    dialog.getByText('Earlier result', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    dialog.getByText('Image payload omitted', { exact: true }),
+  ).toBeVisible()
+  expect(await dialog.locator('img').count()).toBe(0)
+  expect((await dialog.innerText()).includes('private-image-marker')).toBe(
+    false,
+  )
+  await dialog.getByRole('tab', { name: /^Stream events/ }).click()
+  await dialog.getByLabel('Filter stream events').selectOption('tool_call')
+  await expect(dialog.locator('.trace-timeline')).toContainText('weather')
+  await dialog.getByRole('tab', { name: 'Details', exact: true }).click()
+  await expect(dialog).toContainText(toolID)
+  const trace = await (
+    await context.request.get(`${tracing}/portal/api/requests/${toolID}`)
+  ).json()
+  expect(Date.parse(trace.expires_at) - Date.now()).toBeGreaterThan(
+    13 * 86_400_000,
+  )
+  expect(JSON.stringify(trace).includes(key)).toBe(false)
+  expect(JSON.stringify(trace).includes('private-header-marker')).toBe(false)
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await page
+    .getByRole('button', { name: `Inspect request ${thinkingID}`, exact: true })
+    .click()
+  await dialog.getByText('Reasoning', { exact: true }).click()
+  await expect(dialog).toContainText('Considering the request.')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(async () =>
+      dialog.evaluate((el) => ({
+        right: el.getBoundingClientRect().right,
+        width: el.getBoundingClientRect().width,
+        viewport: window.innerWidth,
+        inside: el.getBoundingClientRect().right <= window.innerWidth,
+      })),
+    )
+    .toMatchObject({ inside: true })
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true)
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await toggle.uncheck()
+  await page.getByRole('button', { name: 'Save settings' }).click()
+  await expect(
+    page.getByRole('button', { name: 'Save settings' }),
+  ).toBeDisabled()
+  const uncaptured = await send()
+  await expect.poll(async () => (await records()).length).toBe(3)
+  expect(
+    (await records()).find((r) => r.request_id === uncaptured)?.trace_available,
+  ).toBe(false)
+  await page.getByRole('button', { name: 'Delete traces', exact: true }).click()
+  await dialog
+    .getByRole('button', { name: 'Delete all my traces', exact: true })
+    .click()
+  await expect(dialog).not.toBeVisible()
+  await expect
+    .poll(async () => (await records()).filter((r) => r.trace_available).length)
+    .toBe(0)
+  expect(
+    (
+      await context.request.get(`${tracing}/portal/api/requests/${toolID}`)
+    ).status(),
+  ).toBe(404)
+  await page.reload()
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByLabel('Trace retention days')).toHaveValue('14')
+  expect(
+    await page.evaluate(() =>
+      [...Object.values(localStorage), ...Object.values(sessionStorage)].some(
+        (value) => value.includes('Earlier result'),
+      ),
+    ),
+  ).toBe(false)
+  expect(errors).toEqual([])
+})
 
 test('local-only first password change, rotation, revocation and logout', async ({
   page,

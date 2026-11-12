@@ -11,6 +11,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
+	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -27,17 +28,25 @@ type accounting struct {
 	observer  *metrics.Observer
 	span      trace.Span
 	selection time.Duration
+	capture   *requesttrace.Capture
 }
 
 func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol string) *accounting {
 	a := &accounting{writer: &statusWriter{ResponseWriter: w}, record: usage.Record{StartedAt: time.Now(), Protocol: protocol}}
 	a.began = a.record.StartedAt
+	a.record.Operation = strings.TrimPrefix(r.URL.Path, "/v1/")
+	a.record.RequestID = reqid.FromContext(r.Context())
+	if a.record.RequestID == "" {
+		a.record.RequestID = reqid.New()
+	}
 	if h.Limits != nil {
 		a.record.StartedAt = h.Limits.Now()
 	}
 	if p, ok := auth.FromContext(r.Context()); ok && r.URL.Path != "/v1/messages/count_tokens" {
 		a.sink = h.Usage
 		a.record.UserID, a.record.KeyID, a.record.ForwardedBy = p.UserID, p.KeyID, p.ForwardedBy
+		a.capture = h.Traces.Begin(p.UserID, strings.TrimPrefix(r.URL.Path, "/v1/"), a.began)
+		a.writer.capture = a.capture
 	}
 	return a
 }
@@ -51,6 +60,7 @@ func (a *accounting) firstByte() {
 
 func (a *accounting) observe(contentType string, hideUsage bool, emit func([]byte) error) {
 	contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	a.capture.ResponseJSON(contentType == "application/json")
 	if contentType == "text/event-stream" {
 		a.record.IsStream = true
 		a.stream = usage.NewStream(a.record.Protocol, hideUsage, emit)
@@ -84,6 +94,7 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 		a.record.Status = "aborted"
 	}
 	a.record.InputTokens, a.record.OutputTokens = totals.InputTokens, totals.Output()
+	a.capture.Finish(a.record)
 	if details := reqid.DetailsFromContext(r.Context()); details != nil {
 		details.Record = a.record
 	}
@@ -114,7 +125,9 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 // Unwrap keeps deadlines and flushing available through ResponseController.
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status    int
+	capture   *requesttrace.Capture
+	traceType uint8 // 0 unknown, 1 JSON, 2 SSE, 3 unsupported
 }
 
 func (w *statusWriter) WriteHeader(status int) {
@@ -129,6 +142,23 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 		w.status = http.StatusOK
 	}
 	n, err := w.ResponseWriter.Write(p)
+	if w.capture != nil && n > 0 {
+		if w.traceType == 0 {
+			value, _, _ := strings.Cut(w.Header().Get("Content-Type"), ";")
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "application/json":
+				w.traceType = 1
+			case "text/event-stream":
+				w.traceType = 2
+			default:
+				w.traceType = 3
+			}
+			w.capture.ResponseJSON(w.traceType == 1)
+		}
+		if w.traceType == 1 || w.traceType == 2 {
+			w.capture.Write(p[:n])
+		}
+	}
 	if err == nil && n < len(p) {
 		err = io.ErrShortWrite
 	}

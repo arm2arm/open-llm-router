@@ -40,8 +40,9 @@ A client sends a public model name such as `chat-model`. The router checks its
 user's access and limits, selects a healthy replica with free capacity, and maps
 the name to the backend's model. It forwards the native API payload and streamed
 events, including thinking, tool calls and image inputs when the backend supports
-them. The router records usage metadata and timing; it does not store prompts or
-completions.
+them. The router records usage metadata and timing. [Personal request tracing](docs/REQUEST_TRACING.md)
+is enabled by default: users can inspect text, reasoning, tools and stream events, disable
+capture, and choose 1–30 days of retention (7 days by default).
 
 ## A look inside
 

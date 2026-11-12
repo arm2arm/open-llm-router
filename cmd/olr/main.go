@@ -25,6 +25,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
+	"github.com/arm2arm/open-llm-router/internal/requesttrace"
 	"github.com/arm2arm/open-llm-router/internal/retention"
 	"github.com/arm2arm/open-llm-router/internal/server"
 	usagewriter "github.com/arm2arm/open-llm-router/internal/usage"
@@ -156,7 +157,13 @@ func serve(args []string) error {
 			log.Error("usage shutdown flush incomplete")
 		}
 	}()
+	traces, err := requesttrace.New(ctx, database, log)
+	if err != nil {
+		return err
+	}
+	defer traces.Close()
 	forwarder := proxy.New(cfg)
+	forwarder.Traces = traces
 	forwarder.ConfigureDestinations(destinations)
 	forwarder.Usage = accounting
 	forwarder.Limits = limits.New(database, cfg.Limits.Location, time.Now)
@@ -206,6 +213,7 @@ func serve(args []string) error {
 		return err
 	}
 	defer portalHandler.Close()
+	portalHandler.Traces = traces
 	portalHandler.Pools = forwarder.Pools
 	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: fileConfig, Policy: destinations, Runtime: forwarder}
 	srv.Handle("/portal", portalHandler)
