@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,14 +42,16 @@ type Preferences struct {
 func defaults() Preferences { return Preferences{Enabled: true, RetentionDays: 7} }
 
 type Service struct {
-	pool      *pgxpool.Pool
-	log       *slog.Logger
-	mu        sync.Mutex
-	prefs     atomic.Pointer[map[string]Preferences]
-	slots     chan struct{}
-	queue     chan *Capture
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	pool   *pgxpool.Pool
+	log    *slog.Logger
+	mu     sync.Mutex
+	prefs  atomic.Pointer[map[string]Preferences]
+	slots  chan struct{}
+	queue  chan *Capture
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	// Activity, when set, announces stored traces to the user's open portal.
+	Activity  *activity.Broker
 	Processed atomic.Uint64
 	Dropped   atomic.Uint64
 	Failed    atomic.Uint64
@@ -356,12 +359,15 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 	}
 	// FOR SHARE serializes against settings changes, erasure and user deletion.
 	// Generation prevents late writes from resurrecting cleared content.
-	_, err = s.pool.Exec(ctx, `WITH owner AS (
+	tag, err := s.pool.Exec(ctx, `WITH owner AS (
 		SELECT id,trace_retention_days FROM users WHERE id=$2 AND trace_enabled AND trace_generation=$5 FOR SHARE
 	) INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail,summary,conversation_key)
 	SELECT $1,id,$3,$3::timestamptz+make_interval(days=>trace_retention_days),$4::jsonb,$6::jsonb,$7 FROM owner
 	WHERE $3::timestamptz+make_interval(days=>trace_retention_days)>now()
 	ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, c.generation, summary, conversation)
+	if err == nil && tag.RowsAffected() == 1 {
+		s.Activity.Publish(c.record.UserID, activity.Event{Type: "trace_ready", RequestID: c.record.RequestID})
+	}
 	return err
 }
 

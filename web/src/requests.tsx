@@ -1,4 +1,10 @@
-import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
+import {
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
@@ -7,6 +13,9 @@ import {
   ArrowUpRight,
   ChevronDown,
   ChevronUp,
+  LoaderCircle,
+  Pause,
+  Radio,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -38,6 +47,7 @@ import {
 } from './requests/model'
 import { Metric } from './requests/widgets'
 import { TraceDetail } from './requests/trace-detail'
+import { useLive, useNow, type LiveStatus, type Running } from './requests/live'
 
 type Preferences = { enabled: boolean; retention_days: number }
 type Filter = 'all' | 'stream' | 'errors' | 'traces' | 'tools' | 'truncated'
@@ -77,16 +87,32 @@ export function RequestsPage() {
   const navigate = useNavigate()
   const { id } = useParams()
   const [params, setParams] = useSearchParams()
+  // Live updates are on by default; "?live=off" pauses them. A URL keeps the
+  // choice across reloads without browser storage.
+  const liveOn = params.get('live') !== 'off'
+  const live = useLive(liveOn)
+  const seen = useRef<Set<string> | null>(null)
   const query = useQuery({
     queryKey: ['requests'],
-    queryFn: ({ signal }) =>
-      api<{ requests: Row[]; limit: number }>(
+    queryFn: async ({ signal }) => {
+      const data = await api<{ requests: Row[]; limit: number }>(
         'requests',
         'GET',
         undefined,
         signal,
-      ),
-    refetchInterval: 5000,
+      )
+      // Rows that arrive after the first load are highlighted once.
+      const first = seen.current === null
+      seen.current ??= new Set()
+      for (const r of data.requests) {
+        if (!r.request_id) continue
+        r.fresh = !first && !seen.current.has(r.request_id)
+        seen.current.add(r.request_id)
+      }
+      return data
+    },
+    // The stream announces changes; polling covers a lost or refused stream.
+    refetchInterval: !liveOn ? false : live.status === 'live' ? 30_000 : 5000,
   })
   const prefs = useQuery({
     queryKey: ['trace-preferences'],
@@ -138,6 +164,11 @@ export function RequestsPage() {
     if (e.key === 'k') step(-1)
   }
   const tools = all.reduce((s, r) => s + (r.trace_summary?.tool_calls ?? 0), 0)
+  const listed = new Set(all.map((r) => r.request_id))
+  const running = [...live.running.values()]
+    .filter((r) => !listed.has(r.request_id))
+    .sort((a, b) => b.started - a.started)
+  const pending = !!id && !selected && live.running.has(id)
   return (
     <>
       <div className="page-head">
@@ -150,6 +181,11 @@ export function RequestsPage() {
           </p>
         </div>
         <div className="trace-head-actions">
+          <LiveToggle
+            on={liveOn}
+            status={live.status}
+            toggle={() => setParam('live', liveOn ? 'off' : 'on', 'on')}
+          />
           <Button
             variant="outline"
             onClick={() => void query.refetch()}
@@ -239,7 +275,7 @@ export function RequestsPage() {
           <p role="status" className="empty">
             Loading requests…
           </p>
-        ) : rows.length === 0 ? (
+        ) : rows.length === 0 && running.length === 0 ? (
           <p className="empty">
             {all.length
               ? 'No requests match these filters.'
@@ -260,12 +296,22 @@ export function RequestsPage() {
                   <th>Key</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody aria-live="polite" aria-relevant="additions">
+                {running.map((r) => (
+                  <RunningRow
+                    key={r.request_id}
+                    r={r}
+                    active={r.request_id === id}
+                    open={open}
+                  />
+                ))}
                 {rows.map((r, i) => (
                   <RequestRow
                     key={r.request_id ?? `${r.time}-${i}`}
                     r={r}
                     active={r.request_id === id}
+                    fresh={!!r.fresh}
+                    saving={liveOn && prefs.data?.enabled === true}
                     open={open}
                   />
                 ))}
@@ -274,8 +320,10 @@ export function RequestsPage() {
           </div>
         )}
         <p className="trace-footnote">
-          Select a request ID to inspect; use j / k to move between requests.
-          Updates every 5 seconds while this page is open.
+          Select a request ID to inspect; use j / k to move between requests.{' '}
+          {liveOn
+            ? 'Live: running requests appear as they start and update as they finish.'
+            : 'Live updates are paused; use Refresh.'}
         </p>
       </section>
       <Dialog
@@ -291,6 +339,8 @@ export function RequestsPage() {
               <DialogDescription>
                 {selected ? (
                   `${selected.model || 'unknown model'} · ${date(selected.time)}`
+                ) : pending ? (
+                  `${live.running.get(id!)?.model || 'Running request'} · started ${date(live.running.get(id!)!.time)}`
                 ) : (
                   <code>{id}</code>
                 )}
@@ -319,7 +369,9 @@ export function RequestsPage() {
               </Button>
             </div>
           </DialogHeader>
-          {id && <TraceDetail key={id} id={id} record={selected} />}
+          {id && (
+            <TraceDetail key={id} id={id} record={selected} pending={pending} />
+          )}
         </DialogContent>
       </Dialog>
       <Dialog open={confirmClear} onOpenChange={setConfirmClear}>
@@ -346,18 +398,110 @@ export function RequestsPage() {
   )
 }
 
-function RequestRow({
+function LiveToggle({
+  on,
+  status,
+  toggle,
+}: {
+  on: boolean
+  status: LiveStatus
+  toggle: () => void
+}) {
+  const text: Record<LiveStatus, string> = {
+    live: 'Live',
+    connecting: 'Connecting…',
+    reconnecting: 'Reconnecting…',
+    unavailable: 'Live unavailable · polling',
+    paused: 'Paused',
+  }
+  return (
+    <Button
+      variant="outline"
+      aria-pressed={on}
+      className={`trace-live trace-live-${status}`}
+      title={on ? 'Pause live updates' : 'Resume live updates'}
+      onClick={toggle}
+    >
+      {on ? <Radio size={15} /> : <Pause size={15} />}
+      <span className="trace-live-dot" aria-hidden />
+      {text[status]}
+    </Button>
+  )
+}
+
+function RunningRow({
   r,
   active,
   open,
 }: {
-  r: Row
+  r: Running
   active: boolean
   open: (id: string) => void
 }) {
-  const s = r.trace_summary
+  const now = useNow(true)
   return (
-    <tr className={active ? 'trace-row-active' : ''}>
+    <tr className={`trace-row-running ${active ? 'trace-row-active' : ''}`}>
+      <td className="whitespace-nowrap">
+        {shortDate(r.time)}
+        <Button
+          variant="ghost"
+          className="trace-request-link"
+          size="sm"
+          aria-label={`Inspect running request ${r.request_id}`}
+          onClick={() => open(r.request_id)}
+        >
+          <LoaderCircle size={14} className="trace-spin" />
+          <code>{r.request_id.slice(0, 12)}</code>
+        </Button>
+      </td>
+      <td>
+        <strong>{r.model || '—'}</strong>
+        <span className="trace-secondary">
+          {r.protocol} · {operation({ operation: r.operation ?? '' })}
+        </span>
+      </td>
+      <td>
+        <span className="badge trace-badge-running">running</span>
+        <span className="trace-secondary">
+          {r.writes ? 'receiving' : 'waiting for model'}
+        </span>
+      </td>
+      <td />
+      <td>
+        {r.bytes ? `${n(Math.round(r.bytes / 102.4) / 10)} KB` : '—'}
+        <span className="trace-secondary">
+          {plural(r.writes, 'chunk')} received
+        </span>
+      </td>
+      <td>
+        <strong className="tabular-nums">{ms(now - r.started)}</strong>
+        <span className="trace-secondary">elapsed</span>
+      </td>
+      <td />
+    </tr>
+  )
+}
+
+function RequestRow({
+  r,
+  active,
+  fresh,
+  saving,
+  open,
+}: {
+  r: Row
+  active: boolean
+  fresh: boolean
+  saving: boolean
+  open: (id: string) => void
+}) {
+  const s = r.trace_summary
+  // eslint-disable-next-line react-hooks/purity -- only labels a just-finished row
+  const recent = Date.now() - Date.parse(r.time) - r.latency_ms < 15_000
+  return (
+    <tr
+      className={`${active ? 'trace-row-active' : ''} ${fresh ? 'trace-row-new' : ''}`}
+    >
       <td className="whitespace-nowrap">
         {shortDate(r.time)}
         {r.trace_available && r.request_id ? (
@@ -376,7 +520,8 @@ function RequestRow({
             className="trace-secondary"
             title="Capture may be disabled, expired, pending or skipped when tracing is at capacity. Older requests have no content."
           >
-            {r.request_id?.slice(0, 12) ?? 'Older request'} · No detail
+            {r.request_id?.slice(0, 12) ?? 'Older request'} ·{' '}
+            {saving && recent && r.request_id ? 'Saving trace…' : 'No detail'}
           </span>
         )}
       </td>
