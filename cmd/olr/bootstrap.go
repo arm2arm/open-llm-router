@@ -31,12 +31,21 @@ func readPasswordFile(path string) ([]byte, error) {
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return nil, errors.New("password file must be a regular file readable only by its owner")
 	}
-	password, err := io.ReadAll(io.LimitReader(f, 1027))
-	if err != nil || len(password) > 1026 {
-		clear(password)
+	password, err := readBoundedPassword(f)
+	if err != nil {
 		return nil, errors.New("password file could not be read or exceeds the password size limit")
 	}
-	// Permit one final LF/CRLF from a secret-file writer; preserve spaces.
+	return password, nil
+}
+
+// readBoundedPassword reads at most one maximum-size password plus a line
+// ending. One final LF/CRLF from a secret writer is dropped; spaces are kept.
+func readBoundedPassword(r io.Reader) ([]byte, error) {
+	password, err := io.ReadAll(io.LimitReader(r, 1027))
+	if err != nil || len(password) > 1026 {
+		clear(password)
+		return nil, errors.New("password input could not be read or exceeds the password size limit")
+	}
 	if bytes.HasSuffix(password, []byte("\n")) {
 		password = bytes.TrimSuffix(password, []byte("\n"))
 		password = bytes.TrimSuffix(password, []byte("\r"))

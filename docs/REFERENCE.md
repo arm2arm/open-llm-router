@@ -29,6 +29,9 @@ These limits apply per user, across all keys, protocols, models and replicas.
 
 The bootstrap commands use `OLR_DATABASE_URL` and work without a running HTTP server. Under
 Compose, run them as `docker compose exec -T router olr admin ...`; on the host use `bin/olr admin ...`.
+`olr admin recover` resets the protected local administrator's password from a private
+file or redirected stdin, without Keycloak or the current password; see the
+[administrator guide](ADMIN_GUIDE.md#recover-the-protected-local-administrator).
 `user add` creates an issuer-scoped `local` identity and prints its UUID. Save that UUID for
 subsequent operations; adding the same local username again is an error.
 

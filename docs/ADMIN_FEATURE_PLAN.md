@@ -18,11 +18,11 @@ no due dates or assignees have been set.
 | 3 | [M9 · Admin-managed endpoints and policies](https://github.com/arm2arm/open-llm-router/milestone/11) | [#81](https://github.com/arm2arm/open-llm-router/issues/81) routing API/runtime; [#82](https://github.com/arm2arm/open-llm-router/issues/82) endpoint/model UI; [#83](https://github.com/arm2arm/open-llm-router/issues/83) group-policy editor; [#84](https://github.com/arm2arm/open-llm-router/issues/84) administration history; [#85](https://github.com/arm2arm/open-llm-router/issues/85) integrated acceptance/docs |
 
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
-browser sign-in/password flows and #75 local user/key administration are implemented
-in this checkout. Endpoint editing for existing logical models now implements part
+browser sign-in/password flows, #75 local user/key administration and #76
+protected-administrator recovery are implemented in this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
-acceptance work. #76 still tracks protected-administrator recovery.
+acceptance work.
 Explicit cloud-provider adapters in delivery stage 4 below remain
 a future extension; these milestones cover existing compatible backends.
 Stage 5's authorization/audit/acceptance work is included in M8 and M9. The
@@ -106,7 +106,12 @@ Completed for #75: Admin/API local user creation, existing-group membership edit
 temporary password resets, disablement with session deletion, effective access and
 metadata-only operator key revocation. Tests cover source/protection guards, shared
 cache invalidation, concurrent issuance, SSO regressions and the browser lifecycle.
-Protected-administrator recovery remains assigned to #76.
+Completed for #76: `olr admin recover` resets only the protected administrator
+from a private file or redirected stdin with database access alone, sets a
+temporary must-change credential, ends sessions, revokes keys, refuses reuse of
+the current password, never reads bootstrap inputs and emits a redacted audit
+event. Tests cover an unreachable IdP, idempotent retry, restart with a retired
+bootstrap secret and absence of credentials from argv, output and logs.
 
 - Add a local credential store keyed by user UUID, with a maintained password
   hashing implementation, per-password salt and calibrated work factor. Keep
