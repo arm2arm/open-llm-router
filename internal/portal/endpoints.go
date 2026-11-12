@@ -22,7 +22,7 @@ func endpointError(w http.ResponseWriter, err error) bool {
 	var validation *endpoints.ValidationError
 	var problems config.Problems
 	switch {
-	case errors.Is(err, endpoints.ErrConflict):
+	case errors.Is(err, endpoints.ErrConflict), errors.Is(err, endpoints.ErrRoutingManaged):
 		fail(w, 409, "conflict_error", err.Error())
 	case errors.Is(err, endpoints.ErrModel), errors.Is(err, endpoints.ErrRevision):
 		fail(w, 404, "not_found_error", err.Error())

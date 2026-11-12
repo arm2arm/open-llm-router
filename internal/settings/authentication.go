@@ -49,46 +49,42 @@ type SecretRef struct {
 
 func (r SecretRef) empty() bool { return r.Env == "" && r.Stored == "" }
 
-// secretField describes one secret setting of the domain.
-type secretField struct {
-	name string // setting name, also the stored secret's name suffix
-	env  string // the only environment variable it may reference
-	ref  func(*Authentication) *SecretRef
-}
+func (*Authentication) domainName() string { return DomainAuthentication }
 
-var authenticationSecrets = []secretField{
-	{"portal_client_secret", config.EnvOIDCClientSecret, func(a *Authentication) *SecretRef { return &a.PortalClientSecret }},
-	{"sync_client_secret", config.EnvOIDCSyncSecret, func(a *Authentication) *SecretRef { return &a.SyncClientSecret }},
-}
-
-func secretFieldNamed(name string) (secretField, bool) {
-	for _, field := range authenticationSecrets {
-		if field.name == name {
-			return field, true
-		}
+func (a *Authentication) secrets() []secretBinding {
+	return []secretBinding{
+		{"portal_client_secret", config.EnvOIDCClientSecret, &a.PortalClientSecret},
+		{"sync_client_secret", config.EnvOIDCSyncSecret, &a.SyncClientSecret},
 	}
-	return secretField{}, false
 }
 
-// decodeAuthentication reads a document strictly and fills defaults. Error
-// messages name fields only; JSON errors never echo submitted values.
-func decodeAuthentication(data []byte) (Authentication, error) {
-	var doc Authentication
+// strictDecode reads one JSON object, refusing unknown fields. Messages name
+// fields only; JSON errors never echo submitted values.
+func strictDecode(data []byte, into any, what string) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&doc); err != nil {
+	if err := decoder.Decode(into); err != nil {
 		var field *json.UnmarshalTypeError
 		switch {
 		case errors.As(err, &field) && field.Field != "":
-			return doc, &ValidationError{[]string{field.Field + ": has the wrong type"}}
+			return &ValidationError{[]string{field.Field + ": has the wrong type"}}
 		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			return doc, &ValidationError{[]string{strings.TrimPrefix(err.Error(), "json: ") + " in the authentication document"}}
+			return &ValidationError{[]string{strings.TrimPrefix(err.Error(), "json: ") + " in the " + what + " document"}}
 		default:
-			return doc, &ValidationError{[]string{"the document must be one JSON object"}}
+			return &ValidationError{[]string{"the document must be one JSON object"}}
 		}
 	}
 	if decoder.More() {
-		return doc, &ValidationError{[]string{"the document must be one JSON object"}}
+		return &ValidationError{[]string{"the document must be one JSON object"}}
+	}
+	return nil
+}
+
+// decode reads a document strictly and fills defaults.
+func (a *Authentication) decode(data []byte) error {
+	var doc Authentication
+	if err := strictDecode(data, &doc, "authentication"); err != nil {
+		return err
 	}
 	if doc.GroupsClaim == "" {
 		doc.GroupsClaim = "groups"
@@ -108,7 +104,8 @@ func decodeAuthentication(data []byte) (Authentication, error) {
 	if doc.GroupNames == "" {
 		doc.GroupNames = "leaf"
 	}
-	return doc, nil
+	*a = doc
+	return nil
 }
 
 func plainText(value string, limit int) bool {
@@ -143,8 +140,8 @@ func (a Authentication) problems() []string {
 	if a.SyncIntervalS < 60 || a.SyncIntervalS > 86400 {
 		add("sync_interval_s: must be between 60 and 86400")
 	}
-	for _, field := range authenticationSecrets {
-		ref := *field.ref(&a)
+	for _, field := range a.secrets() {
+		ref := *field.ref
 		switch {
 		case ref.Env != "" && ref.Stored != "":
 			add("%s: reference either the environment or a stored secret, not both", field.name)
@@ -227,12 +224,36 @@ func (a Authentication) values() map[string]string {
 	}
 }
 
-// resolved holds the plaintext client secrets of an applied revision.
-type resolved struct{ portal, sync string }
+func (a *Authentication) baseline(current *config.Config) { *a = authenticationFromFile(current) }
+
+func (*Authentication) conflictsBlock() bool { return true }
+
+func (*Authentication) settingNames() []string {
+	names := make([]string, 0, len(config.AuthSettings))
+	for _, setting := range config.AuthSettings {
+		names = append(names, setting.Name)
+	}
+	return names
+}
+
+func (*Authentication) fileSources(file *config.Config) map[string]string { return file.AuthSources }
+
+// checksPassed requires connection checks and a test sign-in for SSO.
+func (a *Authentication) checksPassed(c *Checks) bool { return !a.Enabled || c.Passed() }
+
+// fallback turns SSO off; local login stays available.
+func (*Authentication) fallback(base *config.Config) (*config.Config, string, bool) {
+	cfg, err := config.WithAuthentication(base, nil, "", "")
+	if err != nil {
+		return nil, "", false
+	}
+	return cfg, "managed authentication settings could not be applied; SSO is off and local login remains available", true
+}
 
 // apply builds the runtime configuration for a document and its secrets.
-func (a Authentication) apply(base *config.Config, secrets resolved) (*config.Config, error) {
+func (a *Authentication) apply(base *config.Config, in applyInput) (*config.Config, error) {
 	var oidc *config.OIDC
+	portal, sync := in.secrets["portal_client_secret"], in.secrets["sync_client_secret"]
 	if a.Enabled {
 		oidc = &config.OIDC{Issuer: a.Issuer, BackchannelURL: a.BackchannelURL, PortalClientID: a.PortalClientID, DefaultSignIn: a.DefaultSignIn,
 			Audience: a.Audience, GroupsClaim: a.GroupsClaim, GroupNames: a.GroupNames, UsernameClaim: a.UsernameClaim,
@@ -241,9 +262,9 @@ func (a Authentication) apply(base *config.Config, secrets resolved) (*config.Co
 			oidc.RequiredClaim = &config.RequiredClaim{Name: a.RequiredClaim.Name, Value: a.RequiredClaim.Value}
 		}
 	} else {
-		secrets = resolved{}
+		portal, sync = "", ""
 	}
-	cfg, err := config.WithAuthentication(base, oidc, secrets.portal, secrets.sync)
+	cfg, err := config.WithAuthentication(base, oidc, portal, sync)
 	if err != nil {
 		// config problems name YAML keys and never contain values.
 		var problems config.Problems
@@ -255,24 +276,13 @@ func (a Authentication) apply(base *config.Config, secrets resolved) (*config.Co
 	return cfg, nil
 }
 
-// Conflict is a file or environment value that differs from the managed one.
-// It names the setting and where it is set, never either value.
-type Conflict struct {
-	Setting string `json:"setting"`
-	Source  string `json:"source"` // file or environment
-	Where   string `json:"where"`  // e.g. oidc.issuer or OIDC_ISSUER
-}
-
-func (c Conflict) String() string {
-	return fmt.Sprintf("%s: %s sets a different value; remove %s so managed settings are the only source", c.Setting, c.Where, c.Where)
-}
-
 // conflicts compares file/environment values with a managed document.
 // Secrets are compared in constant time; secret references to the setting's
 // own environment variable are uses, not conflicts.
-func conflicts(file *config.Config, doc Authentication, secrets resolved, secretsKnown bool) []Conflict {
+func (a *Authentication) conflicts(file *config.Config, secrets map[string]string, secretsKnown bool) []Conflict {
 	fileDoc := authenticationFromFile(file)
-	fileValues, managed := fileDoc.values(), doc.values()
+	fileValues, managed := fileDoc.values(), a.values()
+	bindings := a.secrets()
 	var found []Conflict
 	for _, setting := range config.AuthSettings {
 		source := file.AuthSources[setting.Name]
@@ -287,16 +297,16 @@ func conflicts(file *config.Config, doc Authentication, secrets resolved, secret
 			}
 		}
 		differs := false
-		if field, ok := secretFieldNamed(setting.Name); ok {
-			ref := *field.ref(&doc)
-			fileSecret, managedSecret := file.OIDCClientSecret, secrets.portal
-			if field.name == "sync_client_secret" {
-				fileSecret, managedSecret = file.OIDCSyncSecret, secrets.sync
+		if binding, ok := bindingNamed(bindings, setting.Name); ok {
+			ref := *binding.ref
+			fileSecret := file.OIDCClientSecret
+			if binding.name == "sync_client_secret" {
+				fileSecret = file.OIDCSyncSecret
 			}
 			switch {
-			case ref.Env == field.env:
+			case ref.Env == binding.env:
 			case ref.Stored != "" && secretsKnown:
-				differs = subtle.ConstantTimeCompare([]byte(fileSecret), []byte(managedSecret)) != 1
+				differs = subtle.ConstantTimeCompare([]byte(fileSecret), []byte(secrets[binding.name])) != 1
 			default:
 				differs = fileSecret != "" || ref.Stored != ""
 			}

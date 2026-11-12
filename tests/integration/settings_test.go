@@ -47,13 +47,13 @@ func managedConfig(t *testing.T, env map[string]string) *config.Config {
 	return cfg
 }
 
-func managedService(t *testing.T, env map[string]string, file *config.Config) *settings.Service {
+func managedService(t *testing.T, env map[string]string, file *config.Config) *settings.AuthenticationService {
 	t.Helper()
 	cipher, err := settings.LoadCipher(func(name string) string { return env[name] })
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &settings.Service{File: file, Cipher: cipher, Lookup: func(name string) (string, bool) { value, ok := env[name]; return value, ok }}
+	return &settings.AuthenticationService{File: file, Cipher: cipher, Lookup: func(name string) (string, bool) { value, ok := env[name]; return value, ok }}
 }
 
 func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {

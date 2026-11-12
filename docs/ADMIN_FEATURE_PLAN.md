@@ -20,8 +20,8 @@ no due dates or assignees have been set.
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
 browser sign-in/password flows, #75 local user/key administration, #76
 protected-administrator recovery, the #77 managed-settings foundation, the #78
-Admin → Authentication page, #79 live activation/rollback and #80 authorization
-freshness are implemented in this checkout. Endpoint editing for existing logical models now implements part
+Admin → Authentication page, #79 live activation/rollback, #80 authorization
+freshness and the #81 routing revision API are implemented in this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
 acceptance work.
@@ -186,6 +186,16 @@ the next request on every path. Tokens issued before the latest membership updat
 can only narrow the stored groups and never rewrite them. Login, API tokens and
 group sync share one group-name rule (`group_names: leaf|path`); sync reads
 Keycloak paths and refuses ambiguous duplicate leaf names.
+
+Completed for #81: the settings service is generic over domains; the **routing**
+domain stores complete revisions of logical models, endpoint pools and aliases.
+Drafts are checked against strict schema, group/alias references, credential
+reference allowlist and outbound destination policy; checks probe changed
+replicas without contacting refused destinations; activation publishes a complete
+proxy snapshot after health checks while unchanged replicas keep in-flight leases
+and accounting; rollback/apply work while endpoints are down. Per-model endpoint
+editing closes once routing is managed. `olr config check` validates files
+without database or network access.
 
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required

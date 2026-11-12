@@ -58,6 +58,12 @@ func TestCipherBindsSecretsToIDNameAndKey(t *testing.T) {
 	}
 }
 
+func decodeAuthentication(data []byte) (Authentication, error) {
+	var doc Authentication
+	err := doc.decode(data)
+	return doc, err
+}
+
 func TestDecodeIsStrictAndNeverEchoesValues(t *testing.T) {
 	doc, err := decodeAuthentication([]byte(`{"enabled":true,"issuer":"https://idp.example/realms/a","portal_client_id":"olr-portal"}`))
 	if err != nil || doc.GroupsClaim != "groups" || doc.UsernameClaim != "preferred_username" || doc.SyncClientID != "olr-sync" || doc.SyncIntervalS != 900 {
@@ -133,7 +139,7 @@ func TestImportBaselineReproducesFileConfiguration(t *testing.T) {
 	if doc.PortalClientSecret != (SecretRef{Env: config.EnvOIDCClientSecret}) || !doc.SyncClientSecret.empty() {
 		t.Fatal("secrets must become references to their own variables", doc)
 	}
-	applied, err := doc.apply(file, resolved{portal: "portal-secret"})
+	applied, err := doc.apply(file, applyInput{secrets: map[string]string{"portal_client_secret": "portal-secret"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +151,7 @@ func TestImportBaselineReproducesFileConfiguration(t *testing.T) {
 	if got != want {
 		t.Fatalf("import changed the SSO connection:\n%+v\n%+v", got, want)
 	}
-	if found := conflicts(file, doc, resolved{portal: "portal-secret"}, true); len(found) != 0 {
+	if found := doc.conflicts(file, map[string]string{"portal_client_secret": "portal-secret"}, true); len(found) != 0 {
 		t.Fatal("an import conflicts with its own source", found)
 	}
 	// A local-only file imports as disabled SSO.
@@ -161,7 +167,7 @@ func TestConflictsNameSourcesNotValues(t *testing.T) {
 	doc := authenticationFromFile(file)
 	doc.Issuer, doc.PortalClientID = "http://new.example/realms/b", "managed-client"
 	doc.PortalClientSecret = SecretRef{Stored: "00000000-0000-4000-8000-000000000001"}
-	found := conflicts(file, doc, resolved{portal: "stored-secret-value"}, true)
+	found := doc.conflicts(file, map[string]string{"portal_client_secret": "stored-secret-value"}, true)
 	var names []string
 	for _, conflict := range found {
 		names = append(names, conflict.Setting+"@"+conflict.Where)
@@ -178,11 +184,47 @@ func TestConflictsNameSourcesNotValues(t *testing.T) {
 	// The same stored value as the environment is redundant, not a conflict.
 	doc = authenticationFromFile(file)
 	doc.PortalClientSecret = SecretRef{Stored: "00000000-0000-4000-8000-000000000001"}
-	if found := conflicts(file, doc, resolved{portal: "env-secret-value"}, true); len(found) != 0 {
+	if found := doc.conflicts(file, map[string]string{"portal_client_secret": "env-secret-value"}, true); len(found) != 0 {
 		t.Fatal(found)
 	}
 	// Unknown stored values are treated as conflicting.
-	if found := conflicts(file, doc, resolved{}, false); len(found) != 1 {
+	if found := doc.conflicts(file, map[string]string{}, false); len(found) != 1 {
 		t.Fatal(found)
+	}
+}
+
+func TestRoutingDocument(t *testing.T) {
+	file := parse(t, "aliases:\n  default: m\ngroups:\n  staff: {models: [m]}\n", nil)
+	var doc Routing
+	doc.baseline(file)
+	if len(doc.Models) != 1 || doc.Aliases["default"] != "m" || len(doc.problems()) != 0 || len(doc.conflicts(file, nil, true)) != 0 {
+		t.Fatal("baseline", doc)
+	}
+	// A token value can never be submitted: only references are fields.
+	if err := doc.decode([]byte(`{"models":{"m":{"pool":[{"url":"http://b:1","BearerToken":"x"}]}}}`)); err == nil {
+		t.Fatal("a resolved token field was accepted")
+	}
+	added := doc
+	added.Models = map[string]config.Model{"m": doc.Models["m"], "n": doc.Models["m"]}
+	added.Aliases = map[string]string{"default": "n"}
+	cfg, err := added.apply(file, applyInput{tokens: func(string) (string, bool) { return "", false }})
+	if err != nil || cfg.Aliases["default"] != "n" || len(cfg.Models) != 2 {
+		t.Fatal("apply", err)
+	}
+	if got := changed[Routing, *Routing](&doc, &added); !slices.Equal(got, []string{"aliases.default", "models.n"}) {
+		t.Fatal("changed", got)
+	}
+	// Removing a model still used by an alias or a group policy is refused.
+	removed := Routing{Models: map[string]config.Model{"n": doc.Models["m"]}, Aliases: map[string]string{"default": "m"}}
+	_, err = removed.apply(file, applyInput{tokens: func(string) (string, bool) { return "", false }})
+	if err == nil || !strings.Contains(err.Error(), `aliases.default: "m" is not a configured model`) || !strings.Contains(err.Error(), `groups.staff.models: "m" is not a configured model`) {
+		t.Fatal("dependency check", err)
+	}
+	if conflicts := removed.conflicts(file, nil, true); len(conflicts) != 1 || conflicts[0].Setting != "models.m" || removed.conflictsBlock() {
+		t.Fatal("routing conflicts are informational", conflicts)
+	}
+	empty := Routing{Models: map[string]config.Model{}}
+	if len(empty.problems()) != 1 {
+		t.Fatal("a routing document needs a model")
 	}
 }

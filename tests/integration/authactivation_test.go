@@ -9,6 +9,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/portal"
+	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/settings"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -64,7 +65,7 @@ func ssoLogin(t *testing.T, b *portalBrowser, provider *identityProvider, subjec
 func TestLiveAuthenticationActivationRollbackAndIssuerSeparation(t *testing.T) {
 	services := &switchRecorder{}
 	environment := map[string]string{config.EnvOIDCClientSecret: "test-secret"}
-	f := startPortal(t, usageOptions{portal: func(h *portal.Handler, cfg *config.Config, pool *pgxpool.Pool) {
+	f := startPortal(t, usageOptions{portal: func(h *portal.Handler, cfg *config.Config, pool *pgxpool.Pool, _ *proxy.Handler) {
 		cfg.OIDC.SyncClientID, cfg.OIDC.SyncIntervalS, cfg.OIDC.DefaultSignIn = "olr-sync", 900, "keycloak"
 		cfg.Forwarders.UnknownUser = config.UnknownUserReject
 		cfg.Retention = config.Retention{UsageDays: config.DefaultUsageDays, UsageDailyDays: config.DefaultUsageDailyDays, RunAt: "03:00"}
@@ -73,7 +74,7 @@ func TestLiveAuthenticationActivationRollbackAndIssuerSeparation(t *testing.T) {
 			cfg.AuthSources[setting.Name] = config.SourceDefault
 		}
 		cfg.AuthSources["portal_client_secret"] = config.SourceEnvironment
-		h.Settings = &settings.Service{DB: pool, File: cfg, Lookup: func(name string) (string, bool) { value, ok := environment[name]; return value, ok }}
+		h.Settings = &settings.AuthenticationService{DB: pool, File: cfg, Lookup: func(name string) (string, bool) { value, ok := environment[name]; return value, ok }}
 		h.AuthServices = services
 	}})
 	providerA, providerB, providerC := f.provider, newIdentityProvider(t), newIdentityProvider(t)

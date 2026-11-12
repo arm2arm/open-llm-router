@@ -842,8 +842,51 @@ a model to file ownership before removing its logical name from YAML. Back up
 PostgreSQL as well as configuration and external secrets.
 
 Activation currently supports **one router process**. Other processes do not
-receive live revision notifications. Logical model creation/deletion, alias and
-group-policy editors, provider adapters and Keycloak settings remain planned work.
+receive live revision notifications. To create or delete logical models and
+aliases, manage routing as revisions (below); group-policy editors and provider
+adapters remain planned work.
+
+### Manage models, endpoints and aliases as routing revisions
+
+The **routing** settings domain holds the complete set of logical models (upstream
+name, native protocols, timeouts, affinity, priority and endpoint pools) and the
+aliases clients may use, as one revision. Like authentication settings it is
+file-managed until imported, then versioned with drafts, activation and rollback
+(`/portal/api/admin/settings/routing`, or `olr admin settings -domain routing`).
+Group policies stay in the YAML file.
+
+- **Import** copies the routing in use, including saved per-model endpoint
+  revisions, without changing it. From then on the per-model endpoint editor is
+  closed (409); edit a routing draft instead. The file must still contain at
+  least one model to load; while routing is managed it is only the import
+  baseline, and differences are reported, not applied.
+- **Drafts** are read strictly. A model removed while an alias or group policy
+  still names it, an alias to an unknown model, an endpoint credential reference
+  outside the allowed list (`OLR_BACKEND_TOKEN_ENVS` or the file's own
+  `bearer_token_env` names) or a destination the outbound policy refuses (for
+  example metadata or link-local addresses, or private networks outside
+  `OLR_BACKEND_ALLOWED_CIDRS`) is recorded on the draft and blocks activation.
+  A document that contains a resolved credential is refused outright.
+- **Checks** probe the replicas of models the draft changes, through the same
+  destination policy as proxy traffic; refused destinations are reported
+  without being contacted.
+- **Activate** applies a draft at once: the replicas of changed or new models
+  must pass their health checks first, otherwise nothing changes. Unchanged
+  replicas keep their in-flight requests and admission counters; requests
+  already streaming finish on the previous pool and are accounted normally;
+  output is never replayed. **Rollback** and **Apply** publish even while
+  endpoints are down.
+- Responses, logs and audit events name models, aliases and credential
+  references, never credential values. Audit events list changed
+  `models.<name>` and `aliases.<name>`.
+
+If the active routing revision cannot be applied at startup (for example, a
+referenced credential variable is missing), the router refuses to start and
+names the rollback command; it never falls back to stale file models.
+
+For file-managed deployments, `olr config check -config FILE` runs the router's
+strict parser without starting it, migrating or contacting the database or
+network.
 
 ### Connection rules and current external-provider limits
 

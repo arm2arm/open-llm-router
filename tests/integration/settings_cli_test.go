@@ -66,7 +66,7 @@ models:
 		t.Fatal(err)
 	}
 	secrets := []string{envSecret, storedSecret, key, wrongKey, initialAdminPassword}
-	cli := func(wantError string, args ...string) (settings.View, string) {
+	cli := func(wantError string, args ...string) (settings.AuthenticationView, string) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
@@ -83,7 +83,7 @@ models:
 				t.Fatal("settings CLI exposed a secret")
 			}
 		}
-		var view settings.View
+		var view settings.AuthenticationView
 		if wantError == "" {
 			if err := json.Unmarshal([]byte(stdout.String()), &view); err != nil {
 				t.Fatal(err, stdout.String())
@@ -124,6 +124,9 @@ models:
 		t.Fatal("activate")
 	}
 
+	// Routing is a second domain: import it from the file, then restart.
+	cli("", "import", "-domain", "routing")
+
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, Timeout: 5 * time.Second}
 	logs := &authLog{}
@@ -158,7 +161,7 @@ models:
 		return string(methods)
 	}
 	authMethods := start()
-	if !strings.Contains(logs.String(), `"msg":"managed authentication settings applied"`) || !strings.Contains(logs.String(), fmt.Sprintf(`"revision":%d`, draft)) ||
+	if !strings.Contains(logs.String(), `"msg":"managed authentication settings applied"`) || !strings.Contains(logs.String(), `"msg":"managed routing settings applied"`) || !strings.Contains(logs.String(), fmt.Sprintf(`"revision":%d`, draft)) ||
 		!strings.Contains(authMethods, `"configured":true`) {
 		t.Fatal("router did not start with the active revision", logs.String())
 	}

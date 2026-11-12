@@ -3,9 +3,10 @@
 // encrypted secrets, and append-only audit events. A domain is file-managed
 // until an explicit import makes the database its single authority.
 //
-// Only the authentication domain (the SSO connection) is managed so far.
-// Database/bootstrap credentials, encryption keys, listener and public-origin
-// settings are deployment configuration and never managed here.
+// The managed domains are authentication (the SSO connection) and routing
+// (logical models, their endpoints and aliases). Database/bootstrap
+// credentials, encryption keys, listener and public-origin settings are
+// deployment configuration and never managed here.
 package settings
 
 import (
@@ -29,10 +30,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const DomainAuthentication = "authentication"
+const (
+	DomainAuthentication = "authentication"
+	DomainRouting        = "routing"
+)
 
 var (
-	ErrUnknownDomain = errors.New("unknown settings domain; the managed domain is authentication")
+	ErrUnknownDomain = errors.New("unknown settings domain; the managed domains are authentication and routing")
 	ErrNotManaged    = errors.New("these settings are file-managed; import them first")
 	ErrManaged       = errors.New("these settings are already managed; change them with a draft instead of importing again")
 	ErrConflict      = errors.New("settings changed since you loaded them; reload, then repeat your edit")
@@ -42,45 +46,75 @@ var (
 	ErrNoCipher      = errors.New("storing a secret requires " + EnvEncryptionKey)
 )
 
-// ValidationError lists field-level problems. Messages never contain values.
+// ValidationError lists field-level problems. Messages never contain secrets.
 type ValidationError struct{ Problems []string }
 
 func (e *ValidationError) Error() string {
 	return "settings are not valid:\n  " + strings.Join(e.Problems, "\n  ")
 }
 
-// Service changes and reports managed settings. File is this process's
-// file/environment configuration: the import source, the base for candidate
-// configurations and the reference for conflicts.
-type Service struct {
+// Service changes and reports one domain's managed settings. File is this
+// process's file/environment configuration, the reference for sources and
+// conflicts.
+type Service[D any, P document[D]] struct {
 	DB     *pgxpool.Pool
 	File   *config.Config
 	Cipher *Cipher                     // nil: stored secrets cannot be saved or opened
 	Lookup func(string) (string, bool) // environment for secret references; nil: os.LookupEnv
+	// Current returns the configuration in use: the import baseline and the
+	// base of candidate configurations. nil: File.
+	Current func() *config.Config
+	// Tokens resolves backend credential references; nil: Lookup.
+	Tokens func(string) (string, bool)
+	// Verify adds environment checks of a candidate configuration, such as
+	// outbound destination policy; problems are recorded like validation.
+	Verify func(context.Context, *config.Config) []string
 }
 
-type View struct {
-	Domain    string     `json:"domain"`
-	Managed   bool       `json:"managed"`
-	Version   int64      `json:"version"` // pass as expected version to the next change
-	Active    *Revision  `json:"active,omitempty"`
-	Draft     *Revision  `json:"draft,omitempty"`
-	Effective []Setting  `json:"effective"`
-	Conflicts []Conflict `json:"conflicts"`
-	History   []Revision `json:"history"`
+// AuthenticationService manages the SSO connection; RoutingService manages
+// logical models, their endpoints and aliases.
+type (
+	AuthenticationService  = Service[Authentication, *Authentication]
+	RoutingService         = Service[Routing, *Routing]
+	AuthenticationView     = View[Authentication]
+	RoutingView            = View[Routing]
+	AuthenticationRevision = Revision[Authentication]
+)
+
+type View[D any] struct {
+	Domain    string        `json:"domain"`
+	Managed   bool          `json:"managed"`
+	Version   int64         `json:"version"` // pass as expected version to the next change
+	Active    *Revision[D]  `json:"active,omitempty"`
+	Draft     *Revision[D]  `json:"draft,omitempty"`
+	Effective []Setting     `json:"effective"`
+	Conflicts []Conflict    `json:"conflicts"`
+	History   []Revision[D] `json:"history"`
 }
 
-type Revision struct {
-	ID         int64           `json:"id"`
-	Status     string          `json:"status"` // active, draft, previously_active or superseded
-	Origin     string          `json:"origin"` // import or draft
-	BasedOn    int64           `json:"based_on,omitempty"`
-	CreatedBy  string          `json:"created_by"`
-	CreatedAt  time.Time       `json:"created_at"`
-	Document   *Authentication `json:"document,omitempty"` // secret references only
-	Secrets    []SecretState   `json:"secrets,omitempty"`
-	Validation *Validation     `json:"validation,omitempty"`
-	Checks     *Checks         `json:"checks,omitempty"`
+// Summary returns the active and draft revision IDs and whether the draft's
+// latest check passed.
+func (v View[D]) Summary() (active, draft int64, draftValid bool) {
+	if v.Active != nil {
+		active = v.Active.ID
+	}
+	if v.Draft != nil {
+		draft, draftValid = v.Draft.ID, v.Draft.Validation != nil && v.Draft.Validation.Valid
+	}
+	return active, draft, draftValid
+}
+
+type Revision[D any] struct {
+	ID         int64         `json:"id"`
+	Status     string        `json:"status"` // active, draft, previously_active or superseded
+	Origin     string        `json:"origin"` // import or draft
+	BasedOn    int64         `json:"based_on,omitempty"`
+	CreatedBy  string        `json:"created_by"`
+	CreatedAt  time.Time     `json:"created_at"`
+	Document   *D            `json:"document,omitempty"` // secret references only
+	Secrets    []SecretState `json:"secrets,omitempty"`
+	Validation *Validation   `json:"validation,omitempty"`
+	Checks     *Checks       `json:"checks,omitempty"`
 }
 
 type Validation struct {
@@ -108,6 +142,18 @@ type SecretState struct {
 	Available  bool       `json:"available"` // the variable is set / the key opens it
 }
 
+// Conflict is a file or environment value that differs from the managed one.
+// It names the setting and where it is set, never either value.
+type Conflict struct {
+	Setting string `json:"setting"`
+	Source  string `json:"source"` // file or environment
+	Where   string `json:"where"`  // e.g. oidc.issuer or OIDC_ISSUER
+}
+
+func (c Conflict) String() string {
+	return fmt.Sprintf("%s: %s sets a different value; remove %s so managed settings are the only source", c.Setting, c.Where, c.Where)
+}
+
 type querier interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -116,23 +162,47 @@ type querier interface {
 
 type state struct{ active, draft, version int64 }
 
-type revisionRow struct {
-	Revision
-	doc Authentication
+type revisionRow[D any] struct {
+	Revision[D]
+	doc *D
 }
 
-func checkDomain(domain string) error {
-	if domain != DomainAuthentication {
+func (s *Service[D, P]) domain() string { return P(new(D)).domainName() }
+
+func (s *Service[D, P]) checkDomain(domain string) error {
+	if domain != s.domain() {
 		return ErrUnknownDomain
 	}
 	return nil
 }
 
-func (s *Service) lookup(name string) (string, bool) {
+func (s *Service[D, P]) lookup(name string) (string, bool) {
 	if s.Lookup != nil {
 		return s.Lookup(name)
 	}
 	return os.LookupEnv(name)
+}
+
+func (s *Service[D, P]) current() *config.Config {
+	if s.Current != nil {
+		if cfg := s.Current(); cfg != nil {
+			return cfg
+		}
+	}
+	return s.File
+}
+
+func (s *Service[D, P]) tokens() func(string) (string, bool) {
+	if s.Tokens != nil {
+		return s.Tokens
+	}
+	return s.lookup
+}
+
+func decodeDocument[D any, P document[D]](data []byte) (P, error) {
+	doc := P(new(D))
+	err := doc.decode(data)
+	return doc, err
 }
 
 func readState(ctx context.Context, q querier, domain string, lock bool) (state, bool, error) {
@@ -156,12 +226,18 @@ func readState(ctx context.Context, q querier, domain string, lock bool) (state,
 	return st, true, nil
 }
 
-func readRevision(ctx context.Context, q querier, domain string, id int64) (revisionRow, error) {
-	var row revisionRow
+// Managed reports whether a domain is managed in the database.
+func Managed(ctx context.Context, q querier, domain string) (bool, error) {
+	_, managed, err := readState(ctx, q, domain, false)
+	return managed, err
+}
+
+func (s *Service[D, P]) readRevision(ctx context.Context, q querier, id int64) (revisionRow[D], error) {
+	var row revisionRow[D]
 	var document, validation, checks []byte
 	var basedOn *int64
 	err := q.QueryRow(ctx, `SELECT id,origin,based_on,created_by_label,created_at,document,validation,checks
-		FROM settings_revisions WHERE id=$1 AND domain=$2`, id, domain).
+		FROM settings_revisions WHERE id=$1 AND domain=$2`, id, s.domain()).
 		Scan(&row.ID, &row.Origin, &basedOn, &row.CreatedBy, &row.CreatedAt, &document, &validation, &checks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, ErrRevision
@@ -172,9 +248,11 @@ func readRevision(ctx context.Context, q querier, domain string, id int64) (revi
 	if basedOn != nil {
 		row.BasedOn = *basedOn
 	}
-	if row.doc, err = decodeAuthentication(document); err != nil {
+	doc, err := decodeDocument[D, P](document)
+	if err != nil {
 		return row, errors.New("a stored settings revision is not readable by this version")
 	}
+	row.doc = (*D)(doc)
 	if len(validation) > 0 {
 		row.Validation = &Validation{}
 		if json.Unmarshal(validation, row.Validation) != nil {
@@ -191,13 +269,13 @@ func readRevision(ctx context.Context, q querier, domain string, id int64) (revi
 }
 
 // resolve opens the document's secrets. Problems name the setting only.
-func (s *Service) resolve(ctx context.Context, q querier, doc Authentication) (resolved, []SecretState, []string, error) {
-	var out resolved
+func (s *Service[D, P]) resolve(ctx context.Context, q querier, doc P) (map[string]string, []SecretState, []string, error) {
+	out := map[string]string{}
 	var states []SecretState
 	var problems []string
-	for _, field := range authenticationSecrets {
-		ref := *field.ref(&doc)
-		st := SecretState{Setting: field.name, Configured: !ref.empty()}
+	for _, binding := range doc.secrets() {
+		ref := *binding.ref
+		st := SecretState{Setting: binding.name, Configured: !ref.empty()}
 		var value string
 		switch {
 		case ref.Env != "":
@@ -206,7 +284,7 @@ func (s *Service) resolve(ctx context.Context, q querier, doc Authentication) (r
 			if ok && v != "" && !strings.ContainsAny(v, "\r\n") {
 				value, st.Available = v, true
 			} else {
-				problems = append(problems, fmt.Sprintf("%s: environment variable %s is not set to a single-line value", field.name, ref.Env))
+				problems = append(problems, fmt.Sprintf("%s: environment variable %s is not set to a single-line value", binding.name, ref.Env))
 			}
 		case ref.Stored != "":
 			st.Reference, st.ID = "stored", ref.Stored
@@ -214,8 +292,8 @@ func (s *Service) resolve(ctx context.Context, q querier, doc Authentication) (r
 			var sealed []byte
 			var created time.Time
 			err := q.QueryRow(ctx, `SELECT name,ciphertext,key_id,created_at FROM managed_secrets WHERE id=$1`, ref.Stored).Scan(&name, &sealed, &keyID, &created)
-			if errors.Is(err, pgx.ErrNoRows) || err == nil && name != DomainAuthentication+"."+field.name {
-				problems = append(problems, field.name+": the stored secret does not exist")
+			if errors.Is(err, pgx.ErrNoRows) || err == nil && name != s.domain()+"."+binding.name {
+				problems = append(problems, binding.name+": the stored secret does not exist")
 				break
 			}
 			if err != nil {
@@ -224,72 +302,63 @@ func (s *Service) resolve(ctx context.Context, q querier, doc Authentication) (r
 			st.CreatedAt = &created
 			plain, err := s.Cipher.open(ref.Stored, name, keyID, sealed)
 			if err != nil {
-				problems = append(problems, field.name+": "+errSecretUnavailable.Error())
+				problems = append(problems, binding.name+": "+errSecretUnavailable.Error())
 				break
 			}
 			value, st.Available = string(plain), true
 			clear(plain)
 		}
-		if field.name == "portal_client_secret" {
-			out.portal = value
-		} else {
-			out.sync = value
-		}
+		out[binding.name] = value
 		states = append(states, st)
 	}
 	return out, states, problems, nil
 }
 
-// check validates a document against this process: secrets must resolve, the
-// result must be a valid configuration, and no file or environment value may
-// contradict it. Problems never contain values.
-func (s *Service) check(ctx context.Context, q querier, doc Authentication) (Validation, []Conflict, error) {
-	result := Validation{CheckedAt: time.Now().UTC(), Problems: doc.problems()}
-	secrets, _, problems, err := s.resolve(ctx, q, doc)
+// build resolves a document and applies it to base; problems never contain
+// secrets.
+func (s *Service[D, P]) build(ctx context.Context, q querier, doc P, base *config.Config) (*config.Config, map[string]string, []string, error) {
+	problems := doc.problems()
+	secrets, _, unresolved, err := s.resolve(ctx, q, doc)
 	if err != nil {
-		return result, nil, err
+		return nil, nil, nil, err
 	}
-	result.Problems = append(result.Problems, problems...)
-	if len(result.Problems) == 0 {
-		if _, err := doc.apply(s.File, secrets); err != nil {
-			var invalid *ValidationError
-			if errors.As(err, &invalid) {
-				result.Problems = append(result.Problems, invalid.Problems...)
-			}
+	if problems = append(problems, unresolved...); len(problems) > 0 {
+		return nil, secrets, problems, nil
+	}
+	cfg, err := doc.apply(base, applyInput{secrets: secrets, tokens: s.tokens()})
+	if err != nil {
+		var invalid *ValidationError
+		if errors.As(err, &invalid) {
+			return nil, secrets, invalid.Problems, nil
 		}
+		return nil, secrets, []string{"the settings do not form a valid configuration"}, nil
 	}
-	found := conflicts(s.File, doc, secrets, len(problems) == 0)
-	for _, conflict := range found {
-		result.Problems = append(result.Problems, conflict.String())
+	return cfg, secrets, nil, nil
+}
+
+// check validates a document against this process: secrets must resolve, the
+// result must be a valid configuration that passes Verify, and (for domains
+// whose conflicts block) no file or environment value may contradict it.
+func (s *Service[D, P]) check(ctx context.Context, q querier, doc P) (Validation, error) {
+	result := Validation{CheckedAt: time.Now().UTC()}
+	cfg, secrets, problems, err := s.build(ctx, q, doc, s.current())
+	if err != nil {
+		return result, err
+	}
+	result.Problems = problems
+	if cfg != nil && s.Verify != nil {
+		result.Problems = append(result.Problems, s.Verify(ctx, cfg)...)
+	}
+	if doc.conflictsBlock() {
+		for _, conflict := range doc.conflicts(s.File, secrets, len(problems) == 0) {
+			result.Problems = append(result.Problems, conflict.String())
+		}
 	}
 	result.Valid = len(result.Problems) == 0
 	if result.Problems == nil {
 		result.Problems = []string{}
 	}
-	return result, found, nil
-}
-
-// changed lists the settings whose values or secret references differ.
-func changed(before, after Authentication) []string {
-	encode := func(doc Authentication) map[string]string {
-		values := doc.values()
-		for _, field := range authenticationSecrets {
-			ref := *field.ref(&doc)
-			values[field.name] = ref.Env + "|" + ref.Stored
-		}
-		return values
-	}
-	old, next := encode(before), encode(after)
-	var names []string
-	for _, setting := range config.AuthSettings {
-		if old[setting.Name] != next[setting.Name] {
-			names = append(names, setting.Name)
-		}
-	}
-	if names == nil {
-		names = []string{}
-	}
-	return names
+	return result, nil
 }
 
 func newUUID() (string, error) {
@@ -307,8 +376,8 @@ func validSecret(value []byte) bool {
 
 // change runs a mutation under the domain lock. A refusal decided inside the
 // transaction can still commit its validation record and audit event.
-func (s *Service) change(ctx context.Context, domain string, event audit.Event, mutate func(pgx.Tx, *audit.Event) error) error {
-	if err := checkDomain(domain); err != nil {
+func (s *Service[D, P]) change(ctx context.Context, domain string, event audit.Event, mutate func(pgx.Tx, *audit.Event) error) error {
+	if err := s.checkDomain(domain); err != nil {
 		return err
 	}
 	event.TargetType, event.TargetID = "settings", domain
@@ -355,7 +424,7 @@ func setValidation(ctx context.Context, tx pgx.Tx, id int64, result Validation) 
 	return nil
 }
 
-func insertRevision(ctx context.Context, tx pgx.Tx, domain, origin string, doc Authentication, basedOn int64, actor audit.Actor, result Validation) (int64, error) {
+func (s *Service[D, P]) insertRevision(ctx context.Context, tx pgx.Tx, origin string, doc P, basedOn int64, actor audit.Actor, result Validation) (int64, error) {
 	document, err := json.Marshal(doc)
 	if err != nil {
 		return 0, ErrStorage
@@ -370,7 +439,7 @@ func insertRevision(ctx context.Context, tx pgx.Tx, domain, origin string, doc A
 	}
 	var id int64
 	err = tx.QueryRow(ctx, `INSERT INTO settings_revisions(domain,origin,document,based_on,created_by,created_by_label,validation)
-		VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,$6,$7) RETURNING id`, domain, origin, document, parent, actor.ID, actor.Label(), validation).Scan(&id)
+		VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,$6,$7) RETURNING id`, s.domain(), origin, document, parent, actor.ID, actor.Label(), validation).Scan(&id)
 	if err != nil {
 		return 0, ErrStorage
 	}
@@ -378,23 +447,24 @@ func insertRevision(ctx context.Context, tx pgx.Tx, domain, origin string, doc A
 }
 
 // Import makes the database the authority for a domain, starting from the
-// current effective file and environment values without changing them.
-func (s *Service) Import(ctx context.Context, domain string, actor audit.Actor) (View, error) {
+// current effective values without changing them.
+func (s *Service[D, P]) Import(ctx context.Context, domain string, actor audit.Actor) (View[D], error) {
 	err := s.change(ctx, domain, audit.Event{Action: "settings.import", Actor: actor}, func(tx pgx.Tx, event *audit.Event) error {
 		if _, managed, err := readState(ctx, tx, domain, true); err != nil {
 			return err
 		} else if managed {
 			return ErrManaged
 		}
-		doc := authenticationFromFile(s.File)
-		result, _, err := s.check(ctx, tx, doc)
+		doc := P(new(D))
+		doc.baseline(s.current())
+		result, err := s.check(ctx, tx, doc)
 		if err != nil {
 			return err
 		}
 		if !result.Valid {
 			return &ValidationError{result.Problems}
 		}
-		id, err := insertRevision(ctx, tx, domain, "import", doc, 0, actor, result)
+		id, err := s.insertRevision(ctx, tx, "import", doc, 0, actor, result)
 		if err != nil {
 			return err
 		}
@@ -404,22 +474,18 @@ func (s *Service) Import(ctx context.Context, domain string, actor audit.Actor) 
 		if err := recordActivation(ctx, tx, domain, id, "import", actor); err != nil {
 			return err
 		}
+		counts := map[string]int{}
+		for _, source := range doc.fileSources(s.File) {
+			counts[source]++
+		}
 		event.Revision = id
-		event.Details = map[string]any{"sources": sourceCounts(s.File)}
+		event.Details = map[string]any{"sources": counts}
 		return nil
 	})
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
 	return s.View(ctx, domain)
-}
-
-func sourceCounts(file *config.Config) map[string]int {
-	counts := map[string]int{}
-	for _, setting := range config.AuthSettings {
-		counts[file.AuthSources[setting.Name]]++
-	}
-	return counts
 }
 
 func recordActivation(ctx context.Context, tx pgx.Tx, domain string, id int64, kind string, actor audit.Actor) error {
@@ -435,17 +501,18 @@ func recordActivation(ctx context.Context, tx pgx.Tx, domain string, id int64, k
 // the domain's JSON document; secrets maps secret setting names to new
 // plaintext values, which are encrypted and referenced by the draft (the
 // rotation path). Document problems refuse the save; environment-dependent
-// problems (unresolvable secrets, file/environment conflicts) are recorded
-// on the draft and block only its activation.
-func (s *Service) SaveDraft(ctx context.Context, domain string, expected int64, document []byte, secrets map[string][]byte, actor audit.Actor) (View, error) {
+// problems (unresolvable secrets, destinations, conflicts) are recorded on
+// the draft and block only its activation.
+func (s *Service[D, P]) SaveDraft(ctx context.Context, domain string, expected int64, document []byte, secrets map[string][]byte, actor audit.Actor) (View[D], error) {
 	err := s.change(ctx, domain, audit.Event{Action: "settings.draft_save", Actor: actor}, func(tx pgx.Tx, event *audit.Event) error {
-		doc, err := decodeAuthentication(document)
+		doc, err := decodeDocument[D, P](document)
 		if err != nil {
 			return err
 		}
 		var problems []string
+		bindings := doc.secrets()
 		for _, name := range slices.Sorted(maps.Keys(secrets)) {
-			if _, ok := secretFieldNamed(name); !ok {
+			if _, ok := bindingNamed(bindings, name); !ok {
 				problems = append(problems, "secrets: one of the names is not a secret setting of this domain")
 			} else if !validSecret(secrets[name]) {
 				problems = append(problems, name+": a secret must be 1 to 4096 bytes of text without control characters")
@@ -457,23 +524,17 @@ func (s *Service) SaveDraft(ctx context.Context, domain string, expected int64, 
 		if len(secrets) > 0 && s.Cipher == nil {
 			return ErrNoCipher
 		}
-		st, managed, err := readState(ctx, tx, domain, true)
+		st, err := s.lockedState(ctx, tx, domain, expected)
 		if err != nil {
 			return err
 		}
-		if !managed {
-			return ErrNotManaged
-		}
-		if st.version != expected {
-			return ErrConflict
-		}
-		active, err := readRevision(ctx, tx, domain, st.active)
+		active, err := s.readRevision(ctx, tx, st.active)
 		if err != nil {
 			return err
 		}
 		stored := []string{}
 		for _, name := range slices.Sorted(maps.Keys(secrets)) {
-			field, _ := secretFieldNamed(name)
+			binding, _ := bindingNamed(bindings, name)
 			id, err := newUUID()
 			if err != nil {
 				return ErrStorage
@@ -487,14 +548,14 @@ func (s *Service) SaveDraft(ctx context.Context, domain string, expected int64, 
 				id, secretName, sealed, s.Cipher.ID(), actor.ID); err != nil {
 				return ErrStorage
 			}
-			*field.ref(&doc) = SecretRef{Stored: id}
+			*binding.ref = SecretRef{Stored: id}
 			stored = append(stored, name)
 		}
-		result, _, err := s.check(ctx, tx, doc)
+		result, err := s.check(ctx, tx, doc)
 		if err != nil {
 			return err
 		}
-		id, err := insertRevision(ctx, tx, domain, "draft", doc, st.active, actor, result)
+		id, err := s.insertRevision(ctx, tx, "draft", doc, st.active, actor, result)
 		if err != nil {
 			return err
 		}
@@ -502,17 +563,17 @@ func (s *Service) SaveDraft(ctx context.Context, domain string, expected int64, 
 			return ErrStorage
 		}
 		event.Revision = id
-		event.Details = map[string]any{"changed": changed(active.doc, doc), "secrets_stored": stored, "valid": result.Valid}
+		event.Details = map[string]any{"changed": changed[D, P](active.doc, doc), "secrets_stored": stored, "valid": result.Valid}
 		return nil
 	})
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
 	return s.View(ctx, domain)
 }
 
 // Discard drops the pending draft; its revision remains in history.
-func (s *Service) Discard(ctx context.Context, domain string, expected int64, actor audit.Actor) (View, error) {
+func (s *Service[D, P]) Discard(ctx context.Context, domain string, expected int64, actor audit.Actor) (View[D], error) {
 	err := s.change(ctx, domain, audit.Event{Action: "settings.draft_discard", Actor: actor}, func(tx pgx.Tx, event *audit.Event) error {
 		st, err := s.lockedState(ctx, tx, domain, expected)
 		if err != nil {
@@ -528,12 +589,12 @@ func (s *Service) Discard(ctx context.Context, domain string, expected int64, ac
 		return nil
 	})
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
 	return s.View(ctx, domain)
 }
 
-func (s *Service) lockedState(ctx context.Context, tx pgx.Tx, domain string, expected int64) (state, error) {
+func (s *Service[D, P]) lockedState(ctx context.Context, tx pgx.Tx, domain string, expected int64) (state, error) {
 	st, managed, err := readState(ctx, tx, domain, true)
 	if err != nil {
 		return st, err
@@ -548,11 +609,12 @@ func (s *Service) lockedState(ctx context.Context, tx pgx.Tx, domain string, exp
 }
 
 // Activate makes the current draft the active revision after checking it
-// again. With requireChecks, a draft that enables SSO must also have passed
-// its connection checks and a test sign-in. A refused activation records why
-// and leaves the active revision. Routers apply the active revision when they
-// start, or at once when activated from their Admin page.
-func (s *Service) Activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, requireChecks bool) (View, error) {
+// again. With requireChecks, the domain's stored checks must also allow it
+// (for authentication: passed connection checks and a test sign-in when SSO
+// is enabled). A refused activation records why and leaves the active
+// revision. Routers apply the active revision when they start, or at once
+// when activated from their Admin page.
+func (s *Service[D, P]) Activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, requireChecks bool) (View[D], error) {
 	return s.activate(ctx, domain, expected, revision, actor, "activate", requireChecks)
 }
 
@@ -561,11 +623,11 @@ const errChecksRequired = "run the connection checks (none may fail) and a succe
 
 // Rollback re-activates a previously active revision after checking it again.
 // A pending draft is kept.
-func (s *Service) Rollback(ctx context.Context, domain string, expected, revision int64, actor audit.Actor) (View, error) {
+func (s *Service[D, P]) Rollback(ctx context.Context, domain string, expected, revision int64, actor audit.Actor) (View[D], error) {
 	return s.activate(ctx, domain, expected, revision, actor, "rollback", false)
 }
 
-func (s *Service) activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, kind string, requireChecks bool) (View, error) {
+func (s *Service[D, P]) activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, kind string, requireChecks bool) (View[D], error) {
 	err := s.change(ctx, domain, audit.Event{Action: "settings." + kind, Actor: actor, Revision: revision}, func(tx pgx.Tx, event *audit.Event) error {
 		st, err := s.lockedState(ctx, tx, domain, expected)
 		if err != nil {
@@ -583,26 +645,26 @@ func (s *Service) activate(ctx context.Context, domain string, expected, revisio
 				return ErrRevision
 			}
 		}
-		row, err := readRevision(ctx, tx, domain, revision)
+		row, err := s.readRevision(ctx, tx, revision)
 		if err != nil {
 			return err
 		}
-		active, err := readRevision(ctx, tx, domain, st.active)
+		active, err := s.readRevision(ctx, tx, st.active)
 		if err != nil {
 			return err
 		}
-		result, _, err := s.check(ctx, tx, row.doc)
+		result, err := s.check(ctx, tx, row.doc)
 		if err != nil {
 			return err
 		}
 		if err := setValidation(ctx, tx, revision, result); err != nil {
 			return err
 		}
-		event.Details = map[string]any{"previous_revision": st.active, "changed": changed(active.doc, row.doc)}
+		event.Details = map[string]any{"previous_revision": st.active, "changed": changed[D, P](active.doc, row.doc)}
 		if !result.Valid {
 			return &ValidationError{result.Problems}
 		}
-		if requireChecks && row.doc.Enabled && !row.Checks.Passed() {
+		if requireChecks && !P(row.doc).checksPassed(row.Checks) {
 			return &ValidationError{[]string{errChecksRequired}}
 		}
 		draft := any(st.draft)
@@ -616,7 +678,7 @@ func (s *Service) activate(ctx context.Context, domain string, expected, revisio
 		return recordActivation(ctx, tx, domain, revision, kind, actor)
 	})
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
 	return s.View(ctx, domain)
 }
@@ -624,39 +686,40 @@ func (s *Service) activate(ctx context.Context, domain string, expected, revisio
 // View reports effective values with their sources, the active revision and
 // draft with their checks, conflicts and recent history. It never returns a
 // secret value.
-func (s *Service) View(ctx context.Context, domain string) (View, error) {
-	if err := checkDomain(domain); err != nil {
-		return View{}, err
+func (s *Service[D, P]) View(ctx context.Context, domain string) (View[D], error) {
+	if err := s.checkDomain(domain); err != nil {
+		return View[D]{}, err
 	}
-	view := View{Domain: domain, Effective: []Setting{}, Conflicts: []Conflict{}, History: []Revision{}}
+	view := View[D]{Domain: domain, Effective: []Setting{}, Conflicts: []Conflict{}, History: []Revision[D]{}}
 	st, managed, err := readState(ctx, s.DB, domain, false)
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
 	if !managed {
-		doc := authenticationFromFile(s.File)
-		view.Effective = effective(doc, s.secretStatesFromFile(), func(name string) string { return s.File.AuthSources[name] })
+		doc := P(new(D))
+		doc.baseline(s.current())
+		sources := doc.fileSources(s.File)
+		view.Effective = effective[D, P](doc, s.secretStatesFromFile(doc), func(name string) string { return sources[name] })
 		return view, nil
 	}
 	view.Managed, view.Version = true, st.version
-	active, err := s.describe(ctx, domain, st.active, "active")
+	active, err := s.describe(ctx, st.active, "active")
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
 	view.Active = &active.Revision
 	secrets, states, problems, err := s.resolve(ctx, s.DB, active.doc)
 	if err != nil {
-		return View{}, err
+		return View[D]{}, err
 	}
-	view.Effective = effective(active.doc, states, func(string) string { return "database" })
-	view.Conflicts = conflicts(s.File, active.doc, secrets, len(problems) == 0)
-	if view.Conflicts == nil {
-		view.Conflicts = []Conflict{}
+	view.Effective = effective[D, P](active.doc, states, func(string) string { return "database" })
+	if found := P(active.doc).conflicts(s.File, secrets, len(problems) == 0); found != nil {
+		view.Conflicts = found
 	}
 	if st.draft != 0 {
-		draft, err := s.describe(ctx, domain, st.draft, "draft")
+		draft, err := s.describe(ctx, st.draft, "draft")
 		if err != nil {
-			return View{}, err
+			return View[D]{}, err
 		}
 		view.Draft = &draft.Revision
 	}
@@ -664,14 +727,14 @@ func (s *Service) View(ctx context.Context, domain string) (View, error) {
 		EXISTS(SELECT 1 FROM settings_activations a WHERE a.revision_id=r.id)
 		FROM settings_revisions r WHERE r.domain=$1 ORDER BY r.id DESC LIMIT 20`, domain)
 	if err != nil {
-		return View{}, ErrStorage
+		return View[D]{}, ErrStorage
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var revision Revision
+		var revision Revision[D]
 		var activated bool
 		if rows.Scan(&revision.ID, &revision.Origin, &revision.BasedOn, &revision.CreatedBy, &revision.CreatedAt, &activated) != nil {
-			return View{}, ErrStorage
+			return View[D]{}, ErrStorage
 		}
 		switch {
 		case revision.ID == st.active:
@@ -686,13 +749,13 @@ func (s *Service) View(ctx context.Context, domain string) (View, error) {
 		view.History = append(view.History, revision)
 	}
 	if rows.Err() != nil {
-		return View{}, ErrStorage
+		return View[D]{}, ErrStorage
 	}
 	return view, nil
 }
 
-func (s *Service) describe(ctx context.Context, domain string, id int64, status string) (revisionRow, error) {
-	row, err := readRevision(ctx, s.DB, domain, id)
+func (s *Service[D, P]) describe(ctx context.Context, id int64, status string) (revisionRow[D], error) {
+	row, err := s.readRevision(ctx, s.DB, id)
 	if err != nil {
 		return row, err
 	}
@@ -700,111 +763,118 @@ func (s *Service) describe(ctx context.Context, domain string, id int64, status 
 	if err != nil {
 		return row, err
 	}
-	doc := row.doc
-	row.Status, row.Document, row.Secrets = status, &doc, states
+	row.Status, row.Document, row.Secrets = status, row.doc, states
 	return row, nil
 }
 
-func (s *Service) secretStatesFromFile() []SecretState {
+func (s *Service[D, P]) secretStatesFromFile(doc P) []SecretState {
 	var states []SecretState
-	for _, field := range authenticationSecrets {
-		value, set := s.lookup(field.env)
-		st := SecretState{Setting: field.name, Configured: set && value != ""}
+	for _, binding := range doc.secrets() {
+		value, set := s.lookup(binding.env)
+		st := SecretState{Setting: binding.name, Configured: set && value != ""}
 		if st.Configured {
-			st.Reference, st.Env, st.Available = "environment", field.env, true
+			st.Reference, st.Env, st.Available = "environment", binding.env, true
 		}
 		states = append(states, st)
 	}
 	return states
 }
 
-func effective(doc Authentication, secrets []SecretState, source func(string) string) []Setting {
+func effective[D any, P document[D]](doc P, secrets []SecretState, source func(string) string) []Setting {
 	encoded, _ := json.Marshal(doc)
 	var values map[string]any
 	_ = json.Unmarshal(encoded, &values)
+	bindings := doc.secrets()
 	settings := []Setting{}
-	for _, setting := range config.AuthSettings {
-		entry := Setting{Name: setting.Name, Source: source(setting.Name)}
-		if _, secret := secretFieldNamed(setting.Name); secret {
+	for _, name := range doc.settingNames() {
+		entry := Setting{Name: name, Source: source(name)}
+		if _, secret := bindingNamed(bindings, name); secret {
 			for i := range secrets {
-				if secrets[i].Setting == setting.Name {
+				if secrets[i].Setting == name {
 					entry.Secret = &secrets[i]
 				}
 			}
 		} else {
-			entry.Value = values[setting.Name]
+			entry.Value = values[name]
 		}
 		settings = append(settings, entry)
 	}
 	return settings
 }
 
-// Snapshot is the immutable result of loading settings at startup. Callers
+// Snapshot is the immutable result of loading a domain at startup. Callers
 // must not modify Config.
 type Snapshot struct {
 	Domain   string
 	Revision int64  // 0: file-managed
-	Problem  string // the active revision could not be applied; SSO is off
+	Problem  string // the active revision could not be applied; see fallback
 	Config   *config.Config
 }
 
-// Apply returns the configuration a router starts with. A file-managed domain
-// keeps the file configuration. A managed domain uses only its active
-// revision: conflicting file/environment values are rejected and logged. If
-// the active revision cannot be applied (for example, its stored secret
-// cannot be decrypted), SSO is turned off and local login stays available;
-// file values are never substituted.
-func Apply(ctx context.Context, db *pgxpool.Pool, file *config.Config, cipher *Cipher, lookup func(string) (string, bool), log *slog.Logger) (Snapshot, error) {
-	s := &Service{DB: db, File: file, Cipher: cipher, Lookup: lookup}
-	snapshot := Snapshot{Domain: DomainAuthentication, Config: file}
-	st, managed, err := readState(ctx, db, DomainAuthentication, false)
+// Apply returns the configuration to start with: base with this domain's
+// active revision applied. A file-managed domain leaves base unchanged. A
+// managed domain uses only its active revision; file values are never
+// substituted. Conflicting file/environment values are ignored and logged.
+// If the active revision cannot be applied, the domain's fallback decides:
+// authentication turns SSO off (local login stays available), routing fails
+// startup.
+func (s *Service[D, P]) Apply(ctx context.Context, base *config.Config, log *slog.Logger) (Snapshot, error) {
+	domain := s.domain()
+	snapshot := Snapshot{Domain: domain, Config: base}
+	st, managed, err := readState(ctx, s.DB, domain, false)
 	if err != nil {
 		return snapshot, errors.New("read managed settings failed")
 	}
 	if !managed {
-		log.Info("authentication settings are file-managed")
+		log.Info(domain + " settings are file-managed")
 		return snapshot, nil
 	}
 	snapshot.Revision = st.active
-	disable := func(problems []string) (Snapshot, error) {
-		cfg, err := config.WithAuthentication(file, nil, "", "")
-		if err != nil {
-			return snapshot, errors.New("local-only fallback configuration is invalid")
+	fail := func(problems []string) (Snapshot, error) {
+		cfg, message, ok := P(new(D)).fallback(base)
+		if !ok {
+			return snapshot, fmt.Errorf("managed %s revision %d cannot be applied; roll back with olr admin settings rollback -domain %s:\n  %s",
+				domain, st.active, domain, strings.Join(problems, "\n  "))
 		}
 		snapshot.Config, snapshot.Problem = cfg, strings.Join(problems, "; ")
-		log.Error("managed authentication settings could not be applied; SSO is off and local login remains available",
-			"revision", st.active, "problems", problems)
+		log.Error(message, "revision", st.active, "problems", problems)
 		return snapshot, nil
 	}
-	row, err := readRevision(ctx, db, DomainAuthentication, st.active)
+	row, err := s.readRevision(ctx, s.DB, st.active)
 	if err != nil {
-		return disable([]string{err.Error()})
+		return fail([]string{err.Error()})
 	}
-	secrets, _, problems, err := s.resolve(ctx, db, row.doc)
+	cfg, secrets, problems, err := s.build(ctx, s.DB, row.doc, base)
 	if err != nil {
 		return snapshot, errors.New("read managed settings failed")
 	}
-	if problems = append(row.doc.problems(), problems...); len(problems) > 0 {
-		return disable(problems)
-	}
-	cfg, err := row.doc.apply(file, secrets)
-	if err != nil {
-		var invalid *ValidationError
-		if errors.As(err, &invalid) {
-			return disable(invalid.Problems)
-		}
-		return disable([]string{"the active revision does not form a valid configuration"})
+	if len(problems) > 0 {
+		return fail(problems)
 	}
 	snapshot.Config = cfg
-	if found := conflicts(file, row.doc, secrets, true); len(found) > 0 {
+	if found := P(row.doc).conflicts(s.File, secrets, true); len(found) > 0 {
 		var described []string
 		for _, conflict := range found {
-			described = append(described, conflict.String())
+			if P(row.doc).conflictsBlock() {
+				described = append(described, conflict.String())
+			} else {
+				described = append(described, conflict.Setting)
+			}
 		}
-		log.Error("file or environment settings conflict with managed settings and are ignored", "revision", st.active, "conflicts", described)
+		if P(row.doc).conflictsBlock() {
+			log.Error("file or environment settings conflict with managed settings and are ignored", "domain", domain, "revision", st.active, "conflicts", described)
+		} else {
+			log.Info("the config file differs from the managed revision, which is used; the file is only the import baseline", "domain", domain, "revision", st.active, "differences", described)
+		}
 	}
-	log.Info("managed authentication settings applied", "revision", st.active, "sso", row.doc.Enabled)
+	log.Info("managed "+domain+" settings applied", "revision", st.active)
 	return snapshot, nil
+}
+
+// Apply loads the authentication domain onto file; see Service.Apply.
+func Apply(ctx context.Context, db *pgxpool.Pool, file *config.Config, cipher *Cipher, lookup func(string) (string, bool), log *slog.Logger) (Snapshot, error) {
+	s := &AuthenticationService{DB: db, File: file, Cipher: cipher, Lookup: lookup}
+	return s.Apply(ctx, file, log)
 }
 
 // Checks are the latest connection checks and test sign-in of a revision.
@@ -834,11 +904,11 @@ func (c *Checks) Passed() bool {
 }
 
 // Candidate returns the configuration a revision would run with, for
-// connection checks and test sign-in. Revision 0 is the current effective
-// configuration: the active revision when managed, otherwise the file.
-// File/environment conflicts do not matter here; activation checks them.
-func (s *Service) Candidate(ctx context.Context, domain string, revision int64) (*config.Config, int64, error) {
-	if err := checkDomain(domain); err != nil {
+// connection checks, test sign-in and activation. Revision 0 is the current
+// effective configuration: the active revision when managed, otherwise the
+// current configuration. Conflicts do not matter here; activation checks them.
+func (s *Service[D, P]) Candidate(ctx context.Context, domain string, revision int64) (*config.Config, int64, error) {
+	if err := s.checkDomain(domain); err != nil {
 		return nil, 0, err
 	}
 	st, managed, err := readState(ctx, s.DB, domain, false)
@@ -847,30 +917,35 @@ func (s *Service) Candidate(ctx context.Context, domain string, revision int64) 
 	}
 	if revision == 0 {
 		if !managed {
-			return s.File, 0, nil
+			return s.current(), 0, nil
 		}
 		revision = st.active
 	} else if !managed {
 		return nil, 0, ErrNotManaged
 	}
-	row, err := readRevision(ctx, s.DB, domain, revision)
+	row, err := s.readRevision(ctx, s.DB, revision)
 	if err != nil {
 		return nil, 0, err
 	}
-	secrets, _, problems, err := s.resolve(ctx, s.DB, row.doc)
+	cfg, _, problems, err := s.build(ctx, s.DB, row.doc, s.current())
 	if err != nil {
 		return nil, 0, err
 	}
-	if problems = append(row.doc.problems(), problems...); len(problems) > 0 {
+	if len(problems) > 0 {
 		return nil, 0, &ValidationError{problems}
 	}
-	cfg, err := row.doc.apply(s.File, secrets)
-	return cfg, revision, err
+	return cfg, revision, nil
+}
+
+// Document returns a revision's document (secret references only).
+func (s *Service[D, P]) Document(ctx context.Context, revision int64) (*D, error) {
+	row, err := s.readRevision(ctx, s.DB, revision)
+	return row.doc, err
 }
 
 // RecordChecks stores connection check results (and/or a test sign-in) on a
 // revision and audits them. Revision 0 (file-managed) is audited only.
-func (s *Service) RecordChecks(ctx context.Context, domain string, revision int64, connection []idpcheck.Result, signIn *idpcheck.Result, actor audit.Actor) error {
+func (s *Service[D, P]) RecordChecks(ctx context.Context, domain string, revision int64, connection []idpcheck.Result, signIn *idpcheck.Result, actor audit.Actor) error {
 	action, details := "settings.check", map[string]any{}
 	for _, result := range connection {
 		details[result.Name] = result.Status

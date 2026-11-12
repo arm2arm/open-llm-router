@@ -43,7 +43,7 @@ type usageOptions struct {
 	forwarders *config.Forwarders
 	tokens     func(*pgxpool.Pool) func(*auth.Authenticator)
 	// portal adjusts a portal handler before it serves requests.
-	portal func(*portal.Handler, *config.Config, *pgxpool.Pool)
+	portal func(*portal.Handler, *config.Config, *pgxpool.Pool, *proxy.Handler)
 }
 
 func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOptions) *usageRouter {

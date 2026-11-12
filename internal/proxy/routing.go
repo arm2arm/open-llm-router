@@ -54,6 +54,40 @@ func (h *Handler) Prepare(ctx context.Context, cfg *config.Config, model string)
 	return func() { h.routing.Store(&routingSnapshot{cfg, next}) }, states, nil
 }
 
+// PrepareRouting tests a complete replacement routing configuration without
+// changing the active snapshot. models are the logical models whose
+// endpoints changed; their replicas are probed, and with strict any failed
+// probe refuses the replacement. Replicas that stay the same keep their
+// in-flight requests and accounting; removed models stop receiving new
+// requests while running ones finish. The returned publication is called
+// only after the database commit succeeds.
+func (h *Handler) PrepareRouting(ctx context.Context, cfg *config.Config, models []string, strict bool) (func(), map[string][]pool.State, error) {
+	_, previous := h.Snapshot()
+	next := pool.Replace(cfg, h.transport, previous)
+	checks := next.Check(ctx)
+	states := map[string][]pool.State{}
+	failed := false
+	for _, model := range models {
+		replicas := next.Pools[model]
+		if replicas == nil {
+			continue
+		}
+		modelStates := replicas.Snapshot()
+		for i := range modelStates {
+			modelStates[i].Healthy = modelStates[i].Healthy && checks[model][i]
+			failed = failed || !modelStates[i].Healthy
+		}
+		states[model] = modelStates
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, states, errors.New("endpoint check timed out")
+	}
+	if strict && failed {
+		return nil, states, errors.New("one or more replicas of a changed model failed their health check; verify origin, health path and credential reference")
+	}
+	return func() { h.routing.Store(&routingSnapshot{cfg, next}) }, states, nil
+}
+
 // RunHealth probes the currently published pool set, retaining all old leases
 // until their requests finish without restarting admission or usage accounting.
 func (h *Handler) RunHealth(ctx context.Context) {

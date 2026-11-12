@@ -86,11 +86,11 @@ and the [pilot checklist](docs/PILOT.md).
 | Usage and operations | Usage history and timing; personal text, reasoning, tool and stream traces with user-controlled capture and 7-day default retention; user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
 | Deployment | Local Compose demo, real-backend examples, production pilot Compose, [Helm chart](charts/open-llm-router) and [Kubernetes manifests](deploy/k8s) |
 
-**Still planned:** creating logical models and
-aliases in Admin; editing group policies in Admin;
-and shared limits/live configuration across multiple router processes. Logical
-names, aliases and group defaults currently use YAML, while Keycloak settings use
-YAML/environment. See the [capability audit and milestones](docs/ADMIN_FEATURE_PLAN.md)
+**Still planned:** the Admin UI for routing revisions (the API and CLI exist);
+editing group policies in Admin;
+and shared limits/live configuration across multiple router processes. Group
+defaults use YAML; logical models, aliases and Keycloak settings can move from
+YAML/environment into database revisions. See the [capability audit and milestones](docs/ADMIN_FEATURE_PLAN.md)
 and [security review](docs/SECURITY_REVIEW.md) for scope and limitations.
 
 ## Quickstart (5 minutes)
