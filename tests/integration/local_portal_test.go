@@ -82,14 +82,15 @@ func TestLocalPortalFirstChangeSessionRotationAndLogout(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := f.browser(t)
-	resp, body := b.call(t, "GET", "/portal/login/local", "", "")
-	if resp.StatusCode != 200 || resp.Header.Get("Location") != "" || !strings.Contains(string(body), `"available":true`) {
+	resp, _ := b.call(t, "GET", "/portal/login/local", "", "")
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/portal/sign-in/local" {
 		t.Fatal("local route redirects to SSO")
 	}
 	restricted := b.localLogin(t, "admin", initialAdminPassword, 200)
 	if restricted.MaxAge != 600 {
 		t.Fatal("initial session is not short-lived")
 	}
+	var body []byte
 	for _, path := range []string{"/portal/api/me", "/portal/api/admin/users", "/portal/api/keys", "/portal/api/models"} {
 		resp, body = b.call(t, "GET", path, "", "")
 		if resp.StatusCode != 403 || !strings.Contains(string(body), "password_change_required") {

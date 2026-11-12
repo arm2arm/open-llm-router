@@ -23,6 +23,8 @@ export default defineConfig({
       [
         '/portal/api',
         '/portal/login',
+        '/portal/sign-in/keycloak',
+        '/portal/password',
         '/portal/callback',
         '/portal/logout',
       ].map((path) => [

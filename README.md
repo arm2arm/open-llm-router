@@ -95,8 +95,9 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 
 Protected local administrator credentials, bootstrap and lifecycle guards are available;
 see [setup and password rotation](docs/ADMIN_GUIDE.md#bootstrap-the-protected-local-administrator).
-Local password authentication works through the portal API without Keycloak;
-the browser sign-in and password-change forms are tracked separately in #74.
+The portal offers Keycloak and local sign-in, with a direct local route at
+`/portal/login/local` that works without Keycloak. First login requires replacing
+the initial password; later changes are available under **Account**.
 
 ## Development
 

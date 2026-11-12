@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowUpRight,
@@ -18,6 +18,7 @@ import {
   Trash2,
   BarChart3,
   ListOrdered,
+  UserRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,14 +42,24 @@ import {
 } from '@/components/ui/alert-dialog'
 import {
   api,
+  ApiError,
   redirect,
+  request,
   type Key,
   type Me,
   type Models,
   type Usage,
+  type Session,
 } from '@/lib/api'
 import { clients, snippet, type Client } from '@/lib/snippets'
 import { AdminPage, DailyChart, RequestsPage } from '@/pages'
+import {
+  AccountPage,
+  AuthFrame,
+  identityLabel,
+  PasswordForm,
+  SignIn,
+} from '@/auth'
 
 const number = (value: number) => new Intl.NumberFormat().format(value)
 const date = (value: string | null) =>
@@ -137,10 +148,87 @@ function CopyButton({
 }
 
 export default function App() {
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('me') })
+  const location = useLocation()
+  const session = useQuery({
+    queryKey: ['session'],
+    queryFn: () => request<Session>('auth/session'),
+  })
   const [dark, setDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches,
   )
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+  }, [dark])
+  // An explicit local route permits switching identities even when an existing
+  // SSO session is valid. Successful local login revokes that old session.
+  if (location.pathname === '/sign-in/local') return <SignIn />
+  if (session.isPending)
+    return (
+      <AuthFrame>
+        <p role="status">Loading your session…</p>
+      </AuthFrame>
+    )
+  if (session.error) {
+    if (session.error instanceof ApiError && session.error.status === 401) {
+      return location.pathname === '/sign-in' ||
+        location.pathname === '/sign-in/local' ? (
+        <SignIn />
+      ) : (
+        <Navigate to="/sign-in" replace />
+      )
+    }
+    return (
+      <AuthFrame>
+        <ErrorMessage
+          error={session.error}
+          retry={() => void session.refetch()}
+        />
+      </AuthFrame>
+    )
+  }
+  if (session.data.must_change_password)
+    return (
+      <AuthFrame>
+        <PasswordForm required />
+        <SignOut />
+      </AuthFrame>
+    )
+  return <Workspace session={session.data} dark={dark} setDark={setDark} />
+}
+
+function SignOut() {
+  const logout = useMutation({
+    mutationFn: async () => {
+      const result = await api<{ logout_url: string }>('/portal/logout', 'POST')
+      redirect(result.logout_url)
+    },
+  })
+  return (
+    <div className="mt-5">
+      <ErrorMessage error={logout.error} />
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={logout.isPending}
+        onClick={() => logout.mutate()}
+      >
+        <LogOut />
+        Sign out
+      </Button>
+    </div>
+  )
+}
+
+function Workspace({
+  session,
+  dark,
+  setDark,
+}: {
+  session: Session
+  dark: boolean
+  setDark: (value: boolean) => void
+}) {
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('me') })
   const [logoutError, setLogoutError] = useState<Error | null>(null)
   const logout = useMutation({
     mutationFn: async () => {
@@ -149,9 +237,6 @@ export default function App() {
     },
     onError: setLogoutError,
   })
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
   return (
     <div className="shell">
       <a
@@ -188,6 +273,10 @@ export default function App() {
             <Code2 size={18} />
             Connect
           </NavLink>
+          <NavLink to="/account" className="nav-link">
+            <UserRound size={18} />
+            Account
+          </NavLink>
           {me.data?.admin && (
             <NavLink to="/admin" className="nav-link">
               <ShieldCheck size={18} />
@@ -210,7 +299,7 @@ export default function App() {
             </div>
           </div>
           <span className="text-muted-foreground text-xs">
-            Private access to your models.
+            {identityLabel(session, me.data?.user.protected_admin)}
           </span>
         </div>
       </aside>
@@ -263,6 +352,14 @@ export default function App() {
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/connect" element={<Connect />} />
                 <Route path="/requests" element={<RequestsPage />} />
+                <Route
+                  path="/account"
+                  element={<AccountPage me={me.data} session={session} />}
+                />
+                <Route
+                  path="/password"
+                  element={<AccountPage me={me.data} session={session} />}
+                />
                 {me.data.admin && (
                   <Route
                     path="/admin"

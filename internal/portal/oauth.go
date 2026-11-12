@@ -32,6 +32,21 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if sso == nil {
 		return
 	}
+	h.startLogin(w, r, sso)
+}
+
+// Interactive sign-in always has a path back to local authentication when the
+// provider becomes unavailable between displaying and choosing the SSO action.
+func (h *Handler) browserLogin(w http.ResponseWriter, r *http.Request) {
+	sso := h.sso.Load()
+	if !h.safeCookies() || !h.ssoAvailable.Load() || sso == nil {
+		http.Redirect(w, r, "/portal/sign-in?sso=unavailable", http.StatusSeeOther)
+		return
+	}
+	h.startLogin(w, r, sso)
+}
+
+func (h *Handler) startLogin(w http.ResponseWriter, r *http.Request, sso *ssoProvider) {
 	base, err := url.Parse(h.cfg.Portal.BaseURL)
 	if err != nil {
 		unavailable(w)

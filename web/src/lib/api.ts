@@ -19,7 +19,19 @@ export function redirect(url: string) {
   window.location.assign(url)
 }
 
-export async function api<T>(
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code: string,
+  ) {
+    super(message)
+  }
+}
+
+// Authentication forms must display credential errors without starting a new
+// login navigation. Keep passwords out of query/mutation caches and storage.
+export async function request<T>(
   path: string,
   method = 'GET',
   body?: unknown,
@@ -35,19 +47,49 @@ export async function api<T>(
       body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
     },
   )
-  if (response.status === 401) {
-    redirect('/portal/login')
-    throw new Error('Your session has expired. Signing in…')
-  }
   if (!response.ok) {
     const error = await response.json().catch(() => null)
-    throw new Error(
-      error?.error?.message ?? 'The request failed. Please try again.',
+    const seconds = Number(response.headers.get('Retry-After'))
+    const retry =
+      response.status === 429 && seconds > 0 && seconds <= 3600
+        ? ` Try again in ${Math.ceil(seconds)} seconds.`
+        : ''
+    throw new ApiError(
+      (error?.error?.message ?? 'The request failed. Please try again.') +
+        retry,
+      response.status,
+      error?.error?.type ?? 'request_error',
     )
   }
   return response.status === 204
     ? (undefined as T)
     : (response.json() as Promise<T>)
+}
+
+export async function api<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+): Promise<T> {
+  try {
+    return await request<T>(path, method, body)
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 401) redirect('/portal/sign-in')
+      if (error.code === 'password_change_required')
+        redirect('/portal/password')
+    }
+    throw error
+  }
+}
+
+export type Session = {
+  auth_method: 'local' | 'oidc'
+  must_change_password: boolean
+}
+export type AuthMethods = {
+  local: { available: boolean; login_url: string; password_url: string }
+  oidc: { configured: boolean; available: boolean; login_url: string }
 }
 
 export type Limits = {
@@ -60,7 +102,13 @@ export type Limits = {
   strict_quota: boolean
 }
 export type Me = {
-  user: { id: string; username: string; email: string; groups: string[] }
+  user: {
+    id: string
+    username: string
+    email: string
+    groups: string[]
+    protected_admin: boolean
+  }
   limits: Limits
   admin: boolean
 }

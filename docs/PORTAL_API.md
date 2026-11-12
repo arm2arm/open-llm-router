@@ -11,11 +11,17 @@ dependencies return 503. No OIDC token is stored or returned to the browser.
 
 ## Login and logout
 
-- `GET /portal/api/auth` and `GET /portal/login/local`: public authentication metadata,
+- `GET /portal/api/auth`: public authentication metadata,
   with `local: {available, login_url, password_url}` and
   `oidc: {configured, available, login_url}`. No secret or account-existence information
-  is returned. The explicit local route never redirects to SSO; its GET currently
-  returns JSON, with browser forms tracked in #74.
+  is returned. The OIDC `login_url` points to the browser entry below.
+- `GET /portal/sign-in`: browser sign-in page, with Keycloak primary when configured
+  and a visible local form. Unavailable Keycloak is reported separately.
+- `GET /portal/login/local`: redirects locally to `/portal/sign-in/local`, a direct
+  browser local form that never forces SSO.
+- `GET /portal/sign-in/keycloak`: browser SSO entry; starts the existing OIDC flow
+  when available and returns to `/portal/sign-in?sso=unavailable` otherwise.
+  `GET /portal/login` retains its direct OIDC/JSON error behavior for API clients.
 - `POST /portal/login/local`: accepts `{"username":"admin","password":"…"}` from the
   configured Origin and Host. Returns `{"must_change_password":true|false}` and a new
   server-side session cookie, revoking the browser's old session and pending SSO challenge.
@@ -152,7 +158,10 @@ Members of a group with `admin: true` in the config and the protected local admi
 get `"admin": true` in `/portal/api/me` and these routes; everyone else gets 403.
 Membership and protected status are read from the database on each request. Protected
 authority does not grant inference model access; normal model policies still apply.
-Local session APIs work without Keycloak; browser sign-in/password forms remain in #74.
+Local session APIs and browser sign-in/password forms work without Keycloak.
+The browser gates workspace/Admin on completing a required first password change,
+labels the identity source and offers local rotation under **Account**. API
+authorization remains enforced on the server regardless of browser navigation.
 
 - `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this

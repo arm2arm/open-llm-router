@@ -17,8 +17,9 @@ no due dates or assignees have been set.
 | 2 | [M8 · Admin-managed Keycloak configuration](https://github.com/arm2arm/open-llm-router/milestone/10) | [#77](https://github.com/arm2arm/open-llm-router/issues/77) revisions/secrets; [#78](https://github.com/arm2arm/open-llm-router/issues/78) authentication settings; [#79](https://github.com/arm2arm/open-llm-router/issues/79) SSO activation/rollback; [#80](https://github.com/arm2arm/open-llm-router/issues/80) authorization freshness/group naming |
 | 3 | [M9 · Admin-managed endpoints and policies](https://github.com/arm2arm/open-llm-router/milestone/11) | [#81](https://github.com/arm2arm/open-llm-router/issues/81) routing API/runtime; [#82](https://github.com/arm2arm/open-llm-router/issues/82) endpoint/model UI; [#83](https://github.com/arm2arm/open-llm-router/issues/83) group-policy editor; [#84](https://github.com/arm2arm/open-llm-router/issues/84) administration history; [#85](https://github.com/arm2arm/open-llm-router/issues/85) integrated acceptance/docs |
 
-The #72 credential/bootstrap foundation and #73 local authentication APIs are
-implemented in this checkout. Continue with #74 for browser sign-in/password forms.
+The #72 credential/bootstrap foundation, #73 local authentication APIs and #74
+browser sign-in/password flows are implemented in this checkout. Continue with
+#75 for local user/key administration and #76 for recovery.
 Explicit cloud-provider adapters in delivery stage 4 below remain
 a future extension; these milestones cover existing compatible backends.
 Stage 5's authorization/audit/acceptance work is included in M8 and M9. The
@@ -50,7 +51,7 @@ additional evidence that the production pilot in #21 has been completed.
 | Local users and API keys | Yes, CLI/API-key authentication | Ordinary local users still have no password login; reserved administrator has credential storage and rotation |
 | Protected permanent local administrator | Yes (#72) | Migration 0004, transactional bootstrap, Argon2id, required first change, database guards |
 | Local password authentication and independent startup | Yes, JSON API (#73) | Migration 0005, restricted first-change sessions, rotation/revocation, throttling and OIDC retry; Keycloak absence/outage does not block local Admin |
-| Local sign-in/password forms and dual-login UI | No (#74) | Backend routes are ready; the React UI still redirects unauthenticated users toward `/portal/login` |
+| Local sign-in/password forms and dual-login UI | Yes (#74) | Keycloak primary action, direct local route, outage state, required first change, Account password rotation and identity-source labels |
 | Endpoint pools, credentials, weights and capacity | Yes, YAML plus restart | `config.Model`, `config.Replica`, `internal/pool` |
 | Endpoint/model creation and editing in Admin | No | `/admin/replicas` is GET-only; UI displays health/capacity |
 | Group model grants and default limits | Yes, YAML plus restart | `config.Group`, `policy.Resolve` |
@@ -93,7 +94,11 @@ Completed for #73: local JSON login/password/logout handlers, revision-bound
 sessions, fixed-window throttling, always-mounted portal routes and independent
 OIDC initialization/retry. Tests cover local-only startup, configured IdP outage,
 recovery, session fixation/expiry/revocation, CSRF and existing SSO/API-key flows.
-Browser forms, additional local users and recovery remain assigned to #74–#76.
+Completed for #74: browser local-only/dual login, first-change and Account password
+rotation, identity-source labels and session-specific logout. Browser tests cover
+local-only mode, an unreachable IdP, the bundled development Keycloak and denied
+Admin access for a regular local user. Additional local users and recovery remain
+assigned to #75–#76.
 
 - Add a local credential store keyed by user UUID, with a maintained password
   hashing implementation, per-password salt and calibrated work factor. Keep

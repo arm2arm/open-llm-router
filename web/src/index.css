@@ -100,6 +100,32 @@ pre {
   grid-template-columns: 232px minmax(0, 1fr);
   min-height: 100dvh;
 }
+.auth-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  max-width: none;
+  padding: 32px 20px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 480px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--background);
+  box-shadow: 0 12px 40px #12352b08;
+}
+.auth-card label {
+  font-size: 14px;
+  font-weight: 550;
+}
+.auth-link {
+  display: inline-block;
+  color: var(--primary);
+  text-decoration: underline;
+  font-size: 14px;
+}
 .sidebar {
   background: var(--background);
   border-right: 1px solid var(--border);

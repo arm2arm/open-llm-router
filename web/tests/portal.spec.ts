@@ -21,6 +21,17 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   })
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/portal/connect')
+  await expect(
+    page.getByRole('heading', { name: 'Sign in', exact: true }),
+  ).toBeVisible()
+  await expect(page.getByLabel('Local username', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Continue with Keycloak' }),
+  ).toHaveAttribute('data-variant', 'default')
+  await expect(
+    page.getByRole('button', { name: 'Sign in with local account' }),
+  ).toHaveAttribute('data-variant', 'outline')
+  await page.getByRole('button', { name: 'Continue with Keycloak' }).click()
   await expect(page.getByLabel('Username', { exact: true })).toBeVisible()
   await page.getByLabel('Username', { exact: true }).fill('staff')
   await page.getByLabel('Password', { exact: true }).fill('staff-dev-only')
@@ -28,6 +39,17 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   await expect(
     page.getByRole('heading', { name: 'API keys', exact: true }),
   ).toBeVisible()
+  await expect(
+    page.getByText('Keycloak account', { exact: true }),
+  ).toBeVisible()
+  await page.getByRole('link', { name: 'Account', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Password managed by Keycloak' }),
+  ).toBeVisible()
+  await expect(
+    page.getByLabel('Current password', { exact: true }),
+  ).toHaveCount(0)
+  await page.getByRole('link', { name: 'API keys', exact: true }).click()
 
   const label = `<img src=x onerror=alert(1)> ${Date.now()}`
   await page.getByRole('button', { name: 'Create key', exact: true }).click()
@@ -202,5 +224,44 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   await expect(page.getByRole('button', { name: /logout/i })).toBeVisible()
   await page.getByRole('button', { name: /logout/i }).click()
   await page.goto('/portal/keys')
-  await expect(page.getByLabel('Username', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Continue with Keycloak' }),
+  ).toBeVisible()
+})
+
+test('development realm admin is identified as a Keycloak account', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/')
+  await page.getByRole('link', { name: 'Sign in', exact: true }).click()
+  await page.getByRole('button', { name: 'Continue with Keycloak' }).click()
+  await page.getByLabel('Username', { exact: true }).fill('admin')
+  await page.getByLabel('Password', { exact: true }).fill('admin-dev-only')
+  await page.getByRole('button', { name: 'Sign In', exact: true }).click()
+  await expect(
+    page.getByRole('link', { name: 'Admin', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText('Keycloak account', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByText('Protected local administrator', { exact: true }),
+  ).toHaveCount(0)
+  await page.goto('/portal/login/local')
+  await expect(
+    page.getByRole('heading', {
+      name: 'Sign in with a local account',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(page.getByLabel('Local username', { exact: true })).toBeVisible()
+  expect(
+    (
+      await context.request.post('/portal/logout', {
+        headers: { Origin: new URL(page.url()).origin },
+        data: {},
+      })
+    ).status(),
+  ).toBe(200)
 })
