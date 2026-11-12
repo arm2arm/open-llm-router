@@ -54,8 +54,8 @@ capture, and choose 1–30 days of retention (7 days by default).
 
 | Request observability | Conversation inspection |
 |---|---|
-| [![My requests showing logging controls, seven-day retention, request types, status and timings](docs/images/portal-requests.png)](docs/REQUEST_TRACING.md) | [![Conversation trace with input messages, tool arguments and results, and assistant reasoning](docs/images/request-trace-conversation.png)](docs/REQUEST_TRACING.md#inspect-a-conversation) |
-| Enable or disable detailed logging, choose retention, and find streaming, failed or traced calls. | Inspect input/output text, thinking and tool calls; switch to the [stream timeline](docs/REQUEST_TRACING.md#replay-stream-events) or [request details](docs/REQUEST_TRACING.md#correlate-request-details). |
+| [![My requests with live updates, logging controls and an agent run grouped with its call timeline](docs/images/portal-requests.png)](docs/REQUEST_TRACING.md) | [![Conversation trace with input messages, tool arguments and results, and assistant reasoning](docs/images/request-trace-conversation.png)](docs/REQUEST_TRACING.md#inspect-a-call) |
+| Watch requests live, group agent runs, and find streaming, failed, tool-calling or traced calls. | Inspect text, thinking and [tool calls paired with results](docs/REQUEST_TRACING.md#inspect-a-call), the timing breakdown, the stream timeline and the [raw request as sent and forwarded](docs/REQUEST_TRACING.md#inspect-a-call). |
 
 *Observability examples use synthetic requests through the mock backends. The
 404 row is an intentional unknown-model request; timings are illustrative.*

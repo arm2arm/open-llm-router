@@ -5,11 +5,9 @@ OIDC access token, or by a trusted application on your behalf. Detailed logging 
 **enabled by default**, including for existing accounts. Retention defaults to
 **7 days**; each user can choose **1–30 days** and save their own preference.
 
-![My requests with detailed logging enabled, seven-day retention, summary cards and a searchable request table](images/portal-requests.png)
-
-*The real portal with disposable demo accounts and mock-backed requests. The 404
-row deliberately requests an unknown model. All content and usage are synthetic;
-timings are not a performance benchmark. [Capture workflow](images/README.md).*
+*Screenshots below are the real portal with disposable demo accounts and mock-backed
+requests. All content and usage are synthetic; timings are not a performance
+benchmark. [Capture workflow](images/README.md).*
 
 ## Use the trace viewer
 
@@ -67,34 +65,59 @@ can have the same timestamp. They are not provider token-generation timestamps.
 Interrupted calls keep their partial, complete SSE events and have `aborted`
 status; an SSE error has `error` status.
 
-## Inspect a conversation
+## Follow an agent run
+
+![My requests grouping an agent run: a header with calls, tool calls, total and model time, tokens, and a bar per call over time](images/portal-requests.png)
+
+With **Group runs** on (the default; `?group=off` lists every call flat), the calls of
+one conversation are grouped under an **Agent run** header: number of calls and tool
+calls, time from the first request to the end of the last versus time spent in the
+model, tokens and models. The bar below places every call on the run's time axis; the
+gaps are time spent in your client, typically executing tools. Select a bar to open
+that call; collapse a run with its arrow.
+
+Calls belong to one run when they share the client's `X-Session-Id` header or, without
+it, the same system prompt and first user message while the input keeps growing (an
+agent loop appends; repeating one prompt starts a new run each time). Send
+`X-Session-Id` from your agent for exact grouping.
+
+![Overview of the second call of a run: call 2 of 2, one tool result added since the previous call, with previous and next call buttons](images/request-trace-run.png)
+
+In a grouped call, **Overview** shows its position (*Call 2 of 2*), what it added since
+the previous call (for example *1 tool result*) and **Previous call** / **Next call**.
+**Conversation** marks those messages *new in this call* and the resent previous
+response as *previous response*, and keeps them visible when earlier rounds are
+folded. In **Tools**, a call the model requested links to the next call, where your
+client sent its result.
+
+## Inspect a call
+
+![Overview tab: timing, tokens and result cards, timing bar, routing attempt and router changes, request identifiers and parameters](images/request-trace-overview.png)
+
+**Overview** answers where the time went and what the router did. Use the full
+**Request ID** to correlate the call with the response's `X-Request-Id` header and
+JSON server logs. **Expires** shows when its content becomes inaccessible.
 
 ![Conversation tab showing input messages, a tool call and result, and assistant reasoning and a new tool call](images/request-trace-conversation.png)
 
-**Input** contains the messages submitted by the client, including earlier tool
-calls and their results. **Output** contains the model's response. Expand
-**Reasoning** to inspect thinking emitted by the provider. Tool arguments are
-shown as structured JSON. In this mock example, the response requests another
-`get_weather` call; the client would execute it and send its result in a later
-request.
+**Conversation** shows what the client submitted, including earlier tool calls and
+their results, and what the model returned. Expand **Reasoning** to read thinking
+emitted by the provider. In this mock example, the response requests another
+`get_weather` call; the client would execute it and send its result in a later request.
 
-## Replay stream events
+![Tools tab pairing each tool call with its result, and a declared tool with its JSON schema](images/request-trace-tools.png)
 
-![Stream events tab showing relative arrival times, reasoning deltas, tool argument fragments and completion](images/request-trace-events.png)
+**Tools** pairs every call with its result and shows each declared tool's schema.
 
-The timeline preserves the observed order of reasoning, text and tool argument
-fragments. Use the event filter to focus on one type. The example shows reasoning
-followed by a tool call and completion; event times are relative to request start.
-Open this tab after the request completes to inspect how the response arrived.
+![Timeline tab with reasoning, tool argument and completion segments on a time axis](images/request-trace-timeline.png)
 
-## Correlate request details
+**Timeline** preserves the observed order of reasoning, text and tool argument
+fragments. Event times are relative to request start.
 
-![Details tab showing the full request ID, operation, expiry and selected request parameters](images/request-trace-details.png)
+![Raw tab showing the body forwarded to the model server as a collapsible JSON tree](images/request-trace-raw.png)
 
-Use the full **Request ID** to correlate a call with the response's `X-Request-Id`
-header and JSON server logs. **Expires** shows when this content becomes
-inaccessible. Request parameters show selected fields such as the public model,
-tool names, streaming flag and maximum output tokens.
+**Raw** shows exactly what was sent: the client's body, the body forwarded upstream
+with the router's changes, and the response, with omitted payloads as markers.
 
 ## Privacy and retention
 

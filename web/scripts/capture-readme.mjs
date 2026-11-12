@@ -267,11 +267,12 @@ groups:
 
   // These are genuine native API calls through the disposable router. Capture
   // only the resulting portal views, never the key issuance dialog or headers.
-  const infer = async (path, data, expectedStatus = 200) => {
+  const infer = async (path, data, expectedStatus = 200, headers = {}) => {
     const response = await context.request.post(`${base}${path}`, {
       headers: {
         Authorization: `Bearer ${demoKey}`,
         'X-Mock-Token-Delay': '60ms',
+        ...headers,
       },
       data,
     })
@@ -363,6 +364,78 @@ groups:
     ],
   })
   traceIDs.push(toolTrace)
+  // A two-call agent loop in one client session: the model asks for a tool,
+  // the client sends the result back, the model answers.
+  const runTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'get_forecast',
+        description: 'Hourly forecast for a site',
+        parameters: {
+          type: 'object',
+          properties: {
+            site: { type: 'string' },
+            hours: { type: 'integer', minimum: 1, maximum: 48 },
+          },
+          required: ['site'],
+        },
+      },
+    },
+  ]
+  const runHistory = [
+    {
+      role: 'system',
+      content: 'You plan telescope nights. Use tools; answer in **Markdown**.',
+    },
+    { role: 'user', content: 'Is tonight good for observing from Potsdam?' },
+  ]
+  const session = { 'X-Session-Id': 'demo-observing-plan' }
+  traceIDs.push(
+    await infer(
+      '/v1/chat/completions',
+      {
+        model: 'chat-model',
+        stream: true,
+        tools: runTools,
+        messages: runHistory,
+      },
+      200,
+      session,
+    ),
+  )
+  const runTrace = await infer(
+    '/v1/chat/completions',
+    {
+      model: 'chat-model',
+      stream: true,
+      tools: runTools,
+      messages: [
+        ...runHistory,
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_forecast',
+              type: 'function',
+              function: {
+                name: 'get_forecast',
+                arguments: '{"site":"Potsdam","hours":12}',
+              },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'call_forecast',
+          content: '{"cloud_cover":0.1,"seeing_arcsec":1.4,"moon":"waning"}',
+        },
+      ],
+    },
+    200,
+    session,
+  )
+  traceIDs.push(runTrace)
   await expect
     .poll(async () => {
       const response = await context.request.get(`${base}/portal/api/requests`)
@@ -389,21 +462,39 @@ groups:
     .getByRole('button', { name: `Inspect request ${toolTrace}`, exact: true })
     .click()
   const dialog = page.getByRole('dialog', { name: 'Request trace' })
+  await expect(dialog.getByRole('heading', { name: 'Routing' })).toBeVisible()
+  await shot('request-trace-overview')
+  await dialog.getByRole('tab', { name: /^Conversation/ }).click()
   await expect(
     dialog.getByText('Tool call · get_weather', { exact: true }),
   ).toHaveCount(2)
-  await dialog.locator('.trace-reasoning summary').click()
+  await dialog.locator('.trace-reasoning summary').first().click()
   await expect(dialog).toContainText('Considering the request.')
   await expect(dialog).toContainText('rain_probability')
   await shot('request-trace-conversation')
-  await dialog.getByRole('tab', { name: /^Stream events/ }).click()
-  await expect(dialog.locator('.trace-timeline')).toContainText('get_weather')
-  await expect(dialog.locator('.trace-timeline')).toContainText('Considering')
-  await shot('request-trace-events')
-  await dialog.getByRole('tab', { name: 'Details', exact: true }).click()
-  await expect(dialog).toContainText(toolTrace)
-  await expect(dialog).toContainText('max_tokens')
-  await shot('request-trace-details')
+  await dialog.getByRole('tab', { name: /^Tools/ }).click()
+  await expect(dialog.locator('.trace-run').first()).toContainText(
+    'get_weather',
+  )
+  await dialog.locator('.trace-declared summary').click()
+  await shot('request-trace-tools')
+  await dialog.getByRole('tab', { name: /^Timeline/ }).click()
+  await expect(dialog.locator('.trace-segments')).toContainText('reasoning')
+  await dialog.locator('.trace-segments details summary').first().click()
+  await shot('request-trace-timeline')
+  await dialog.getByRole('tab', { name: /^Raw/ }).click()
+  await dialog.getByRole('button', { name: 'Forwarded upstream' }).click()
+  await expect(dialog.locator('.json-tree-body')).toContainText('messages')
+  await shot('request-trace-raw')
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await page
+    .getByRole('button', { name: `Inspect request ${runTrace}`, exact: true })
+    .click()
+  await expect(dialog.locator('.trace-run-nav')).toContainText(
+    'Call 2 of 2 in this conversation',
+  )
+  await expect(dialog.locator('.trace-run-nav')).toContainText('1 tool result')
+  await shot('request-trace-run')
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
 
   if (!observabilityOnly) {
