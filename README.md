@@ -65,6 +65,19 @@ docker compose exec -T router olr admin key create -user "$user_id" -label lapto
 To use real models, point `pool` URLs in a config file at vLLM, SGLang or Ollama servers
 ([docs/CLIENTS.md](docs/CLIENTS.md), [config.real.example.yaml](config.real.example.yaml)).
 
+For Ollama running on the same laptop as Docker Desktop, set these values in the root
+`.env` file, choosing a model already installed in `ollama list`:
+
+```dotenv
+OLR_CONFIG_FILE=../../config.ollama.example.yaml
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen3.8:27b-mlx
+```
+
+Run `docker compose up -d --wait router` to apply them. The portal, login and access
+policies stay available; `chat-model` and the selected Ollama model name both route to
+that real model. Config paths are relative to `deploy/compose`; absolute paths also work.
+
 ## Documentation
 
 | Document | Content |
