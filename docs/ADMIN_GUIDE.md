@@ -32,7 +32,7 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
 | Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
-| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database): **Admin → Authentication** or `olr admin settings` | Router restart/recreation after activation |
+| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database): **Admin → Authentication** or `olr admin settings` | At once on the router where Admin activates it; other routers on restart or **Apply** |
 | Test a Keycloak connection and sign-in before using it | **Admin → Authentication** connection checks and test sign-in | Immediately; nothing changes until activation |
 | Configure group policies from the Admin page | **Not implemented** | See the feature plan |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
@@ -181,8 +181,8 @@ hashes; protect them as secrets.
 The SSO connection (issuer, back-channel URL, portal client ID and secret, API
 audience, claim names, required claim, sync client ID/secret and interval) can
 move from YAML/environment into PostgreSQL revisions with `olr admin settings`.
-Use **Admin → Authentication** in the portal or the CLI below; live switching
-without a restart is [#79](https://github.com/arm2arm/open-llm-router/issues/79).
+Use **Admin → Authentication** in the portal (activation applies at once) or
+the CLI below (routers apply its activations when they restart or on **Apply**).
 `OLR_DATABASE_URL`, bootstrap and encryption keys, the listener, `PORTAL_BASE_URL`,
 cookie settings, models and groups are never managed here.
 
@@ -298,8 +298,35 @@ so. A Keycloak session cannot reconfigure its own identity provider.
    draft and returns you to the Admin page. No router user or session is created;
    your local session is kept. Register the redirect URI above on the draft's
    client first; sign in as a representative user of the realm.
-5. Activate with `olr admin settings activate` and recreate the router (Admin
-   activation and live switching are [#79](https://github.com/arm2arm/open-llm-router/issues/79)).
+5. **Activate draft** once no check failed and the test sign-in passed (turning
+   SSO off needs neither). The router first connects to the new provider; if it
+   is unreachable, nothing changes. Then the database activation and the switch
+   happen together: the portal's login client, API-token verification and group
+   sync move to the new revision, and the old clients and sync job stop. No
+   restart or image rebuild is needed.
+
+### Activate, roll back and apply
+
+| Action | Effect |
+|---|---|
+| **Activate draft** | Requires passed checks and test sign-in for an SSO-enabled draft and a reachable provider. Applies at once on this router |
+| **Roll back** (history) | Re-activates a previously active revision without new checks, even while that provider is down; SSO then reports unavailable and retries every 10 seconds |
+| **Apply active revision to this router** | Shown when this router runs something else, for example after `olr admin settings activate` or a rollback on another router |
+
+Other router processes apply a new active revision when they restart or when
+**Apply** is used on their own Admin page. Local sign-in, recovery, API keys and
+`/readyz` never depend on the SSO configuration; the page reports SSO health
+separately as *Keycloak reachable/unavailable*.
+
+**Changing the issuer** starts a new identity namespace. Router accounts are keyed
+by issuer and subject and are never linked by email or username, so the same
+person gets a new account under the new issuer. On the switch, pending SSO logins
+are discarded and SSO sessions of other issuers stop working (sessions are checked
+against the current issuer). Accounts of previous issuers keep their UUIDs, usage
+and API keys, but group sync no longer updates or disables them: the page lists
+them under *Accounts of previous identity providers*. Disable those users under
+**Users** when they should lose access. Rolling back to the previous issuer makes
+its accounts and sessions usable again.
 
 Failed checks name the problem without showing secrets or provider responses
 (for example *the provider rejected the portal client ID or secret*). Checks and

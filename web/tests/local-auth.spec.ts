@@ -72,11 +72,11 @@ async function startFixture(
   sql('olr', `CREATE DATABASE ${database}`)
   // The authentication fixture uses the bundled development Keycloak through
   // its internal back-channel URL, with its public development secrets.
-  const keycloak = suffix === 'authentication'
+  const keycloak = suffix === 'authentication' || suffix === 'activation'
   const keycloakPort = process.env.KEYCLOAK_PORT ?? '8081'
   const oidc = outage
     ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n'
-    : keycloak
+    : suffix === 'authentication'
       ? `oidc:\n  issuer: http://localhost:${keycloakPort}/realms/olr-dev\n  portal_client_id: olr-portal\n  audience: olr-api\n`
       : ''
   const keycloakEnv = keycloak
@@ -166,6 +166,7 @@ let administration: string
 let endpointAdministration: string
 let tracing: string
 let authentication: string
+let activation: string
 test.beforeAll(async () => {
   test.setTimeout(60_000)
   local = await startFixture(false)
@@ -174,6 +175,7 @@ test.beforeAll(async () => {
   endpointAdministration = await startFixture(false, 'endpoints')
   tracing = await startFixture(false, 'tracing')
   authentication = await startFixture(false, 'authentication')
+  activation = await startFixture(false, 'activation')
 })
 test.afterAll(() => {
   for (const fixture of fixtures.reverse()) {
@@ -1254,5 +1256,115 @@ test('administrator imports, checks and drafts Keycloak connection settings', as
     .getByRole('button', { name: 'Discard draft', exact: true })
     .click()
   await expect(panel).not.toContainText('Draft revision 2')
+  expect(errors).toEqual([])
+})
+
+test('administrator applies and rolls back authentication settings without a restart', async ({
+  page,
+  context,
+  browser,
+}) => {
+  // This fixture's file configures no SSO and its environment only the
+  // client secrets, so the database can become the only source of the rest.
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const fixture = fixtures.find((fixture) => fixture.base === activation)!
+  const keycloakPort = process.env.KEYCLOAK_PORT ?? '8081'
+  const methods = async () =>
+    (await (await context.request.get(`${activation}/portal/api/auth`)).json())
+      .oidc as { configured: boolean; available: boolean }
+  const settings = async () =>
+    (await (
+      await context.request.get(
+        `${activation}/portal/api/admin/settings/authentication`,
+      )
+    ).json()) as { settings: { version: number } }
+  await page.goto(`${activation}/portal/login/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  const panel = page.getByRole('region', {
+    name: 'Authentication settings',
+    exact: true,
+  })
+  const status = panel.getByTestId('authentication-runtime')
+  await panel.getByRole('button', { name: 'Import current settings' }).click()
+  await expect(panel).toContainText('Database — active revision 1')
+  // Importing does not change what this router runs until it is applied.
+  await panel
+    .getByRole('button', { name: 'Apply active revision to this router' })
+    .click()
+  await expect(status).toContainText('revision 1 · local sign-in only')
+
+  // Draft the bundled Keycloak and check it.
+  const draft = panel.getByRole('form', { name: 'Edit authentication draft' })
+  await draft
+    .getByLabel('Enable single sign-on (local sign-in always stays available)')
+    .check()
+  await draft
+    .getByLabel('Issuer URL', { exact: true })
+    .fill(`http://localhost:${keycloakPort}/realms/olr-dev`)
+  await draft
+    .getByLabel('Back-channel URL', { exact: true })
+    .fill('http://keycloak:8080/realms/olr-dev')
+  await draft.getByLabel('Portal client ID', { exact: true }).fill('olr-portal')
+  await draft.getByLabel('API audience', { exact: true }).fill('olr-api')
+  await draft.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(panel).toContainText('Draft revision 2')
+  const checks = panel.getByRole('form', { name: 'Run connection checks' })
+  await checks.getByLabel('Test service client ID').fill('olr-service')
+  await checks
+    .getByLabel('Test service client secret')
+    .fill('olr-service-dev-only')
+  await checks.getByRole('button', { name: 'Run checks', exact: true }).click()
+  await expect(
+    panel
+      .getByRole('list', { name: 'Check results' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Discovery' }),
+  ).toContainText('passed')
+  // Without a test sign-in, Admin activation stays disabled.
+  await expect(
+    panel.getByRole('button', { name: 'Activate draft', exact: true }),
+  ).toBeDisabled()
+
+  // An operator activates with the CLI; Admin applies it live.
+  const { settings: current } = await settings()
+  docker([
+    'exec',
+    fixture.container,
+    '/usr/local/bin/olr',
+    'admin',
+    'settings',
+    'activate',
+    '-expect-version',
+    String(current.version),
+    '-revision',
+    '2',
+  ])
+  await page.reload()
+  await panel
+    .getByRole('button', { name: 'Apply active revision to this router' })
+    .click()
+  await expect(status).toContainText('revision 2')
+  await expect.poll(async () => (await methods()).available).toBe(true)
+  await page.reload()
+  await expect(status).toContainText('revision 2 · Keycloak reachable')
+  // The sign-in page now offers Keycloak, without a restart.
+  const visitor = await browser.newContext()
+  const signInPage = await visitor.newPage()
+  await signInPage.goto(`${activation}/portal/sign-in`)
+  await expect(
+    signInPage.getByRole('button', { name: 'Continue with Keycloak' }),
+  ).toBeEnabled()
+  await visitor.close()
+
+  // Roll back to local sign-in only; administration keeps working.
+  await panel
+    .getByRole('button', { name: 'Roll back to revision 1', exact: true })
+    .click()
+  await expect(status).toContainText('revision 1 · local sign-in only')
+  expect((await methods()).configured).toBe(false)
   expect(errors).toEqual([])
 })

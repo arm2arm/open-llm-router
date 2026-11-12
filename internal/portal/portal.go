@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,10 +37,7 @@ type Handler struct {
 	cfg           *config.Config
 	pool          *pgxpool.Pool
 	limits        *limits.Manager
-	sso           atomic.Pointer[ssoProvider]
-	ssoAvailable  atomic.Bool
-	cancel        context.CancelFunc
-	done          chan struct{}
+	ssoState      atomic.Pointer[ssoState]
 	passwordSlots chan struct{}
 	mux           *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
@@ -49,22 +47,24 @@ type Handler struct {
 	Endpoints *endpoints.Service
 	// Settings manages authentication settings; SettingsRuntime is what this
 	// process loaded at startup.
-	Settings        *settings.Service
-	SettingsRuntime settings.Snapshot
-	keyCipher       *auth.KeyCipher
+	Settings     *settings.Service
+	AuthServices AuthServices
+	runtime      atomic.Pointer[settings.Snapshot]
+	authMu       sync.Mutex // serializes authentication activation
+	keyCipher    *auth.KeyCipher
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), done: make(chan struct{}), passwordSlots: make(chan struct{}, 2)}
+	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), passwordSlots: make(chan struct{}, 2)}
 	var err error
 	h.keyCipher, err = auth.LoadKeyCipher(os.Getenv)
 	if err != nil {
 		return nil, err
 	}
-	h.startSSO()
+	h.ssoState.Store(h.startSSO(cfg.OIDC, cfg.OIDCClientSecret, nil))
 	h.mux.HandleFunc("GET /portal/login", h.login)
 	h.mux.HandleFunc("GET /portal/login/local", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/portal/sign-in/local", http.StatusSeeOther)
@@ -114,6 +114,9 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/discard", h.settingsAdmin(h.discardAuthenticationDraft))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/checks", h.settingsAdmin(h.checkAuthentication))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/test-sign-in", h.settingsAdmin(h.startTestSignIn))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/activate", h.settingsAdmin(h.activateAuthentication))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/rollback", h.settingsAdmin(h.rollbackAuthentication))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/apply", h.settingsAdmin(h.applyAuthentication))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {
@@ -128,7 +131,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	return h, nil
 }
 
-func (h *Handler) Close() { h.cancel(); <-h.done }
+func (h *Handler) Close() { h.current().stop() }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")

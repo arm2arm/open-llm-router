@@ -548,19 +548,24 @@ func (s *Service) lockedState(ctx context.Context, tx pgx.Tx, domain string, exp
 }
 
 // Activate makes the current draft the active revision after checking it
-// again. A refused activation records why and leaves the active revision.
-// Routers apply the active revision when they start.
-func (s *Service) Activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor) (View, error) {
-	return s.activate(ctx, domain, expected, revision, actor, "activate")
+// again. With requireChecks, a draft that enables SSO must also have passed
+// its connection checks and a test sign-in. A refused activation records why
+// and leaves the active revision. Routers apply the active revision when they
+// start, or at once when activated from their Admin page.
+func (s *Service) Activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, requireChecks bool) (View, error) {
+	return s.activate(ctx, domain, expected, revision, actor, "activate", requireChecks)
 }
+
+// errChecksRequired explains why an unchecked draft cannot be activated.
+const errChecksRequired = "run the connection checks (none may fail) and a successful test sign-in on this draft before activating it"
 
 // Rollback re-activates a previously active revision after checking it again.
 // A pending draft is kept.
 func (s *Service) Rollback(ctx context.Context, domain string, expected, revision int64, actor audit.Actor) (View, error) {
-	return s.activate(ctx, domain, expected, revision, actor, "rollback")
+	return s.activate(ctx, domain, expected, revision, actor, "rollback", false)
 }
 
-func (s *Service) activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, kind string) (View, error) {
+func (s *Service) activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, kind string, requireChecks bool) (View, error) {
 	err := s.change(ctx, domain, audit.Event{Action: "settings." + kind, Actor: actor, Revision: revision}, func(tx pgx.Tx, event *audit.Event) error {
 		st, err := s.lockedState(ctx, tx, domain, expected)
 		if err != nil {
@@ -596,6 +601,9 @@ func (s *Service) activate(ctx context.Context, domain string, expected, revisio
 		event.Details = map[string]any{"previous_revision": st.active, "changed": changed(active.doc, row.doc)}
 		if !result.Valid {
 			return &ValidationError{result.Problems}
+		}
+		if requireChecks && row.doc.Enabled && !row.Checks.Passed() {
+			return &ValidationError{[]string{errChecksRequired}}
 		}
 		draft := any(st.draft)
 		if kind == "activate" || st.draft == 0 {

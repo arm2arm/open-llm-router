@@ -155,7 +155,7 @@ func settingsCommand(args []string, out, errout io.Writer) error {
 	case "discard":
 		view, err = service.Discard(ctx, *domain, expected, actor)
 	case "activate":
-		view, err = service.Activate(ctx, *domain, expected, revision, actor)
+		view, err = service.Activate(ctx, *domain, expected, revision, actor, false)
 	case "rollback":
 		view, err = service.Rollback(ctx, *domain, expected, revision, actor)
 	}
