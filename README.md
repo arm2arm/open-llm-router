@@ -42,8 +42,7 @@ user's access and limits, selects a healthy replica with free capacity, and maps
 the name to the backend's model. It forwards the native API payload and streamed
 events, including thinking, tool calls and image inputs when the backend supports
 them. The router records usage metadata and timing. [Personal request tracing](docs/REQUEST_TRACING.md)
-is enabled by default: users can inspect text, reasoning, tools and stream events, disable
-capture, and choose 1–30 days of retention (7 days by default).
+is off by default: after site approval and personal opt-in users can inspect text, reasoning, tools and stream events and choose 1–30 days of retention (7 days by default).
 
 ## A look inside
 
@@ -80,7 +79,7 @@ and the [pilot checklist](docs/PILOT.md).
 | Area | Available today |
 |---|---|
 | Routing | OpenAI and Anthropic native APIs; SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
-| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; routing revisions for models, endpoints and aliases in Admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
+| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; routing revisions for models, endpoints and aliases in Admin; local user management; expiring hash-only per-user keys with site lifetime/count limits |
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
 | Usage and operations | Usage history and timing; personal text, reasoning, tool and stream traces with user-controlled capture and 7-day default retention; user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |

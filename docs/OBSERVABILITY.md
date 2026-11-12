@@ -106,7 +106,7 @@ it is false by default. It never adds user IDs to metric labels.
 
 ## Personal content traces
 
-**My requests** provides opt-out content tracing with a 7-day default lifetime and
+**My requests** provides opt-in content tracing (site-wide disabled by default) with a 7-day default lifetime and
 user-selected 1–30 day retention. It stores private message, reasoning, tool and stream
 event detail in Postgres. It does not send content to OTLP, metrics or server logs.
 See [REQUEST_TRACING.md](REQUEST_TRACING.md) for controls, capture limits and performance

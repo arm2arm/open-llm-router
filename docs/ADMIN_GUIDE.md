@@ -11,8 +11,8 @@ working functionality.
 
 ## Personal request tracing
 
-Every account has **My requests → Detailed logging**, enabled by default with a 7-day
-lifetime. Users may disable capture, choose 1–30 days, inspect conversation/reasoning/tool
+Every account has **My requests → Detailed logging**, disabled by default. Site approval (`content_tracing.enabled`) and individual opt-in
+are required. Retention defaults to 7 days; users may disable capture, choose 1–30 days, inspect conversation/reasoning/tool
 content and stream events, or delete their traces. Admin access does not permit reading
 other users' content. Publish the updated [privacy notice](PRIVACY.md), protect Postgres
 and backups as content-bearing storage, and see [the tracing guide](REQUEST_TRACING.md)

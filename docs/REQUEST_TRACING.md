@@ -2,7 +2,7 @@
 
 Open **My requests** (`/portal/requests`) to inspect LLM calls made with your keys,
 OIDC access token, or by a trusted application on your behalf. Detailed logging is
-**enabled by default**, including for existing accounts. Retention defaults to
+**disabled by default**. The operator must enable `content_tracing.enabled` and each user must opt in. Retention defaults to
 **7 days**; each user can choose **1–30 days** and save their own preference.
 
 *Screenshots below are the real portal with disposable demo accounts and mock-backed
@@ -214,3 +214,53 @@ Reverse proxies must not buffer `text/event-stream` responses (the router sends
 See [PORTAL_API.md](PORTAL_API.md#personal-trace-settings-and-content) for the API,
 [PRIVACY.md](PRIVACY.md) for the notice template, and
 [OBSERVABILITY.md](OBSERVABILITY.md) for metadata-only metrics, logs and OTLP spans.
+
+## Site approval, emergency stop and storage acceptance
+
+`content_tracing.enabled` defaults to false and overrides saved user preferences. Set it
+true only after the data owner approves retention and the privacy notice is published.
+Users must then explicitly enable Detailed logging. To stop capture site-wide, set false
+and restart every router. The service gate prevents buffer copies and writes even for
+opted-in users, and invalidates in-flight captures when toggled. Preferences survive
+restart. Migration disables legacy implicit consent (`trace_generation=0`) and changes
+the database default; explicitly saved preferences remain, subject to the site gate.
+Existing traces are not erased by disabling; use deletion/retention for that purpose.
+
+The content tables (`request_traces`) are separate from usage accounting tables but
+share the application database. Treat the router database owner as a content custodian.
+Create separate read-only roles for accounting reports and grant only `usage` and
+`usage_daily`; never grant schema-wide SELECT, database-owner membership or trace-table
+access to reporting/monitoring roles. Restrict trace administration to approved data
+custodians. Use a dedicated encrypted volume/tablespace and content backup policy where
+required; a deployment needing a separate database must keep tracing disabled until
+that storage isolation is provisioned. Application-level per-content encryption is not
+implemented; provision a separate KMS key for content volumes/snapshots/backups.
+
+Before enabling, record and validate on the actual deployment:
+
+1. Query `has_table_privilege('accounting_report','request_traces','SELECT')` and verify
+   false; verify its intended SELECT on `usage` succeeds. Exercise API owner isolation.
+2. Verify PostgreSQL TLS peer verification, database/volume encryption, snapshot and
+   backup encryption with the approved KMS key; retain provider evidence and key policies.
+3. Insert a synthetic trace, erase it via the portal, verify the live row is gone; set a
+   short expiry and verify retention removes it. A DELETE does not erase WAL, replicas,
+   filesystem remnants or existing backups. Validate backup expiry and restore behavior.
+4. Restore a disposable backup, run retention before serving traffic, and replay approved
+   erasure records newer than the backup. Verify no expired/erased content is exposed.
+5. Publish the site-specific [privacy notice](PRIVACY.md), obtain data-owner approval,
+   and retain evidence. Repository tests cannot attest cloud disk or backup settings.
+
+## Supplemental redaction and monitoring
+
+Built-in redaction covers common bearer/API-key patterns and password/token assignments.
+`content_tracing.redact_patterns` accepts up to 32 RE2 expressions (1024 bytes each),
+matched against all persisted string values, including previews, tools and errors.
+Example: `redact_patterns: ['EMP-[0-9]{8}']`. Matches become `[REDACTED]`. Review patterns
+with synthetic examples; heuristic redaction is supplementary and cannot make arbitrary
+prompt content safe. Redaction never changes the forwarded inference payload.
+
+Prometheus exports `olr_content_trace_writes_total`, `olr_content_trace_failures_total`,
+`olr_content_trace_deletions_total`, `olr_content_trace_dropped_total`, and
+`olr_content_trace_retention_backlog` without user/request/content labels. Alert on
+failures or sustained backlog. Retention runs every 15 seconds in batches of 1000;
+expired traces are inaccessible while awaiting physical deletion.
