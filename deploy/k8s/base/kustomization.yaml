@@ -1,0 +1,24 @@
+# Production base: one router Deployment with Service and Ingress. Postgres
+# is external. Copy this directory into the site's private deployment
+# repository as an overlay's base, or reference it remotely, and supply:
+#   - config.yaml       the router config (see config.example.yaml)
+#   - router.env        non-secret settings (OIDC_ISSUER, PORTAL_BASE_URL, ...)
+#   - Secret olr-secrets with OLR_DATABASE_URL, OIDC_PORTAL_CLIENT_SECRET,
+#     OLR_METRICS_TOKEN and any backend tokens (docs/RUNBOOK.md#kubernetes)
+#   - the image: kustomize edit set image olr=registry.example.org/olr:<tag>
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: olr
+labels:
+  - pairs: {app.kubernetes.io/name: open-llm-router}
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: olr-config
+    files: [config.yaml]
+  - name: olr-env
+    envs: [router.env]

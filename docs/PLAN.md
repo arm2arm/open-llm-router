@@ -307,7 +307,7 @@ The backend does the OIDC login, so no token reaches the browser:
 - **Switching Keycloak** = changing env (`OIDC_ISSUER`, client ID/secret) — no code or image change.
 - Container data paths are configurable (host bind mounts), e.g. image/cache storage on a dedicated disk.
 
-**Later: Kubernetes** — the same image and env vars; manifests/Helm chart in `deploy/k8s/`
+**Kubernetes** (kustomize, `deploy/k8s/`, verified on kind; see the runbook) — the same image and env vars; manifests in `deploy/k8s/`
 (Deployment, Service, Ingress with buffering off and long timeouts, Secret, external Postgres).
 Added after the Compose pilot is accepted (M6).
 

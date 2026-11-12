@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: olr-router
+spec:
+  selector: {app.kubernetes.io/component: router}
+  ports:
+    - {name: http, port: 80, targetPort: http}

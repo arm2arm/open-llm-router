@@ -1,0 +1,27 @@
+# ingress-nginx annotations: stream without buffering, keep long generations
+# open (at least the largest model timeout_s), and allow the router's 32 MiB
+# bodies. Other controllers need the equivalent settings (docs/RUNBOOK.md).
+# /metrics stays behind its bearer token; scrape it through the Service.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: olr-router
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "960"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "960"
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [llm.example.org]
+      secretName: olr-tls
+  rules:
+    - host: llm.example.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: olr-router, port: {name: http}}

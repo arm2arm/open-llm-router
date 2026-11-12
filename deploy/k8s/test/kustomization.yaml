@@ -1,0 +1,32 @@
+# Acceptance overlay: the base plus an in-cluster Postgres and the two mock
+# backends of the Compose stack, API keys only (no OIDC), served on any host
+# without TLS. For a disposable test cluster (kind), never for production.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: olr
+resources:
+  - ../base
+  - postgres.yaml
+  - mocks.yaml
+images:
+  - {name: olr, newName: olr-router, newTag: k8s-test}
+  - {name: mock-llm, newName: olr-mock-llm, newTag: k8s-test}
+configMapGenerator:
+  - name: olr-config
+    behavior: replace
+    files: [config.yaml]
+  - name: olr-env
+    behavior: replace
+    literals: [OLR_TRACE_USER_ID=false]
+secretGenerator:
+  - name: olr-secrets
+    literals:
+      - OLR_DATABASE_URL=postgres://olr:olr-k8s-test-only@postgres:5432/olr?sslmode=disable
+      - OLR_METRICS_TOKEN=olr-metrics-k8s-test-only
+patches:
+  - target: {kind: Ingress, name: olr-router}
+    patch: |
+      - op: remove
+        path: /spec/tls
+      - op: remove
+        path: /spec/rules/0/host

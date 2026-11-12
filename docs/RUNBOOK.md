@@ -97,6 +97,36 @@ no limit.
 | `OLR_TRACE_USER_ID` | add the user ID to spans (default false) |
 | any name in `bearer_token_env` | a backend's API key — **secret** |
 
+### Kubernetes
+
+[`deploy/k8s/base`](../deploy/k8s/base) is a kustomize base with the same image and
+environment as Compose: a single-replica Deployment (`Recreate`, non-root, read-only root
+file system, restricted Pod Security), a Service, and an ingress-nginx Ingress with buffering
+off, 960 s read/send timeouts and a 32 MiB body limit. Postgres is external. In the site's
+private overlay:
+
+```sh
+kubectl -n olr create secret generic olr-secrets \
+  --from-literal=OLR_DATABASE_URL='postgres://…' \
+  --from-literal=OIDC_PORTAL_CLIENT_SECRET='…' --from-literal=OLR_METRICS_TOKEN='…'
+kubectl -n olr create secret tls olr-tls --cert=… --key=…
+# overlay: replace config.yaml and router.env, set the host, then
+kustomize edit set image olr=registry.example.org/olr:<tag>
+kubectl apply -k <overlay>
+```
+
+The router migrates the database at startup and restarts until Postgres is reachable; run
+`olr migrate` as a Job first if preferred. Keep `replicas: 1` until counters are shared
+(see Known limitations). With another ingress controller or a Gateway, set the equivalent of
+buffering off and timeouts of at least `timeout_s`. `/metrics` stays behind its token; scrape it
+through the Service.
+
+[`deploy/k8s/test`](../deploy/k8s/test) adds an in-cluster Postgres and the two mock backends.
+`tests/k8s/acceptance.sh` deploys it into a disposable kind cluster behind ingress-nginx and
+runs the Compose acceptance checks through the Ingress: both SDK suites with cancellation
+evidence, the rate-limit checks, a 75-second stream with 3-second gaps, and first byte within a
+second (no buffering). Portal login is not part of it: the overlay runs without OIDC.
+
 ## Everyday operations
 
 ### Add a model or a replica
