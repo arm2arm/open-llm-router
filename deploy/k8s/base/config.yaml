@@ -1,5 +1,5 @@
 # open-llm-router example configuration. It is the config of the local Compose
-# stack and points at the two mock backends.
+# production base; replace the example HTTPS backend names.
 #
 # - ${NAME} is replaced by the environment variable NAME; start-up fails if it
 #   is not set. Inside {...} or [...] put the reference in quotes: "${NAME}".
@@ -56,8 +56,8 @@ models:
     pool:
       # weight is the relative throughput of a replica; max_inflight caps the
       # requests it serves at once.
-      - {url: http://mock-llm-a:8000, weight: 2.0, max_inflight: 64}
-      - {url: http://mock-llm-b:8000, weight: 1.0, max_inflight: 32}
+      - {url: https://gpu-a.example.org, weight: 2.0, max_inflight: 64}
+      - {url: https://gpu-b.example.org, weight: 1.0, max_inflight: 32}
       # For a vLLM --api-key backend, add bearer_token_env: VLLM_API_KEY
       # to its replica and export that variable in the router's environment.
       # health_path defaults to /health (vLLM/SGLang); use / for Ollama.
@@ -92,3 +92,5 @@ forwarders:
 
 # Names that clients send by default, mapped to a model above.
 aliases: {claude-sonnet-4-5: chat-model}
+
+security: {require_tls: true}

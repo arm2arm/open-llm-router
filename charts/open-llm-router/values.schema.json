@@ -375,6 +375,68 @@
           "type": "object"
         }
       }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "ingressPeers",
+        "monitoringPeers",
+        "egress"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ingressPeers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "monitoringPeers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "egress": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "to",
+              "ports"
+            ],
+            "properties": {
+              "to": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object"
+                }
+              },
+              "ports": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caSecretName": {
+          "type": "string"
+        }
+      }
     }
   }
 }

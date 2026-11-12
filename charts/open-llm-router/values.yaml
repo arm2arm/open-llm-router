@@ -143,3 +143,22 @@ podAnnotations: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Enforced by a NetworkPolicy-capable CNI. External endpoints need explicit peers.
+networkPolicy:
+  enabled: true
+  ingressPeers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+      podSelector:
+        matchLabels: {app.kubernetes.io/component: controller}
+  monitoringPeers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: monitoring}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: prometheus}
+  # Complete Kubernetes egress rules (to + ports); never use unrestricted peers.
+  egress: []
+# Optional Secret with CA certificates, e.g. sslrootcert=/etc/olr/ca/ca.crt.
+tls:
+  caSecretName: ""

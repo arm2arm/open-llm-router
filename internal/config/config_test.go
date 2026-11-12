@@ -543,3 +543,58 @@ func TestContentTracingPolicy(t *testing.T) {
 		t.Fatal("invalid redaction accepted")
 	}
 }
+
+func TestProductionDatabaseTLS(t *testing.T) {
+	for _, mode := range []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"} {
+		err := ValidateDatabaseTLS("postgres://user:secret@db.example.org/router?sslmode=" + mode)
+		if (err == nil) != (mode == "verify-full") {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+	if err := ValidateDatabaseTLS("private-secret-invalid-dsn"); err == nil || strings.Contains(err.Error(), "private-secret") {
+		t.Fatal("unsafe error", err)
+	}
+}
+
+func TestProductionTransportPolicy(t *testing.T) {
+	env := map[string]string{"OIDC_ISSUER": "https://login.example.org/realm", "PORTAL_BASE_URL": "https://router.example.org"}
+	secure := strings.ReplaceAll(valid, "http://backend-", "https://backend-") + "security: {require_tls: true}\n"
+	cfg, err := Parse([]byte(secure), lookupIn(env))
+	if err != nil || !cfg.OIDC.RequireTLS {
+		t.Fatal("secure config rejected", err)
+	}
+	for _, bad := range []string{strings.Replace(secure, "https://backend-a", "http://backend-a", 1)} {
+		if _, err := Parse([]byte(bad), lookupIn(env)); err == nil {
+			t.Fatal("plaintext config accepted")
+		}
+	}
+	env["PORTAL_BASE_URL"] = "http://router.example.org"
+	if _, err := Parse([]byte(secure), lookupIn(env)); err == nil {
+		t.Fatal("plaintext portal accepted")
+	}
+}
+
+func TestProductionTelemetryOverridesRequireTLS(t *testing.T) {
+	t.Setenv("OIDC_ISSUER", "https://login.example.org/realm")
+	t.Setenv("PORTAL_BASE_URL", "https://router.example.org")
+	t.Setenv("PORTAL_COOKIE_SECURE", "true")
+	t.Setenv(EnvDatabaseURL, "postgres://user:secret@db.example.org/router?sslmode=verify-full")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	secure := strings.ReplaceAll(valid, "http://backend-", "https://backend-") + "security: {require_tls: true}\n"
+	if err := os.WriteFile(path, []byte(secure), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example.org")
+			t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://collector.example.org/v1/traces")
+			if _, err := Load(path); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(name, "http://collector.example.org")
+			if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "HTTPS telemetry") {
+				t.Fatal("plaintext telemetry override accepted", err)
+			}
+		})
+	}
+}

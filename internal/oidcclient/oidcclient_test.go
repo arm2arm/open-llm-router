@@ -34,3 +34,10 @@ func TestBackchannelKeepsIssuerAndLimitsRewrite(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionTransportRejectsAdvertisedHTTP(t *testing.T) {
+	req, _ := http.NewRequestWithContext(t.Context(), "POST", "http://identity.invalid/token", nil)
+	if _, err := (httpsOnly{next: http.DefaultTransport}).RoundTrip(req); err == nil {
+		t.Fatal("HTTP provider endpoint accepted")
+	}
+}

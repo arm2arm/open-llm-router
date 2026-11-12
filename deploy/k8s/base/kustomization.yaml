@@ -13,6 +13,7 @@ labels:
   - pairs: {app.kubernetes.io/name: open-llm-router}
     includeSelectors: false
 resources:
+  - networkpolicy.yaml
   - namespace.yaml
   - deployment.yaml
   - service.yaml

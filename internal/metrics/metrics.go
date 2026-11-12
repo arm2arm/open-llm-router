@@ -103,7 +103,7 @@ func New(ctx context.Context, options Options, pools *pool.Manager, writer inter
 		}
 		exporter := options.Exporter
 		if exporter == nil {
-			exporter, err = otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(options.TraceEndpoint), otlptracehttp.WithTimeout(5*time.Second))
+			exporter, err = otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(options.TraceEndpoint), otlptracehttp.WithTimeout(5*time.Second), otlptracehttp.WithHTTPClient(&http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}))
 			if err != nil {
 				return nil, errors.New("initialize OTLP trace exporter failed")
 			}

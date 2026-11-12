@@ -178,3 +178,15 @@ and logout, streaming, stable generated credentials through upgrade/rollback,
 and data/key reuse after uninstall/reinstall. Its trap removes its cluster;
 it never selects the caller's cluster. Both checks run in CI. Override `HELM` and
 `KIND` with binary paths when needed.
+
+### Network isolation and production TLS
+
+NetworkPolicies are enabled by default. Router ingress is limited to the configured
+`networkPolicy.ingressPeers` and `monitoringPeers`; DNS and enabled demo dependencies
+have explicit rules. Add external dependency peers and ports with `networkPolicy.egress`.
+Use a policy-capable CNI and maintain dependency-side ingress restrictions. In production,
+use the production example's `config.security.require_tls: true`, external TLS services,
+and `sslmode=verify-full` for PostgreSQL. The chart refuses bundled demo services or
+disabled policy in this mode. `tls.caSecretName` mounts CA files at `/etc/olr/ca`.
+See the [network/TLS runbook](../../docs/RUNBOOK.md#kubernetes-network-and-transport-policy)
+for admin-surface restrictions, private CAs, DNS and deployment acceptance probes.
