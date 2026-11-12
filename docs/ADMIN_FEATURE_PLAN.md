@@ -66,7 +66,7 @@ additional evidence that the production pilot in #21 has been completed.
 | Key administration | Self-service create/revoke, operator CLI create/revoke, Admin list/revoke | Admin exposes metadata only; revocation is scoped to the displayed owner |
 | User deletion | Operator CLI | Protected local administrator cannot be erased; database guards cover ordinary SQL/cascades |
 | Remote compatible backend | Conditional on current native-protocol contract | Origin-only URL, Bearer token, HTTP-200 health probe; not a cloud-provider integration |
-| Provider adapters and provider registry | No | No custom auth headers, base paths, signing, provider model discovery or shared provider capacity |
+| Provider adapters and provider registry | Partial | Endpoint editor detects OpenAI/Ollama model catalogs; no custom auth headers, base paths, signing, provider registry or shared provider capacity |
 | Group/provider-specific or money budgets | No | Current limits are per user across models; group totals are reporting |
 | Configuration reload and revision history | Endpoint models only | Migration 0006, append-only endpoint revisions, immutable runtime snapshots; no cross-router activation or general settings/history service |
 | Standalone config validation command | No | Parser exists; no CLI exposure; Compose validation does not parse router YAML |

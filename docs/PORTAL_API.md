@@ -171,7 +171,16 @@ authorization remains enforced on the server regardless of browser navigation.
   `set_by` and `set_at`, sorted allowed public `models` (including aliases), effective
   `admin` and key metadata. The user includes `issuer`, `has_local_password` and
   `must_change_password`; keys include `id`, `prefix`, `label`, `created`, `last_used`,
-  `expires`, `revoked`, `expired`, `class` and `trusted_forwarder`, never hashes or raw keys.
+  `expires`, `revoked`, `expired`, `class`, `trusted_forwarder` and `copy_available`, never hashes, ciphertext or raw keys.
+- `POST /portal/api/admin/users/{id}/keys/{key}/copy` with `{}` returns 200
+  `{"key":"olr-..."}` only to a full admin session with the configured Origin.
+  Responses are `no-store`. Only active keys owned by an enabled user without a
+  required password change can be copied. Returns 404 for an inactive/mismatched
+  key, 409 `key_unavailable` for a legacy hash-only key or unavailable/wrong
+  encryption key, 403 for non-admin/invalid Origin, and 503 on storage failure.
+  `OLR_API_KEY_ENCRYPTION_KEY` enables encrypted storage for newly issued keys;
+  see the [Admin guide](ADMIN_GUIDE.md#copy-user-api-keys-as-admin). Existing keys
+  continue authenticating and are never silently rotated.
 - `POST /portal/api/admin/users` with
   `{"username":"alice","email":"alice@example.org","groups":["staff"],"password":"…"}`
   creates a new local identity and returns 201 `{"id":"UUID","must_change_password":true}`.
@@ -228,6 +237,19 @@ Resolved backend secrets are excluded from all responses and revisions.
   It validates and probes without saving/publishing. Health results return 200
   with `{ok, message, replicas}`; `ok:false` means the probe failed. Validation
   failures return 400. A passing probe does not prove the upstream model exists.
+- `POST /portal/api/admin/endpoints/models` accepts
+  `{"model":"chat-model","replicas":[{"url":"http://ollama:11434","bearer_token_env":""}]}`.
+  Returns `{models, complete, replicas:[{url, models, source?, error?}]}`. `models`
+  is the sorted intersection across every replica, empty if any catalog failed;
+  per-replica lists are diagnostic. Uses `GET /v1/models`, with `/api/tags` fallback
+  only on 404/405/501. Destinations and credential references use the same policy
+  as inference, without browser credentials, environment proxies or redirects.
+  Authentication errors are not retried on the fallback path. Limits: 1–32 origins,
+  1 MiB/2048 entries per catalog, 3 seconds per request, 8 seconds overall, at
+  most 8 concurrent requests. Paginated catalogs require manual entry. Validation
+  returns 400; backend failures return 200 with `complete:false` and safe errors.
+  This operation saves no revision, performs no inference and changes no health
+  or admission state. Catalog presence does not prove model capabilities.
 - `PUT /portal/api/admin/endpoints` accepts `model`, the last observed `revision`
   and the complete `configuration`. It validates, probes every replica in that
   model, commits a revision and activates new requests. Returns 200 `{models}`.

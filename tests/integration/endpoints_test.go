@@ -147,6 +147,7 @@ func TestEndpointConfigurationLifecyclePersistenceAndGuards(t *testing.T) {
 		{"GET", "/portal/api/admin/endpoints", nil},
 		{"PUT", "/portal/api/admin/endpoints", map[string]any{"model": "chat-model", "revision": 0, "configuration": f.replacement}},
 		{"POST", "/portal/api/admin/endpoints/test", map[string]any{"model": "chat-model", "configuration": f.replacement}},
+		{"POST", "/portal/api/admin/endpoints/models", map[string]any{"model": "chat-model", "replicas": []endpoints.ModelSource{{URL: f.replacement.Pool[0].URL, BearerTokenEnv: "ENDPOINT_GPU_TOKEN"}}}},
 		{"POST", "/portal/api/admin/endpoints/restore", map[string]any{"model": "chat-model", "revision": 0, "target_revision": 0}},
 	} {
 		adminCall(t, ordinary, request.method, request.path, request.body, 403)
@@ -157,6 +158,12 @@ func TestEndpointConfigurationLifecyclePersistenceAndGuards(t *testing.T) {
 			}
 		}
 	}
+	catalogData := adminCall(t, operator, "POST", "/portal/api/admin/endpoints/models", map[string]any{"model": "chat-model", "replicas": []endpoints.ModelSource{{URL: f.replacement.Pool[0].URL, BearerTokenEnv: "ENDPOINT_GPU_TOKEN"}}}, 200)
+	var catalog endpoints.Discovery
+	if json.Unmarshal(catalogData, &catalog) != nil || !catalog.Complete || len(catalog.Models) != 1 || catalog.Models[0] != "backend-real" || strings.Contains(string(catalogData), endpointToken) {
+		t.Fatal("model detection failed or leaked secret")
+	}
+	adminCall(t, operator, "POST", "/portal/api/admin/endpoints/models", map[string]any{"model": "chat-model", "replicas": []map[string]string{{"url": f.replacement.Pool[0].URL, "bearer_token": "forbidden"}}}, 400)
 	data := adminCall(t, operator, "POST", "/portal/api/admin/endpoints/test", map[string]any{"model": "chat-model", "configuration": f.replacement}, 200)
 	var result struct{ OK bool }
 	if json.Unmarshal(data, &result) != nil || !result.OK {

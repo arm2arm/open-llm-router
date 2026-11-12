@@ -88,9 +88,14 @@ updates for Go modules, npm, Docker digests and Actions.
 
 ## Checklist
 
-- [x] Keys are generated with `crypto/rand` (32 bytes, base62), stored as SHA-256 hash plus a
-  display prefix, never logged (only the prefix), shown once (`auth.Generate`,
-  `Admin.CreateKey`, `TestPortalUserIsolationRevocationAndLogout`).
+- [x] Keys are generated with `crypto/rand` (32 bytes, base62), authenticated by
+  SHA-256 hash, never logged (only the prefix). Optional AES-256-GCM ciphertext
+  enables explicit full-session Admin copy of active keys. Random nonces and
+  owner/hash AAD prevent ciphertext substitution; the operator's encryption key
+  stays outside PostgreSQL. Lists omit hashes, ciphertext and plaintext.
+  `TestAdminEncryptedKeyCopy` covers authorization, CSRF, owner scope, inactive
+  keys, legacy keys and changed encryption keys; `TestKeyCipherAuthenticatedEncryption`
+  covers tampering and owner/hash binding.
 - [x] Client credentials and cookies are never forwarded: `Authorization`, `X-Api-Key`,
   `Cookie`, `Proxy-Authorization`, baggage and hop-by-hop headers are dropped before the
   backend request; the backend bearer token is set only towards the backend and never

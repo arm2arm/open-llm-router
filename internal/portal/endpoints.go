@@ -88,6 +88,20 @@ func (h *Handler) endpointTest(w http.ResponseWriter, r *http.Request, _ user) {
 	}
 	respond(w, 200, map[string]any{"ok": err == nil, "message": message, "replicas": states})
 }
+func (h *Handler) endpointModels(w http.ResponseWriter, r *http.Request, _ user) {
+	var body struct {
+		Model    string                  `json:"model"`
+		Replicas []endpoints.ModelSource `json:"replicas"`
+	}
+	if !h.jsonBody(w, r, &body) || !h.endpointService(w) {
+		return
+	}
+	result, err := h.Endpoints.Discover(r.Context(), body.Model, body.Replicas)
+	if endpointError(w, err) {
+		return
+	}
+	respond(w, 200, result)
+}
 func (h *Handler) endpointRestore(w http.ResponseWriter, r *http.Request, by user) {
 	var body struct {
 		Model    string `json:"model"`

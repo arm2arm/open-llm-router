@@ -35,6 +35,7 @@ export async function request<T>(
   path: string,
   method = 'GET',
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   if (redirecting) throw new Error('Redirecting…')
   const response = await fetch(
@@ -43,6 +44,7 @@ export async function request<T>(
       method,
       credentials: 'same-origin',
       cache: 'no-store',
+      signal,
       headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' },
       body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
     },
@@ -70,9 +72,10 @@ export async function api<T>(
   path: string,
   method = 'GET',
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   try {
-    return await request<T>(path, method, body)
+    return await request<T>(path, method, body, signal)
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 401) redirect('/portal/sign-in')
@@ -113,6 +116,7 @@ export type Me = {
   admin: boolean
 }
 export type Key = {
+  copy_available: boolean
   id: string
   prefix: string
   label: string
