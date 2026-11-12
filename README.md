@@ -13,7 +13,8 @@ PostgreSQL holds identities, settings and usage.
 - **Decide who can use it.** Keycloak SSO or local login, per-user API keys,
   group-based model access, and quota, rate and concurrency limits.
 - **See what is happening.** A self-service usage portal, request timing, replica
-  health, group totals, and Prometheus/Grafana/OpenTelemetry integration.
+  health, group totals, private conversation and stream traces, and
+  Prometheus/Grafana/OpenTelemetry integration.
 
 ![Admin overview showing endpoint configuration and healthy model replicas](docs/images/admin-overview.png)
 
@@ -51,6 +52,14 @@ capture, and choose 1–30 days of retention (7 days by default).
 | [![Usage page with daily and monthly allowances and a 30-day token chart](docs/images/portal-usage.png)](docs/images/portal-usage.png) | [![Endpoint editor with detected upstream models, protocol settings and replica connections](docs/images/endpoint-editor.png)](docs/images/endpoint-editor.png) |
 | See token totals, remaining quota and request performance. Create your own API keys and use **Connect** for client setup. | Add or edit replicas, detect upstream model names, test connections, and apply or restore saved revisions. |
 
+| Request observability | Conversation inspection |
+|---|---|
+| [![My requests showing logging controls, seven-day retention, request types, status and timings](docs/images/portal-requests.png)](docs/REQUEST_TRACING.md) | [![Conversation trace with input messages, tool arguments and results, and assistant reasoning](docs/images/request-trace-conversation.png)](docs/REQUEST_TRACING.md#inspect-a-conversation) |
+| Enable or disable detailed logging, choose retention, and find streaming, failed or traced calls. | Inspect input/output text, thinking and tool calls; switch to the [stream timeline](docs/REQUEST_TRACING.md#replay-stream-events) or [request details](docs/REQUEST_TRACING.md#correlate-request-details). |
+
+*Observability examples use synthetic requests through the mock backends. The
+404 row is an intentional unknown-model request; timings are illustrative.*
+
 <details>
 <summary>Keycloak and local sign-in</summary>
 
@@ -74,7 +83,7 @@ and the [pilot checklist](docs/PILOT.md).
 | Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
-| Usage and operations | Usage history and timing, retention and user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
+| Usage and operations | Usage history and timing; personal text, reasoning, tool and stream traces with user-controlled capture and 7-day default retention; user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
 | Deployment | Local Compose demo, real-backend examples, production pilot Compose, [Helm chart](charts/open-llm-router) and [Kubernetes manifests](deploy/k8s) |
 
 **Still planned:** configuring Keycloak from Admin; creating logical models and
@@ -159,6 +168,7 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 | [docs/REFERENCE.md](docs/REFERENCE.md) | API, authentication, accounting and limits in detail; tests; code layout |
 | [docs/PORTAL_API.md](docs/PORTAL_API.md) | the portal's JSON API |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | metrics, dashboard, traces and request logs |
+| [docs/REQUEST_TRACING.md](docs/REQUEST_TRACING.md) | illustrated request viewer, conversation and stream inspection, personal retention and capture limits |
 | [docs/CLIENTS.md](docs/CLIENTS.md) | SDKs, Claude Code, OpenCode and real backends |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | privacy notice template |
 | [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | security review and its findings |
@@ -202,11 +212,28 @@ OLR_TEST_DATABASE_URL='postgres://olr:olr-dev-only@127.0.0.1:5432/olr?sslmode=di
 
 CI runs the same commands on every push and pull request.
 
+## About and acknowledgments
+
+open-llm-router is developed by [Arman Khalatyan](https://github.com/arm2arm) at
+the [Leibniz Institute for Astrophysics Potsdam (AIP)](https://www.aip.de/), with
+development assistance from the Hermes agent.
+
+Development of this project at AIP was funded by the **German Federal Ministry of
+Research, Technology and Space (BMFTR)** through the **ErUM-Data** programme as part
+of **[Physics-LLM](https://physics-llm.erumdatahub.de/)**. See
+[AIP's Physics-LLM project description](https://jobs.aip.de/rec042/) and the
+[ErUM-Data-Hub project directory](https://wiki.erumdatahub.de/bin/view/DIG-UM/ErUM-Data%20Projects/).
+
 ## Citation
 
-Authors: A. Khalatyan (AIP), with Hermes agent.
+If you use open-llm-router in research or a publication, please cite the software:
 
-See [CITATION.cff](CITATION.cff) (GitHub: "Cite this repository").
+> Khalatyan, Arman. *open-llm-router* [Computer software]. Leibniz Institute for
+> Astrophysics Potsdam (AIP). https://github.com/arm2arm/open-llm-router
+
+[CITATION.cff](CITATION.cff) supplies machine-readable author and repository
+metadata. Use GitHub's **Cite this repository** menu to export BibTeX or APA, and
+include the version or commit you used for reproducibility.
 
 ## License
 

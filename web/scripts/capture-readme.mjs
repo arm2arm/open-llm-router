@@ -16,6 +16,7 @@ const database = `readme_demo_${process.pid}`
 const container = `${database}-router`
 const directory = mkdtempSync(join(tmpdir(), 'olr-readme-'))
 const output = join(root, 'docs/images')
+const observabilityOnly = process.argv.includes('--observability-only')
 const initial = 'readme-demo-initial-password'
 const password = 'readme-demo-replacement-password'
 const docker = (args) =>
@@ -187,8 +188,9 @@ groups:
     FROM generate_series(0,12) n;`,
   )
   // Issue only disposable keys; stdout is captured and never put in an image.
-  for (const label of ['Hermes workstation', 'Research notebook'])
-    docker([
+  let demoKey
+  for (const label of ['Hermes workstation', 'Research notebook']) {
+    const key = docker([
       'exec',
       container,
       'olr',
@@ -200,6 +202,8 @@ groups:
       '-label',
       label,
     ])
+    demoKey ??= key
+  }
   mkdirSync(output, { recursive: true })
   const shot = async (name) => {
     // eslint-disable-next-line no-undef -- this callback runs inside Chromium.
@@ -211,63 +215,214 @@ groups:
     })
     process.stdout.write(`Captured ${name}.png\n`)
   }
-  await page.goto(`${base}/portal/admin`)
-  await expect(
-    page.getByRole('region', { name: 'Replica health' }),
-  ).toContainText('healthy')
-  await expect(page.getByTestId('users-table')).toContainText('alex-demo')
-  const health = await page
-    .getByRole('region', { name: 'Replica health' })
-    .boundingBox()
-  await page.setViewportSize({
-    width: 1440,
-    height: Math.ceil(health.y + health.height + 12),
-  })
-  await shot('admin-overview')
-  await page.setViewportSize({ width: 1440, height: 1440 })
-  await page
-    .getByRole('button', { name: 'Edit endpoints for chat-model', exact: true })
-    .click()
-  // Show a complete one-replica draft, including test/save controls. Never apply it.
-  await page
-    .getByRole('button', { name: 'Remove replica 2', exact: true })
-    .click()
-  await expect(
-    page.getByLabel('Detected upstream models', { exact: true }),
-  ).toBeVisible()
-  await shot('endpoint-editor')
-  await page.getByRole('button', { name: 'Close', exact: true }).click()
+  if (!observabilityOnly) {
+    await page.goto(`${base}/portal/admin`)
+    await expect(
+      page.getByRole('region', { name: 'Replica health' }),
+    ).toContainText('healthy')
+    await expect(page.getByTestId('users-table')).toContainText('alex-demo')
+    const health = await page
+      .getByRole('region', { name: 'Replica health' })
+      .boundingBox()
+    await page.setViewportSize({
+      width: 1440,
+      height: Math.ceil(health.y + health.height + 12),
+    })
+    await shot('admin-overview')
+    await page.setViewportSize({ width: 1440, height: 1440 })
+    await page
+      .getByRole('button', {
+        name: 'Edit endpoints for chat-model',
+        exact: true,
+      })
+      .click()
+    // Show a complete one-replica draft, including test/save controls. Never apply it.
+    await page
+      .getByRole('button', { name: 'Remove replica 2', exact: true })
+      .click()
+    await expect(
+      page.getByLabel('Detected upstream models', { exact: true }),
+    ).toBeVisible()
+    await shot('endpoint-editor')
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+  }
   await page.setViewportSize({ width: 1440, height: 1100 })
   await post('/portal/logout', {})
   await post('/portal/login/local', { username: 'alex-demo', password })
-  await page.goto(`${base}/portal/usage`)
-  await expect(
-    page.getByRole('img', { name: /Tokens per day, peak/ }),
-  ).toBeVisible()
-  await expect(page.getByTestId('usage-table')).toContainText('chat-model')
-  const chart = await page
-    .getByRole('region', { name: 'Tokens per day', exact: true })
-    .boundingBox()
-  await page.setViewportSize({
-    width: 1440,
-    height: Math.ceil(chart.y + chart.height + 12),
-  })
-  await shot('portal-usage')
-  await post('/portal/logout', {})
-  await expect
-    .poll(
-      async () =>
-        (await (await context.request.get(`${base}/portal/api/auth`)).json())
-          .oidc.available,
-      { timeout: 20_000 },
+  if (!observabilityOnly) {
+    await page.goto(`${base}/portal/usage`)
+    await expect(
+      page.getByRole('img', { name: /Tokens per day, peak/ }),
+    ).toBeVisible()
+    await expect(page.getByTestId('usage-table')).toContainText('chat-model')
+    const chart = await page
+      .getByRole('region', { name: 'Tokens per day', exact: true })
+      .boundingBox()
+    await page.setViewportSize({
+      width: 1440,
+      height: Math.ceil(chart.y + chart.height + 12),
+    })
+    await shot('portal-usage')
+  }
+
+  // These are genuine native API calls through the disposable router. Capture
+  // only the resulting portal views, never the key issuance dialog or headers.
+  const infer = async (path, data, expectedStatus = 200) => {
+    const response = await context.request.post(`${base}${path}`, {
+      headers: {
+        Authorization: `Bearer ${demoKey}`,
+        'X-Mock-Token-Delay': '60ms',
+      },
+      data,
+    })
+    expect(response.status()).toBe(expectedStatus)
+    return response.headers()['x-request-id']
+  }
+  const traceIDs = []
+  for (const stream of [false, true])
+    traceIDs.push(
+      await infer('/v1/chat/completions', {
+        model: 'chat-model',
+        messages: [
+          {
+            role: 'user',
+            content: 'Summarize the observing plan for tonight.',
+          },
+        ],
+        max_tokens: 16,
+        stream,
+      }),
     )
+  traceIDs.push(
+    await infer('/v1/embeddings', {
+      model: 'chat-model',
+      input: 'Galaxy spectra and observing conditions',
+    }),
+  )
+  traceIDs.push(
+    await infer(
+      '/v1/chat/completions',
+      {
+        model: 'unavailable-demo-model',
+        messages: [
+          {
+            role: 'user',
+            content: 'Demonstrate a routing error in the request history.',
+          },
+        ],
+      },
+      404,
+    ),
+  )
+  const toolTrace = await infer('/v1/messages', {
+    model: 'chat-model',
+    max_tokens: 64,
+    stream: true,
+    thinking: { type: 'enabled', budget_tokens: 32 },
+    messages: [
+      {
+        role: 'user',
+        content: 'Check the weather in Berlin for an evening observation.',
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'weather-berlin',
+            name: 'get_weather',
+            input: { city: 'Berlin', units: 'celsius' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'weather-berlin',
+            content:
+              '{"temperature":18,"conditions":"clear","rain_probability":0.1}',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: 'Check the forecast too before recommending what to pack.',
+      },
+    ],
+    tools: [
+      {
+        name: 'get_weather',
+        description: 'Read weather conditions for a city',
+        input_schema: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+        },
+      },
+    ],
+  })
+  traceIDs.push(toolTrace)
+  await expect
+    .poll(async () => {
+      const response = await context.request.get(`${base}/portal/api/requests`)
+      const { requests } = await response.json()
+      return traceIDs.every((id) =>
+        requests.some((r) => r.request_id === id && r.trace_available),
+      )
+    })
     .toBe(true)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(`${base}/portal/sign-in`)
+  await page.setViewportSize({ width: 1440, height: 1150 })
+  await page.goto(`${base}/portal/requests`)
   await expect(
-    page.getByRole('button', { name: 'Continue with Keycloak' }),
-  ).toBeEnabled()
-  await shot('sign-in')
+    page.getByRole('switch', { name: 'Capture enabled' }),
+  ).toBeChecked()
+  await expect(page.getByLabel('Trace retention days')).toHaveValue('7')
+  await expect(
+    page.getByRole('button', {
+      name: `Inspect request ${toolTrace}`,
+      exact: true,
+    }),
+  ).toBeVisible()
+  await shot('portal-requests')
+  await page
+    .getByRole('button', { name: `Inspect request ${toolTrace}`, exact: true })
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Request trace' })
+  await expect(
+    dialog.getByText('Tool call · get_weather', { exact: true }),
+  ).toHaveCount(2)
+  await dialog.locator('.trace-reasoning summary').click()
+  await expect(dialog).toContainText('Considering the request.')
+  await expect(dialog).toContainText('rain_probability')
+  await shot('request-trace-conversation')
+  await dialog.getByRole('tab', { name: /^Stream events/ }).click()
+  await expect(dialog.locator('.trace-timeline')).toContainText('get_weather')
+  await expect(dialog.locator('.trace-timeline')).toContainText('Considering')
+  await shot('request-trace-events')
+  await dialog.getByRole('tab', { name: 'Details', exact: true }).click()
+  await expect(dialog).toContainText(toolTrace)
+  await expect(dialog).toContainText('max_tokens')
+  await shot('request-trace-details')
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+
+  if (!observabilityOnly) {
+    await post('/portal/logout', {})
+    await expect
+      .poll(
+        async () =>
+          (await (await context.request.get(`${base}/portal/api/auth`)).json())
+            .oidc.available,
+        { timeout: 20_000 },
+      )
+      .toBe(true)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`${base}/portal/sign-in`)
+    await expect(
+      page.getByRole('button', { name: 'Continue with Keycloak' }),
+    ).toBeEnabled()
+    await shot('sign-in')
+  }
   expect(errors).toEqual([])
 } finally {
   await browser?.close()

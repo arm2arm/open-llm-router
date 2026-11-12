@@ -5,6 +5,12 @@ OIDC access token, or by a trusted application on your behalf. Detailed logging 
 **enabled by default**, including for existing accounts. Retention defaults to
 **7 days**; each user can choose **1–30 days** and save their own preference.
 
+![My requests with detailed logging enabled, seven-day retention, summary cards and a searchable request table](images/portal-requests.png)
+
+*The real portal with disposable demo accounts and mock-backed requests. The 404
+row deliberately requests an unknown model. All content and usage are synthetic;
+timings are not a performance benchmark. [Capture workflow](images/README.md).*
+
 ## Use the trace viewer
 
 1. Set **Capture enabled/disabled** and **Keep traces for**, then **Save settings**.
@@ -12,10 +18,11 @@ OIDC access token, or by a trusted application on your behalf. Detailed logging 
    table, which refreshes every 5 seconds while the page is open. Background capture
    becomes available shortly after completion. Existing historical requests cannot
    be backfilled.
-3. Select **Inspect**. **Conversation** shows input/output messages, collapsible
-   reasoning, tool calls with reconstructed arguments, and tool results in input
-   messages. The router forwards tool calls; the client executes tools and submits
-   their results in subsequent requests. It does not execute or trace tools itself.
+3. Select a request ID in the table. **Conversation** shows input/output messages,
+   collapsible reasoning, tool calls with reconstructed arguments, and tool results
+   in input messages. The router forwards tool calls; the client executes tools and
+   submits their results in subsequent requests. It does not execute or trace tools
+   itself.
 4. **Stream events** shows text, reasoning and tool argument deltas, relative arrival
    times, completion and provider errors. Filter by event type. Events appear in
    pages of 100. This is a completed-request replay, not a live token console.
@@ -25,10 +32,40 @@ OIDC access token, or by a trusted application on your behalf. Detailed logging 
    streams, failures or requests with detail.
 
 Timing cards show total latency, time to first byte (labelled first token), token
-counts and estimated output speed. Event times measure when the router observed delivery to the client, including
-backpressure; several events in one network read can have the same timestamp. They
-are not provider token-generation timestamps. Interrupted calls keep their partial,
-complete SSE events and have `aborted` status; an SSE error has `error` status.
+counts and estimated output speed. Event times measure when the router observed
+delivery to the client, including backpressure; several events in one network read
+can have the same timestamp. They are not provider token-generation timestamps.
+Interrupted calls keep their partial, complete SSE events and have `aborted`
+status; an SSE error has `error` status.
+
+## Inspect a conversation
+
+![Conversation tab showing input messages, a tool call and result, and assistant reasoning and a new tool call](images/request-trace-conversation.png)
+
+**Input** contains the messages submitted by the client, including earlier tool
+calls and their results. **Output** contains the model's response. Expand
+**Reasoning** to inspect thinking emitted by the provider. Tool arguments are
+shown as structured JSON. In this mock example, the response requests another
+`get_weather` call; the client would execute it and send its result in a later
+request.
+
+## Replay stream events
+
+![Stream events tab showing relative arrival times, reasoning deltas, tool argument fragments and completion](images/request-trace-events.png)
+
+The timeline preserves the observed order of reasoning, text and tool argument
+fragments. Use the event filter to focus on one type. The example shows reasoning
+followed by a tool call and completion; event times are relative to request start.
+Open this tab after the request completes to inspect how the response arrived.
+
+## Correlate request details
+
+![Details tab showing the full request ID, operation, expiry and selected request parameters](images/request-trace-details.png)
+
+Use the full **Request ID** to correlate a call with the response's `X-Request-Id`
+header and JSON server logs. **Expires** shows when this content becomes
+inaccessible. Request parameters show selected fields such as the public model,
+tool names, streaming flag and maximum output tokens.
 
 ## Privacy and retention
 

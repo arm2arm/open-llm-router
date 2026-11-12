@@ -112,6 +112,24 @@ event detail in Postgres. It does not send content to OTLP, metrics or server lo
 See [REQUEST_TRACING.md](REQUEST_TRACING.md) for controls, capture limits and performance
 behavior. This is independent of the OpenTelemetry configuration above.
 
+![My requests with capture controls, retention, streaming counts and request-level timings](images/portal-requests.png)
+
+*The embedded portal with synthetic data and mock backends. The failed call is an
+intentional unknown-model example. These timings are not benchmark results.*
+
+Select a request ID to inspect its conversation, then use **Stream events** to
+follow the observed reasoning, text and tool argument deltas after completion.
+**Details** includes the full request ID for correlation with JSON logs and the
+response's `X-Request-Id` header.
+
+| Conversation | Stream events |
+|---|---|
+| [![Input and output messages with reasoning, tool calls and tool results](images/request-trace-conversation.png)](REQUEST_TRACING.md#inspect-a-conversation) | [![Relative stream event times and reasoning and tool call fragments](images/request-trace-events.png)](REQUEST_TRACING.md#replay-stream-events) |
+
+The [illustrated viewer guide](REQUEST_TRACING.md) also shows request parameters,
+expiry and deletion controls. See [screenshot provenance and reproduction](images/README.md)
+for the disposable demo setup.
+
 ## JSON request logs
 
 One `msg=request` JSON line per request contains request ID, trace ID when available,
