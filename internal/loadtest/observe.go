@@ -20,6 +20,9 @@ type RuntimeSnapshot struct {
 	CPUSeconds, CPUCores, ResidentBytes, HeapInUse, Goroutines float64
 	ReplicaInFlight, UserInFlight, WriteFailures, Dropped      float64
 	RequestsByReplica                                          map[string]float64
+	// IdleGoroutinesMin excludes transient scrape/health-check overlap by using
+	// the minimum during a fully drained quiet window. Persistent leaks remain.
+	IdleGoroutinesMin float64
 }
 
 func (r *runner) get(ctx context.Context, endpoint, key string) (*http.Response, error) {
@@ -42,6 +45,10 @@ func (r *runner) get(ctx context.Context, endpoint, key string) (*http.Response,
 }
 
 func (r *runner) snapshot(ctx context.Context) (RuntimeSnapshot, error) {
+	// The peak monitor and idle sampler share one observation connection. An
+	// overlapping scrape otherwise adds the observer's own work to leak counts.
+	r.observe.Lock()
+	defer r.observe.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	s := RuntimeSnapshot{At: time.Now().UTC(), RequestsByReplica: map[string]float64{}}
@@ -189,6 +196,7 @@ func (r *runner) idle(ctx context.Context) (RuntimeSnapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var settled time.Time
+	var minGoroutines float64
 	for {
 		s, err := r.snapshot(ctx)
 		if err != nil {
@@ -213,8 +221,11 @@ func (r *runner) idle(ctx context.Context) (RuntimeSnapshot, error) {
 		if idle {
 			if settled.IsZero() {
 				settled = time.Now()
+				minGoroutines = s.Goroutines
 			}
+			minGoroutines = min(minGoroutines, s.Goroutines)
 			if time.Since(settled) >= r.o.Settle {
+				s.IdleGoroutinesMin = minGoroutines
 				return s, nil
 			}
 		} else {

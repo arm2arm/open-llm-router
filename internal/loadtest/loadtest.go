@@ -135,6 +135,7 @@ type runner struct {
 	o       Options
 	load    *http.Client
 	probes  *http.Client
+	observe sync.Mutex
 	chooser weightedTargets
 	report  Report
 	peak    PeakRuntime
@@ -257,7 +258,7 @@ func Run(ctx context.Context, options Options) (result Report, err error) {
 	r.report.check("no usage writer failures or drops", last.WriteFailures == initial.WriteFailures && last.Dropped == initial.Dropped, "compare counters before/after the run")
 	minG, maxG, minHeap, maxHeap, minRSS, maxRSS := math.Inf(1), 0.0, math.Inf(1), 0.0, math.Inf(1), 0.0
 	for _, snapshot := range r.report.Runtime[1:] {
-		minG, maxG = min(minG, snapshot.Goroutines), max(maxG, snapshot.Goroutines)
+		minG, maxG = min(minG, snapshot.IdleGoroutinesMin), max(maxG, snapshot.IdleGoroutinesMin)
 		minHeap, maxHeap = min(minHeap, snapshot.HeapInUse), max(maxHeap, snapshot.HeapInUse)
 		minRSS, maxRSS = min(minRSS, snapshot.ResidentBytes), max(maxRSS, snapshot.ResidentBytes)
 	}
@@ -265,7 +266,7 @@ func Run(ctx context.Context, options Options) (result Report, err error) {
 		goroutinesStable := maxG-minG <= 4
 		heapStable := maxHeap-minHeap <= max(32<<20, minHeap*.25)
 		rssStable := maxRSS-minRSS <= max(64<<20, minRSS*.25)
-		r.report.check("post-run idle goroutines stabilize", goroutinesStable, "post-run max-min <= four health-check/scrape goroutines; initial pool warming is separate")
+		r.report.check("post-run idle goroutines stabilize", goroutinesStable, "quiet-window minima: post-run max-min <= four health-check/scrape goroutines; initial pool warming is separate")
 		r.report.check("idle heap stable across runs", heapStable, "max-min <= max(32 MiB, 25% of minimum); see raw snapshots")
 		r.report.check("idle RSS stable across runs", rssStable, "max-min <= max(64 MiB, 25% of minimum); see raw snapshots")
 		r.report.LeakStabilityVerified = goroutinesStable && heapStable && rssStable

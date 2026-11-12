@@ -461,7 +461,11 @@ that accounting or cancellation worked.
 - Client keep-alives are closed before idle snapshots. The initial warmed state
   is recorded separately from the post-run snapshots, because the upstream idle
   connection pool can still grow during the first measured run. Across three
-  post-run snapshots, goroutine spread is at most four (health checks and scrapes).
+  post-run quiet windows, the spread of `IdleGoroutinesMin` is at most four
+  (health checks and scrapes). Metrics requests are serialized, and each window
+  uses its minimum goroutine count after all requests and accounting have drained
+  to exclude transient observation work. Persistent goroutines remain counted;
+  `Goroutines` also retains the final point sample.
   Across three runs, heap spread must be no more than the larger of 32 MiB or 25%; RSS
   spread no more than 64 MiB or 25%. Raw values remain visible: finite-run bounds
   detect regressions, not every possible leak.
