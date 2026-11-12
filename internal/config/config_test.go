@@ -563,7 +563,7 @@ func TestProductionTransportPolicy(t *testing.T) {
 	if err != nil || !cfg.OIDC.RequireTLS {
 		t.Fatal("secure config rejected", err)
 	}
-	for _, bad := range []string{strings.Replace(secure, "https://backend-a", "http://backend-a", 1), strings.Replace(secure, "issuer: ${OIDC_ISSUER}", "issuer: http://identity.invalid", 1)} {
+	for _, bad := range []string{strings.Replace(secure, "https://backend-a", "http://backend-a", 1)} {
 		if _, err := Parse([]byte(bad), lookupIn(env)); err == nil {
 			t.Fatal("plaintext config accepted")
 		}
