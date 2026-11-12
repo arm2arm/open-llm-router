@@ -95,7 +95,8 @@ that real model. Config paths are relative to `deploy/compose`; absolute paths a
 
 Protected local administrator credentials, bootstrap and lifecycle guards are available;
 see [setup and password rotation](docs/ADMIN_GUIDE.md#bootstrap-the-protected-local-administrator).
-Local browser login is tracked separately in #73.
+Local password authentication works through the portal API without Keycloak;
+the browser sign-in and password-change forms are tracked separately in #74.
 
 ## Development
 

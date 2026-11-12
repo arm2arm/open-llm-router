@@ -2,6 +2,7 @@ package portal
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,11 +74,71 @@ func TestDiscoveryRefusesWrongIssuerAndInsecureDefault(t *testing.T) {
 	}))
 	defer provider.Close()
 	cfg := &config.Config{OIDC: &config.OIDC{Issuer: provider.URL, PortalClientID: "client"}, OIDCClientSecret: "secret", Portal: config.Portal{BaseURL: "http://portal.example", CookieSecure: true}}
-	if _, err := New(context.Background(), cfg, nil, nil); err == nil || !strings.Contains(err.Error(), "HTTPS") {
-		t.Fatal("HTTP accepted with secure cookies by default")
+	h, err := New(context.Background(), cfg, nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer h.Close()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "http://portal.example/portal/login", nil))
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "secure public origin") || len(w.Result().Cookies()) != 0 {
+		t.Fatal("HTTP cookie login accepted with secure cookies by default")
+	}
+	// Replace the config only after closing the first handler's background job.
+	h.Close()
 	cfg.Portal.CookieSecure = false
-	if _, err := New(context.Background(), cfg, nil, nil); err == nil || err.Error() != "portal OIDC discovery failed" {
-		t.Fatal("wrong discovery issuer accepted", err)
+	h, err = New(context.Background(), cfg, nil, nil)
+	if err != nil {
+		t.Fatal("discovery blocked local startup", err)
+	}
+	defer h.Close()
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "http://portal.example/portal/api/auth", nil))
+	var methods struct {
+		Local struct{ Available bool }
+		OIDC  struct{ Configured, Available bool }
+	}
+	if json.Unmarshal(w.Body.Bytes(), &methods) != nil || !methods.Local.Available || !methods.OIDC.Configured || methods.OIDC.Available {
+		t.Fatal("wrong discovery issuer accepted or local authentication disabled")
+	}
+}
+
+func TestLocalAuthenticationRejectsCrossOriginBeforePasswords(t *testing.T) {
+	h, err := New(t.Context(), &config.Config{Portal: config.Portal{BaseURL: "https://portal.example", CookieSecure: true}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	for _, origin := range []string{"", "null", "https://evil.example"} {
+		r := httptest.NewRequest("POST", "https://portal.example/portal/login/local", strings.NewReader(`{"username":"admin","password":"private password"}`))
+		r.Header.Set("Content-Type", "application/json")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 403 || len(w.Result().Cookies()) != 0 {
+			t.Fatal("cross-origin password login accepted")
+		}
+	}
+}
+
+func TestPasswordWorkIsBoundedAndForwardingHeadersIgnored(t *testing.T) {
+	h := &Handler{passwordSlots: make(chan struct{}, 2)}
+	h.passwordSlots <- struct{}{}
+	h.passwordSlots <- struct{}{}
+	r := httptest.NewRequest("POST", "https://portal.example/portal/login/local", nil)
+	r.RemoteAddr = "[::ffff:192.0.2.1]:1234"
+	r.Header.Set("X-Forwarded-For", "198.51.100.1")
+	r.Header.Set("Forwarded", "for=198.51.100.2")
+	if got := clientAddress(r); got != "192.0.2.1" {
+		t.Fatal("untrusted address used for throttling", got)
+	}
+	w := httptest.NewRecorder()
+	if h.allowPassword(w, r, "admin") || w.Code != 429 || w.Header().Get("Retry-After") != "1" {
+		t.Fatal("unbounded concurrent password work")
+	}
+	if len(h.passwordSlots) != 2 {
+		t.Fatal("rejected request leaked a password slot")
 	}
 }

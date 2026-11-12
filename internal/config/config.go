@@ -45,7 +45,7 @@ type Config struct {
 	Auth      Auth              `yaml:"auth"`
 	Limits    Limits            `yaml:"limits"`
 	Retention Retention         `yaml:"retention"`
-	OIDC      *OIDC             `yaml:"oidc"` // nil: no portal login
+	OIDC      *OIDC             `yaml:"oidc"` // nil: local portal login only
 	Portal    Portal            `yaml:"-"`
 	Models    map[string]Model  `yaml:"models"`
 	Groups    map[string]Group  `yaml:"groups"`

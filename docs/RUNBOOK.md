@@ -20,8 +20,10 @@ configuration examples, onboarding checks and two-week closure record are in
 [PILOT.md](PILOT.md). Use that file for a production realm and real GPU pools; the root
 Compose stack includes development Keycloak and mock backends.
 
-Startup applies database migrations, checks the OIDC discovery, and fails before listening if
-any of it fails. `/healthz` is liveness; `/readyz` needs the database and one healthy replica
+Startup applies database migrations and fails before listening if the database is unavailable.
+OIDC discovery, token verification initialization and group-sync initialization run separately
+and retry after failures; local authentication and API keys remain usable. `/portal/api/auth`
+reports SSO availability. `/healthz` is liveness; `/readyz` needs the database and one healthy replica
 per model. A first `SIGTERM` gives streams 30 s (`-shutdown-grace`) to finish.
 
 ### Behind a TLS reverse proxy
@@ -70,7 +72,7 @@ no limit.
 | `auth.default_key_lifetime_days` | 90 | lifetime of new API keys (1–36500) |
 | `limits.timezone` | UTC | IANA zone of daily/monthly quotas and daily totals |
 | `retention.usage_days` / `usage_daily_days` / `run_at` | 90 / 400 / `03:00` | how long records and daily totals are kept; when the nightly job runs |
-| `oidc.issuer`, `portal_client_id` | — / `olr-portal` | identity provider; leave `oidc` out for API keys only |
+| `oidc.issuer`, `portal_client_id` | — / `olr-portal` | identity provider; leave `oidc` out for local portal authentication and API keys |
 | `oidc.groups_claim`, `username_claim` | `groups`, `preferred_username` | claim names |
 | `oidc.audience` | — | enables access tokens on `/v1/*` with this `aud` |
 | `oidc.sync_client_id`, `sync_interval_s` | `olr-sync`, 900 | group sync (runs when its secret is set) |
@@ -97,7 +99,7 @@ no limit.
 | `OLR_DATABASE_URL` | Postgres URL — **secret** |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD_FILE` | owner-only file for one-time protected local administrator bootstrap; preferred over environment password |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | alternative bootstrap password — **secret**; configure only one source; ignored once initialized |
-| `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables the portal |
+| `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables SSO; the portal is always mounted |
 | `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | client secrets — **secret** |
 | `OIDC_AUDIENCE`, `OIDC_SYNC_CLIENT_ID`, `OIDC_REQUIRED_CLAIM=name=value` | override the `oidc` keys |
 | `OIDC_BACKCHANNEL_URL` | reach the issuer at an internal URL; the issuer stays the public one |
@@ -156,8 +158,9 @@ olr admin password change -user USER_UUID \
 
 The first change is required before session/API-key access. Later rotations use
 the same command and revoke existing sessions. The current password is required;
-there is no recovery-reset command yet (#76). Local browser login is still pending
-(#73). The reserved local administrator cannot be deleted, disabled, demoted or
+there is no recovery-reset command yet (#76). Local JSON login/password/logout
+handlers work without Keycloak; [the guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak)
+shows their use. Browser forms remain in #74. The reserved local administrator cannot be deleted, disabled, demoted or
 converted to an SSO identity through ordinary application/SQL operations.
 
 ### Add a model or a replica
@@ -214,7 +217,8 @@ pg_restore --clean --if-exists --dbname="$OLR_DATABASE_URL" olr-YYYY-MM-DD.dump 
 Keep backups no longer than the usage retention, or erasures (below) come back with a restore;
 after restoring an old backup, repeat the erasures done since.
 
-Migration 0004 adds the credential table and protected-account constraints. Back
+Migration 0004 adds the credential table and protected-account constraints;
+0005 adds credential revisions, scoped local sessions and login throttling. Back
 up before upgrading. Downgrading to a binary that predates these invariants is
 unsupported; restore a matching pre-upgrade backup if rollback is necessary.
 
@@ -457,7 +461,11 @@ that accounting or cancellation worked.
 - Client keep-alives are closed before idle snapshots. The initial warmed state
   is recorded separately from the post-run snapshots, because the upstream idle
   connection pool can still grow during the first measured run. Across three
-  post-run snapshots, goroutine spread is at most four (health checks and scrapes).
+  post-run quiet windows, the spread of `IdleGoroutinesMin` is at most four
+  (health checks and scrapes). Metrics requests are serialized, and each window
+  uses its minimum goroutine count after all requests and accounting have drained
+  to exclude transient observation work. Persistent goroutines remain counted;
+  `Goroutines` also retains the final point sample.
   Across three runs, heap spread must be no more than the larger of 32 MiB or 25%; RSS
   spread no more than 64 MiB or 25%. Raw values remain visible: finite-run bounds
   detect regressions, not every possible leak.

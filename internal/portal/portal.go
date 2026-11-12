@@ -1,4 +1,4 @@
-// Package portal implements OIDC login and a session-authenticated JSON API.
+// Package portal implements local/OIDC login and a session-authenticated JSON API.
 package portal
 
 import (
@@ -8,21 +8,18 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
-	"github.com/arm2arm/open-llm-router/internal/oidcclient"
 	"github.com/arm2arm/open-llm-router/internal/pool"
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/oauth2"
 )
 
 const sessionCookie = "olr_session"
@@ -30,44 +27,35 @@ const loginCookie = "olr_login"
 const sessionLifetime = 8 * time.Hour
 
 type Handler struct {
-	cfg      *config.Config
-	pool     *pgxpool.Pool
-	limits   *limits.Manager
-	oauth    oauth2.Config
-	verifier *oidc.IDTokenVerifier
-	client   *http.Client
-	idp      *oidcclient.Client
-	logout   string
-	mux      *http.ServeMux
+	cfg           *config.Config
+	pool          *pgxpool.Pool
+	limits        *limits.Manager
+	sso           atomic.Pointer[ssoProvider]
+	ssoAvailable  atomic.Bool
+	cancel        context.CancelFunc
+	done          chan struct{}
+	passwordSlots chan struct{}
+	mux           *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
 	Pools *pool.Manager
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
-	if cfg.OIDC == nil || cfg.OIDC.Issuer == "" || cfg.OIDC.PortalClientID == "" || cfg.OIDCClientSecret == "" {
-		return nil, errors.New("portal requires an OIDC issuer, client ID and client secret")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if cfg.Portal.CookieSecure && !strings.HasPrefix(cfg.Portal.BaseURL, "https://") {
-		return nil, errors.New("PORTAL_BASE_URL must use HTTPS with secure cookies; local HTTP development must explicitly set PORTAL_COOKIE_SECURE=false")
-	}
-	idp, err := oidcclient.New(ctx, cfg.OIDC)
-	if err != nil {
-		return nil, errors.New("portal OIDC discovery failed")
-	}
-	provider := idp.Provider
-	var metadata struct {
-		Logout string `json:"end_session_endpoint"`
-	}
-	if provider.Claims(&metadata) != nil || !endpoint(metadata.Logout) {
-		idp.Close()
-		return nil, errors.New("OIDC discovery must advertise an HTTP(S) end_session_endpoint")
-	}
-	h := &Handler{cfg: cfg, pool: pool, limits: manager, client: idp.HTTP, idp: idp, logout: metadata.Logout, mux: http.NewServeMux(),
-		oauth:    oauth2.Config{ClientID: cfg.OIDC.PortalClientID, ClientSecret: cfg.OIDCClientSecret, RedirectURL: cfg.Portal.BaseURL + "/portal/callback", Endpoint: provider.Endpoint(), Scopes: []string{oidc.ScopeOpenID, "profile", "email"}},
-		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.OIDC.PortalClientID})}
+	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), done: make(chan struct{}), passwordSlots: make(chan struct{}, 2)}
+	h.startSSO()
 	h.mux.HandleFunc("GET /portal/login", h.login)
+	h.mux.HandleFunc("GET /portal/login/local", h.authMethods)
+	h.mux.HandleFunc("POST /portal/login/local", h.localLogin)
 	h.mux.HandleFunc("GET /portal/callback", h.callback)
-	h.mux.HandleFunc("POST /portal/logout", h.authenticated(h.signout))
+	h.mux.HandleFunc("GET /portal/api/auth", h.authMethods)
+	h.mux.HandleFunc("GET /portal/api/auth/session", h.withSession(true, func(w http.ResponseWriter, r *http.Request, u user) {
+		respond(w, 200, map[string]any{"auth_method": u.AuthMethod, "must_change_password": u.PasswordChangeRequired})
+	}))
+	h.mux.HandleFunc("POST /portal/password", h.withSession(true, h.changePassword))
+	h.mux.HandleFunc("POST /portal/logout", h.withSession(true, h.signout))
 	h.mux.HandleFunc("GET /portal/api/me", h.authenticated(h.me))
 	h.mux.HandleFunc("GET /portal/api/keys", h.authenticated(h.keys))
 	h.mux.HandleFunc("POST /portal/api/keys", h.authenticated(h.createKey))
@@ -97,7 +85,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	return h, nil
 }
 
-func (h *Handler) Close() { h.idp.Close() }
+func (h *Handler) Close() { h.cancel(); <-h.done }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
