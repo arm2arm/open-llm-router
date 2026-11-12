@@ -310,7 +310,7 @@ func TestLocalKeyIssuanceWaitsForCredentialReset(t *testing.T) {
 	go func() { _, err := store.CreateKey(t.Context(), id, "racing reset", time.Hour); done <- err }()
 	waitFor(t, func() bool {
 		var count int
-		err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR SHARE%'`).Scan(&count)
+		err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR UPDATE%'`).Scan(&count)
 		return err == nil && count > 0
 	})
 	if _, err := tx.Exec(t.Context(), `UPDATE local_credentials SET must_change_password=true WHERE user_id=$1`, id); err != nil {
@@ -369,7 +369,7 @@ func TestLocalSessionIssuanceWaitsForDisablement(t *testing.T) {
 	}()
 	waitFor(t, func() bool {
 		var count int
-		err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR SHARE%'`).Scan(&count)
+		err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR UPDATE%'`).Scan(&count)
 		return err == nil && count > 0
 	})
 	if _, err := tx.Exec(t.Context(), `DELETE FROM sessions WHERE user_id=$1`, id); err != nil {

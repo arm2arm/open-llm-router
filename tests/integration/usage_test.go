@@ -90,7 +90,7 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	}
 	f.writer = usage.NewWriterInLocation(f.pool, log, location)
 	cfg := &config.Config{
-		Auth: config.Auth{DefaultKeyLifetimeDays: 90},
+		Auth: config.Auth{DefaultKeyLifetimeDays: 90, MaxKeyLifetimeDays: 90, MaxActiveKeysPerUser: 10},
 		Limits: config.Limits{Timezone: location.String(), Location: location,
 			MaxBodyBytes: config.DefaultMaxBodyBytes, MaxBodyReaders: config.DefaultMaxBodyReaders,
 			MaxBodyReadersPerUser: config.DefaultMaxBodyReadersPerUser},
