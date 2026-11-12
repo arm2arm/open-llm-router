@@ -22,21 +22,21 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/olr ./cmd/olr \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mock-llm ./cmd/mock-llm \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/olr-loadtest ./cmd/olr-loadtest
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS loadtest
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS loadtest
 COPY --from=build /out/olr-loadtest /usr/local/bin/olr-loadtest
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/olr-loadtest"]
 
 # Build with `docker build --target mock-llm -t olr-mock-llm .` when only
 # the deterministic test backend is needed.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS mock-llm
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS mock-llm
 COPY --from=build /out/mock-llm /usr/local/bin/mock-llm
 EXPOSE 8000
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/mock-llm"]
 
 # Distroless static: no shell, no package manager; runs as user 65532.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS olr
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS olr
 COPY --from=build /out/olr /usr/local/bin/olr
 # The image carries no config. Mount the site's file at this path.
 ENV OLR_CONFIG=/etc/olr/config.yaml
