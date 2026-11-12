@@ -70,10 +70,29 @@ async function startFixture(
   }
   fixtures.push(fixture)
   sql('olr', `CREATE DATABASE ${database}`)
+  // The authentication fixture uses the bundled development Keycloak through
+  // its internal back-channel URL, with its public development secrets.
+  const keycloak = suffix === 'authentication'
+  const keycloakPort = process.env.KEYCLOAK_PORT ?? '8081'
+  const oidc = outage
+    ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n'
+    : keycloak
+      ? `oidc:\n  issuer: http://localhost:${keycloakPort}/realms/olr-dev\n  portal_client_id: olr-portal\n  audience: olr-api\n`
+      : ''
+  const keycloakEnv = keycloak
+    ? [
+        '-e',
+        'OIDC_BACKCHANNEL_URL=http://keycloak:8080/realms/olr-dev',
+        '-e',
+        'OIDC_SYNC_CLIENT_SECRET=olr-sync-dev-only',
+        '-e',
+        'OLR_SETTINGS_ENCRYPTION_KEY=CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=',
+      ]
+    : []
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
+    `${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   // Test a new image without restarting the developer's running router.
   const image =
@@ -103,7 +122,8 @@ async function startFixture(
       '-e',
       'OLR_BOOTSTRAP_ADMIN_PASSWORD',
       '-e',
-      'OIDC_PORTAL_CLIENT_SECRET=browser-test-only',
+      `OIDC_PORTAL_CLIENT_SECRET=${keycloak ? 'olr-portal-dev-only' : 'browser-test-only'}`,
+      ...keycloakEnv,
       '-e',
       'OLR_API_KEY_ENCRYPTION_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=',
       '-v',
@@ -145,6 +165,7 @@ let outage: string
 let administration: string
 let endpointAdministration: string
 let tracing: string
+let authentication: string
 test.beforeAll(async () => {
   test.setTimeout(60_000)
   local = await startFixture(false)
@@ -152,6 +173,7 @@ test.beforeAll(async () => {
   administration = await startFixture(false, 'administration')
   endpointAdministration = await startFixture(false, 'endpoints')
   tracing = await startFixture(false, 'tracing')
+  authentication = await startFixture(false, 'authentication')
 })
 test.afterAll(() => {
   for (const fixture of fixtures.reverse()) {
@@ -1159,4 +1181,78 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
     ),
   ).toBe(false)
   expect(dockerLogs(fixture.container).includes(key)).toBe(false)
+})
+
+test('administrator imports, checks and drafts Keycloak connection settings', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto(`${authentication}/portal/login/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  const panel = page.getByRole('region', {
+    name: 'Authentication settings',
+    exact: true,
+  })
+  await expect(panel).toContainText('Config file and environment')
+  await expect(panel).toContainText(`${authentication}/portal/callback`)
+  const effective = panel.getByRole('table', {
+    name: 'Effective authentication settings',
+  })
+  await expect(effective).toContainText(
+    'environment variable OIDC_PORTAL_CLIENT_SECRET',
+  )
+  await expect(
+    effective.getByRole('row', { name: /Issuer URL/ }),
+  ).toContainText('file')
+
+  // Checks against the real development Keycloak, before any import.
+  const checks = panel.getByRole('form', { name: 'Run connection checks' })
+  await checks.getByLabel('Test service client ID').fill('olr-service')
+  await checks
+    .getByLabel('Test service client secret')
+    .fill('olr-service-dev-only')
+  await checks.getByRole('button', { name: 'Run checks', exact: true }).click()
+  const results = panel.getByRole('list', { name: 'Check results' })
+  for (const name of [
+    'Discovery',
+    'Logout metadata',
+    'Portal client credentials',
+    'Service-token audience',
+    'Sync permissions',
+  ])
+    await expect(
+      results.getByRole('listitem').filter({ hasText: name }),
+    ).toContainText('passed')
+
+  await panel.getByRole('button', { name: 'Import current settings' }).click()
+  await expect(panel).toContainText('Database — active revision 1')
+  // A draft with a wrong stored portal secret fails its credential check
+  // and never displays the value.
+  const draft = panel.getByRole('form', { name: 'Edit authentication draft' })
+  await draft.getByLabel('Portal client secret source').selectOption('store')
+  await draft
+    .getByLabel('New portal client secret')
+    .fill('wrong-portal-secret-value')
+  await draft.getByLabel('Primary sign-in option').selectOption('local')
+  await draft.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(panel).toContainText('Draft revision 2')
+  await expect(panel).toContainText('stored encrypted')
+  await checks.getByRole('button', { name: 'Run checks', exact: true }).click()
+  await expect(
+    results
+      .getByRole('listitem')
+      .filter({ hasText: 'Portal client credentials' }),
+  ).toContainText('rejected the portal client ID or secret')
+  await expect(page.locator('body')).not.toContainText(
+    'wrong-portal-secret-value',
+  )
+  await panel
+    .getByRole('button', { name: 'Discard draft', exact: true })
+    .click()
+  await expect(panel).not.toContainText('Draft revision 2')
+  expect(errors).toEqual([])
 })

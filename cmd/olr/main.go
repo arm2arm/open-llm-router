@@ -239,6 +239,8 @@ func serve(args []string) error {
 	portalHandler.Activity = live
 	portalHandler.Pools = forwarder.Pools
 	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: baseConfig, Policy: destinations, Runtime: forwarder}
+	portalHandler.Settings = &settings.Service{DB: database, File: fileConfig, Cipher: settingsCipher, Lookup: os.LookupEnv}
+	portalHandler.SettingsRuntime = managed
 	srv.Handle("/portal", portalHandler)
 	srv.Handle("/portal/", portalHandler)
 

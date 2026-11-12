@@ -19,8 +19,8 @@ no due dates or assignees have been set.
 
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
 browser sign-in/password flows, #75 local user/key administration, #76
-protected-administrator recovery and the #77 managed-settings foundation are
-implemented in this checkout. Endpoint editing for existing logical models now implements part
+protected-administrator recovery, the #77 managed-settings foundation and the #78
+Admin → Authentication page are implemented in this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
 acceptance work.
@@ -159,6 +159,16 @@ activates/rolls back after rechecking, refuses file/environment conflicts and
 reports effective sources. Startup applies the active revision; an unappliable
 revision turns SSO off without falling back to file values, keeping local login.
 The Admin page, connection tests and live client swap remain #78/#79.
+
+Completed for #78: **Admin → Authentication** shows authority, runtime revision,
+effective sources, conflicts and the portal client's redirect/logout/origin URLs;
+imports, edits drafts (including secret rotation and the primary sign-in option)
+and discards them. Connection checks report discovery, logout metadata, portal
+client authentication, service-token audience and sync permissions with fixed,
+redacted messages; test sign-in verifies the identity token and claims with a
+draft's settings without creating users or sessions. Changes need a local admin
+sign-in from the last 15 minutes; outbound checks refuse link-local/metadata
+destinations and never follow redirects. Activation from Admin is #79.
 
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required

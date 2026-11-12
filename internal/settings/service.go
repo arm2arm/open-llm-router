@@ -23,6 +23,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/idpcheck"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,6 +80,7 @@ type Revision struct {
 	Document   *Authentication `json:"document,omitempty"` // secret references only
 	Secrets    []SecretState   `json:"secrets,omitempty"`
 	Validation *Validation     `json:"validation,omitempty"`
+	Checks     *Checks         `json:"checks,omitempty"`
 }
 
 type Validation struct {
@@ -156,11 +158,11 @@ func readState(ctx context.Context, q querier, domain string, lock bool) (state,
 
 func readRevision(ctx context.Context, q querier, domain string, id int64) (revisionRow, error) {
 	var row revisionRow
-	var document, validation []byte
+	var document, validation, checks []byte
 	var basedOn *int64
-	err := q.QueryRow(ctx, `SELECT id,origin,based_on,created_by_label,created_at,document,validation
+	err := q.QueryRow(ctx, `SELECT id,origin,based_on,created_by_label,created_at,document,validation,checks
 		FROM settings_revisions WHERE id=$1 AND domain=$2`, id, domain).
-		Scan(&row.ID, &row.Origin, &basedOn, &row.CreatedBy, &row.CreatedAt, &document, &validation)
+		Scan(&row.ID, &row.Origin, &basedOn, &row.CreatedBy, &row.CreatedAt, &document, &validation, &checks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return row, ErrRevision
 	}
@@ -177,6 +179,12 @@ func readRevision(ctx context.Context, q querier, domain string, id int64) (revi
 		row.Validation = &Validation{}
 		if json.Unmarshal(validation, row.Validation) != nil {
 			row.Validation = nil
+		}
+	}
+	if len(checks) > 0 {
+		row.Checks = &Checks{}
+		if json.Unmarshal(checks, row.Checks) != nil {
+			row.Checks = nil
 		}
 	}
 	return row, nil
@@ -789,4 +797,103 @@ func Apply(ctx context.Context, db *pgxpool.Pool, file *config.Config, cipher *C
 	}
 	log.Info("managed authentication settings applied", "revision", st.active, "sso", row.doc.Enabled)
 	return snapshot, nil
+}
+
+// Checks are the latest connection checks and test sign-in of a revision.
+type Checks struct {
+	Connection *CheckRun        `json:"connection,omitempty"`
+	TestSignIn *idpcheck.Result `json:"test_sign_in,omitempty"`
+	TestedAt   *time.Time       `json:"test_sign_in_at,omitempty"`
+}
+
+type CheckRun struct {
+	Results   []idpcheck.Result `json:"results"`
+	CheckedAt time.Time         `json:"checked_at"`
+}
+
+// Passed reports whether every connection check passed or was skipped and
+// the test sign-in passed.
+func (c *Checks) Passed() bool {
+	if c == nil || c.Connection == nil || c.TestSignIn == nil || c.TestSignIn.Status != idpcheck.Passed {
+		return false
+	}
+	for _, result := range c.Connection.Results {
+		if result.Status == idpcheck.Failed {
+			return false
+		}
+	}
+	return true
+}
+
+// Candidate returns the configuration a revision would run with, for
+// connection checks and test sign-in. Revision 0 is the current effective
+// configuration: the active revision when managed, otherwise the file.
+// File/environment conflicts do not matter here; activation checks them.
+func (s *Service) Candidate(ctx context.Context, domain string, revision int64) (*config.Config, int64, error) {
+	if err := checkDomain(domain); err != nil {
+		return nil, 0, err
+	}
+	st, managed, err := readState(ctx, s.DB, domain, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	if revision == 0 {
+		if !managed {
+			return s.File, 0, nil
+		}
+		revision = st.active
+	} else if !managed {
+		return nil, 0, ErrNotManaged
+	}
+	row, err := readRevision(ctx, s.DB, domain, revision)
+	if err != nil {
+		return nil, 0, err
+	}
+	secrets, _, problems, err := s.resolve(ctx, s.DB, row.doc)
+	if err != nil {
+		return nil, 0, err
+	}
+	if problems = append(row.doc.problems(), problems...); len(problems) > 0 {
+		return nil, 0, &ValidationError{problems}
+	}
+	cfg, err := row.doc.apply(s.File, secrets)
+	return cfg, revision, err
+}
+
+// RecordChecks stores connection check results (and/or a test sign-in) on a
+// revision and audits them. Revision 0 (file-managed) is audited only.
+func (s *Service) RecordChecks(ctx context.Context, domain string, revision int64, connection []idpcheck.Result, signIn *idpcheck.Result, actor audit.Actor) error {
+	action, details := "settings.check", map[string]any{}
+	for _, result := range connection {
+		details[result.Name] = result.Status
+	}
+	if signIn != nil {
+		action, details = "settings.test_sign_in", map[string]any{signIn.Name: signIn.Status}
+	}
+	return s.change(ctx, domain, audit.Event{Action: action, Actor: actor, Revision: revision}, func(tx pgx.Tx, event *audit.Event) error {
+		event.Details = details
+		if revision == 0 {
+			return nil
+		}
+		now := time.Now().UTC()
+		patch := Checks{}
+		if connection != nil {
+			patch.Connection = &CheckRun{Results: connection, CheckedAt: now}
+		}
+		if signIn != nil {
+			patch.TestSignIn, patch.TestedAt = signIn, &now
+		}
+		encoded, err := json.Marshal(patch)
+		if err != nil {
+			return ErrStorage
+		}
+		result, err := tx.Exec(ctx, `UPDATE settings_revisions SET checks=COALESCE(checks,'{}'::jsonb)||$3::jsonb WHERE id=$1 AND domain=$2`, revision, domain, encoded)
+		if err != nil {
+			return ErrStorage
+		}
+		if result.RowsAffected() != 1 {
+			return ErrRevision
+		}
+		return nil
+	})
 }

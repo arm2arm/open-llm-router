@@ -57,6 +57,30 @@ export function SignIn() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const sso = methods.data?.oidc
+  // Administrators choose which option is primary; both stay available.
+  const keycloakFirst = methods.data?.default !== 'local'
+  const keycloak = !directLocal && sso?.configured && (
+    <section
+      aria-label="Keycloak sign-in"
+      className={keycloakFirst ? 'mb-7' : 'mt-7'}
+    >
+      <Button
+        className="w-full"
+        variant={keycloakFirst ? 'default' : 'outline'}
+        disabled={!sso.available}
+        onClick={() => redirect(sso.login_url)}
+      >
+        Continue with Keycloak <ArrowUpRight />
+      </Button>
+      <p className="subtitle">
+        {!sso.available
+          ? 'Keycloak is temporarily unavailable. You can still sign in with a local account.'
+          : keycloakFirst
+            ? 'Recommended for your organization account.'
+            : 'Use your organization account.'}
+      </p>
+    </section>
+  )
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -108,22 +132,7 @@ export function SignIn() {
           </button>
         </div>
       )}
-      {!directLocal && sso?.configured && (
-        <section aria-label="Keycloak sign-in" className="mb-7">
-          <Button
-            className="w-full"
-            disabled={!sso.available}
-            onClick={() => redirect(sso.login_url)}
-          >
-            Continue with Keycloak <ArrowUpRight />
-          </Button>
-          <p className="subtitle">
-            {sso.available
-              ? 'Recommended for your organization account.'
-              : 'Keycloak is temporarily unavailable. You can still sign in with a local account.'}
-          </p>
-        </section>
-      )}
+      {keycloakFirst && keycloak}
       <form
         onSubmit={(event) => void login(event)}
         aria-label="Local sign-in"
@@ -171,13 +180,14 @@ export function SignIn() {
         )}
         <Button
           type="submit"
-          variant={!directLocal && sso?.available ? 'outline' : 'default'}
+          variant={keycloakFirst && sso?.available ? 'outline' : 'default'}
           disabled={pending || !methods.data?.local.available}
         >
           <KeyRound />
           {pending ? 'Signing in…' : 'Sign in with local account'}
         </Button>
       </form>
+      {!keycloakFirst && keycloak}
       <p className="subtitle mt-5">
         The protected local administrator is separate from a Keycloak
         administrator, even when both use the name <strong>admin</strong>.

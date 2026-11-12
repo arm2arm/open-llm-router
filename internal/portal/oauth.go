@@ -94,6 +94,11 @@ func (h *Handler) startLogin(w http.ResponseWriter, r *http.Request, sso *ssoPro
 }
 
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
+	// A test sign-in uses its own cookie and settings revision; it works
+	// even while the active SSO connection is unavailable.
+	if h.testCallback(w, r) {
+		return
+	}
 	sso := h.requireSSO(w)
 	if sso == nil {
 		return

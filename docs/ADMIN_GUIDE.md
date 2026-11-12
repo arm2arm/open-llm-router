@@ -32,8 +32,9 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
 | Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
-| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database) with `olr admin settings` | Router restart/recreation |
-| Configure Keycloak or group policies from the Admin page | **Not implemented** | See the feature plan |
+| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database): **Admin → Authentication** or `olr admin settings` | Router restart/recreation after activation |
+| Test a Keycloak connection and sign-in before using it | **Admin → Authentication** connection checks and test sign-in | Immediately; nothing changes until activation |
+| Configure group policies from the Admin page | **Not implemented** | See the feature plan |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
 | Recover a lost protected administrator password | `olr admin recover` on the host or in the router container | No restart; works without Keycloak |
@@ -180,8 +181,7 @@ hashes; protect them as secrets.
 The SSO connection (issuer, back-channel URL, portal client ID and secret, API
 audience, claim names, required claim, sync client ID/secret and interval) can
 move from YAML/environment into PostgreSQL revisions with `olr admin settings`.
-This is the storage and revision layer for the planned Admin → Authentication
-page ([#78](https://github.com/arm2arm/open-llm-router/issues/78)); live switching
+Use **Admin → Authentication** in the portal or the CLI below; live switching
 without a restart is [#79](https://github.com/arm2arm/open-llm-router/issues/79).
 `OLR_DATABASE_URL`, bootstrap and encryption keys, the listener, `PORTAL_BASE_URL`,
 cookie settings, models and groups are never managed here.
@@ -260,6 +260,54 @@ result), activations, stored secrets and audit events. Database superusers,
 schema changes and intentional database destruction are outside this
 guarantee, as for the protected administrator. A searchable history view is
 [#84](https://github.com/arm2arm/open-llm-router/issues/84).
+
+### Configure and test Keycloak in Admin
+
+**Admin → Authentication** shows the configuration authority (file or database
+revision), the revision this router is running, whether Keycloak is reachable,
+every effective value with its source, and the exact URLs to register on the
+Keycloak portal client: **Valid redirect URI** `<origin>/portal/callback`,
+**Valid post logout redirect URI** `<origin>/` and **Web origin** `<origin>`.
+
+Any administrator can view the page. Importing, saving or discarding drafts,
+running checks and test sign-ins require a **local** administrator session from
+the last 15 minutes; sign in again at `/portal/sign-in/local` when the page says
+so. A Keycloak session cannot reconfigure its own identity provider.
+
+1. **Import current settings** (once) makes the database the authority without
+   changing how anyone signs in.
+2. Edit the draft: SSO on/off, the primary sign-in option (Keycloak or local;
+   both stay available), issuer, back-channel URL, portal client, API audience,
+   claim names, optional required claim, sync client and interval. For each
+   secret choose *keep*, the setting's own environment variable, *store a new
+   secret* (needs `OLR_SETTINGS_ENCRYPTION_KEY`) or *none*. **Save draft** never
+   changes the running configuration; the draft's problems are listed.
+3. **Run checks** on the draft (or on the current settings before importing):
+
+| Check | Passes when |
+|---|---|
+| Discovery | The issuer's OpenID configuration is readable (through the back-channel URL if set) and names this exact issuer |
+| Logout metadata | An `end_session_endpoint` is published, so sign-out also ends the Keycloak session |
+| Portal client credentials | The portal client ID and secret authenticate at the token introspection endpoint |
+| Service-token audience | A token for the optional test service client (for example `olr-service`) names the API audience; the client is used once and not stored |
+| Sync permissions | The sync service account obtains a token and can list users (`realm-management` `view-users`) |
+
+4. **Test sign-in** sends your browser to Keycloak with the draft's settings and
+   back to the normal callback. The router verifies the identity token, the
+   username and groups claims and the required claim, records the result on the
+   draft and returns you to the Admin page. No router user or session is created;
+   your local session is kept. Register the redirect URI above on the draft's
+   client first; sign in as a representative user of the realm.
+5. Activate with `olr admin settings activate` and recreate the router (Admin
+   activation and live switching are [#79](https://github.com/arm2arm/open-llm-router/issues/79)).
+
+Failed checks name the problem without showing secrets or provider responses
+(for example *the provider rejected the portal client ID or secret*). Checks and
+test sign-ins contact only the configured issuer, never follow redirects and
+refuse link-local, metadata, multicast and unspecified addresses. This page
+manages the router's connection only: realms, clients, brokering and group
+membership stay with the Keycloak administrator. Local sign-in stays available
+throughout.
 
 ### Use local authentication without Keycloak
 

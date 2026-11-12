@@ -44,19 +44,9 @@ type Result struct {
 // New discovers the provider and derives the admin API from the issuer,
 // which must have the Keycloak form <base>/realms/<realm>.
 func New(ctx context.Context, cfg *config.OIDC, secret string, pool *pgxpool.Pool, log *slog.Logger) (*Syncer, error) {
-	// The admin API lives next to the realm; reach it the way the router
-	// reaches the issuer (OIDC_BACKCHANNEL_URL when set).
-	reach := cfg.Issuer
-	if cfg.BackchannelURL != "" {
-		reach = cfg.BackchannelURL
-	}
-	issuer, err := url.Parse(reach)
+	admin, err := AdminURL(cfg)
 	if err != nil {
-		return nil, errors.New("invalid issuer")
-	}
-	base, realm, ok := strings.Cut(strings.TrimSuffix(issuer.Path, "/"), "/realms/")
-	if !ok || realm == "" || strings.Contains(realm, "/") {
-		return nil, errors.New("group sync needs a Keycloak issuer of the form <base>/realms/<realm>")
+		return nil, err
 	}
 	idp, err := oidcclient.New(ctx, cfg)
 	if err != nil {
@@ -66,9 +56,31 @@ func New(ctx context.Context, cfg *config.OIDC, secret string, pool *pgxpool.Poo
 	client := credentials.Client(idp.Context(context.Background()))
 	client.Timeout = 10 * time.Second
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Syncer{cfg: cfg, pool: pool, idp: idp, client: client, admin: admin, log: log}, nil
+}
+
+// ErrNotKeycloak reports an issuer without the Keycloak realm path.
+var ErrNotKeycloak = errors.New("group sync needs a Keycloak issuer of the form <base>/realms/<realm>")
+
+// AdminURL derives the Keycloak admin API of the issuer's realm. It lives next
+// to the realm and is reached the way the router reaches the issuer
+// (OIDC_BACKCHANNEL_URL when set).
+func AdminURL(cfg *config.OIDC) (string, error) {
+	reach := cfg.Issuer
+	if cfg.BackchannelURL != "" {
+		reach = cfg.BackchannelURL
+	}
+	issuer, err := url.Parse(reach)
+	if err != nil {
+		return "", errors.New("invalid issuer")
+	}
+	base, realm, ok := strings.Cut(strings.TrimSuffix(issuer.Path, "/"), "/realms/")
+	if !ok || realm == "" || strings.Contains(realm, "/") {
+		return "", ErrNotKeycloak
+	}
 	admin := *issuer
 	admin.Path = base + "/admin/realms/" + realm
-	return &Syncer{cfg: cfg, pool: pool, idp: idp, client: client, admin: admin.String(), log: log}, nil
+	return admin.String(), nil
 }
 
 func (s *Syncer) Close() { s.idp.Close() }

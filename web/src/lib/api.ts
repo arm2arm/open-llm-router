@@ -91,6 +91,7 @@ export type Session = {
   must_change_password: boolean
 }
 export type AuthMethods = {
+  default?: 'oidc' | 'local'
   local: { available: boolean; login_url: string; password_url: string }
   oidc: { configured: boolean; available: boolean; login_url: string }
 }
@@ -277,4 +278,83 @@ export type EndpointSettings = {
   models: EndpointEntry[]
   credential_references: string[]
   allowed_private_networks: string[]
+}
+
+export type SecretRef = { env?: string; stored?: string }
+export type AuthenticationDocument = {
+  enabled: boolean
+  default_sign_in: 'keycloak' | 'local'
+  issuer: string
+  backchannel_url: string
+  portal_client_id: string
+  portal_client_secret: SecretRef
+  audience: string
+  groups_claim: string
+  username_claim: string
+  required_claim: { name: string; value: string } | null
+  sync_client_id: string
+  sync_client_secret: SecretRef
+  sync_interval_s: number
+}
+export type SecretState = {
+  setting: string
+  configured: boolean
+  reference?: 'environment' | 'stored'
+  env?: string
+  id?: string
+  created_at?: string
+  available: boolean
+}
+export type CheckResult = {
+  name: string
+  status: 'passed' | 'failed' | 'skipped'
+  message: string
+}
+export type SettingsRevision = {
+  id: number
+  status: 'active' | 'draft' | 'previously_active' | 'superseded'
+  origin: 'import' | 'draft'
+  based_on?: number
+  created_by: string
+  created_at: string
+  document?: AuthenticationDocument
+  secrets?: SecretState[]
+  validation?: { valid: boolean; problems: string[]; checked_at: string }
+  checks?: {
+    connection?: { results: CheckResult[]; checked_at: string }
+    test_sign_in?: CheckResult
+    test_sign_in_at?: string
+  }
+}
+export type EffectiveSetting = {
+  name: string
+  value?: unknown
+  secret?: SecretState
+  source: 'database' | 'file' | 'environment' | 'default'
+}
+export type AuthenticationView = {
+  settings: {
+    domain: string
+    managed: boolean
+    version: number
+    active?: SettingsRevision
+    draft?: SettingsRevision
+    effective: EffectiveSetting[]
+    conflicts: { setting: string; source: string; where: string }[]
+    history: SettingsRevision[]
+  }
+  urls: {
+    redirect_uri: string
+    post_logout_redirect_uri: string
+    web_origin: string
+  }
+  runtime: {
+    revision: number
+    problem?: string
+    sso_configured: boolean
+    sso_available: boolean
+  }
+  can_change: boolean
+  change_requirement?: string
+  encryption_key_configured: boolean
 }
