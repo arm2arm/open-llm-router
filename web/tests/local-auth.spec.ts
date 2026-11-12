@@ -559,7 +559,10 @@ test('local-only first password change, rotation, revocation and logout', async 
     cookies.find((cookie) => cookie.name === 'olr_session')?.httpOnly,
   ).toBe(true)
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
-  await expect(page).toHaveURL(`${local}/portal/sign-in/local`)
+  await expect(page).toHaveURL(`${local}/`)
+  await expect(
+    page.getByRole('link', { name: 'Sign in', exact: true }),
+  ).toBeVisible()
   expect((await context.request.get(`${local}/portal/api/me`)).status()).toBe(
     401,
   )
@@ -630,7 +633,10 @@ test('unreachable Keycloak keeps the default choice visible and direct local log
     page.getByRole('link', { name: 'Admin', exact: true }),
   ).toBeVisible()
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
-  await expect(page).toHaveURL(`${outage}/portal/sign-in/local`)
+  await expect(page).toHaveURL(`${outage}/`)
+  await expect(
+    page.getByRole('link', { name: 'Sign in', exact: true }),
+  ).toBeVisible()
   await page.setViewportSize({ width: 390, height: 844 })
   expect(
     await page.evaluate(

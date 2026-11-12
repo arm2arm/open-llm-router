@@ -100,6 +100,13 @@ The initialized local account and its new password remain in PostgreSQL. The
 bootstrap input does not reset an existing account. Local users and SSO users can
 both log in; additional local users require no Keycloak setup.
 
+**Upgrading an existing Keycloak setup:** sign-out now returns to the public
+homepage. Before upgrading, add your portal origin followed by `/` (for example,
+`http://localhost:8080/`) to the client's **Valid post logout redirect URIs**.
+The updated development realm import applies only to new realms; update existing
+clients in Keycloak's Admin Console. Keep the old `/portal/` URI allowed while
+older application instances are still running.
+
 ### 4. Verify model listing and streaming
 
 Set the router key in your shell, then run:
@@ -272,7 +279,7 @@ Edit the copy:
 - For Keycloak, set the `env.OIDC_*` values. Register confidential client
   `olr-portal` with PKCE S256, a groups mapper, redirect
   `https://llm.example.org/portal/callback` and post-logout redirect
-  `https://llm.example.org/portal/`. Use your actual host. Group claim values must
+  `https://llm.example.org/`. Use your actual host. Group claim values must
   match `config.groups` exactly. See [external Keycloak setup](ADMIN_GUIDE.md).
   Remove the example's `OIDC_*` entries for local-only login.
 - Set `portal.baseURL`, `ingress.host`, `ingress.className` and TLS Secret name.

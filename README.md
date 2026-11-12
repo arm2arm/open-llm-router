@@ -215,8 +215,10 @@ CI runs the same commands on every push and pull request.
 ## About and acknowledgments
 
 open-llm-router is developed by [Arman Khalatyan](https://github.com/arm2arm) at
-the [Leibniz Institute for Astrophysics Potsdam (AIP)](https://www.aip.de/), with
-development assistance from the Hermes agent.
+the [Leibniz Institute for Astrophysics Potsdam (AIP)](https://www.aip.de/), using
+tools including Hermes, OpenAI Codex and Anthropic Claude Code.
+
+Security checks were performed using OpenAI’s Daybreaker model.
 
 Development of this project at AIP was funded by the **German Federal Ministry of
 Research, Technology and Space (BMFTR)** through the **ErUM-Data** programme as part

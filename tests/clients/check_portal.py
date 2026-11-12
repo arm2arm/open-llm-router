@@ -99,6 +99,7 @@ class Browser:
             form.fields["confirmLogout"] = ""
             with self.opener.open(Request(urljoin(page, form.action), data=urlencode(form.fields).encode()), timeout=15) as response:
                 response.read()
+                assert response.url == self.base + "/", "logout did not reach the public homepage"
         with self.opener.open(self.base + "/portal/login", timeout=15) as response:
             form = Form(response.read().decode())
         assert "username" in form.fields, "identity-provider session survived logout"

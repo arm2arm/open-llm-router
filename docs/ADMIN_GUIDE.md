@@ -112,9 +112,9 @@ Sign in as `admin` with the bootstrap password. The portal requires a replacemen
 of at least 15 characters before allowing workspace or Admin access. Enter the
 bootstrap password in **Current password**, choose and confirm the replacement,
 then sign in again. Later changes are under **Account** and sign out all local
-sessions. **Sign out** invalidates the current session; local logout never needs
-Keycloak. Session cookies are HttpOnly and passwords are not put in URLs or
-browser storage.
+sessions. **Sign out** invalidates the current session and returns to the public
+homepage; local logout never needs Keycloak. Session cookies are HttpOnly and
+passwords are not put in URLs or browser storage.
 
 The sidebar and **Account** page label the identity as **Protected local
 administrator**, **Local account**, or **Keycloak account**. The bundled realm's
@@ -292,7 +292,7 @@ In the site's Keycloak administration console:
 3. Create confidential client `olr-portal` with authorization-code login, client
    authentication and PKCE S256. Register the exact redirect
    `https://llm.example.org/portal/callback` and post-logout redirect
-   `https://llm.example.org/portal/`. Record its client secret.
+   `https://llm.example.org/`. Record its client secret.
 4. Add a group-membership mapper with claim name `groups`, included in ID tokens
    and, where used, access tokens. Set **Full group path off** for this setup.
    The router matches group strings exactly; its Keycloak sync currently reads

@@ -149,8 +149,8 @@ func TestLocalPortalFirstChangeSessionRotationAndLogout(t *testing.T) {
 		t.Fatal("cross-origin logout accepted")
 	}
 	resp, body = b.call(t, "POST", "/portal/logout", `{}`, f.cfg.Portal.BaseURL)
-	if resp.StatusCode != 200 || !strings.Contains(string(body), `"logout_url":"/portal/login/local"`) {
-		t.Fatal("local logout depends on SSO")
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"logout_url":"/"`) {
+		t.Fatal("local logout did not return to the public homepage")
 	}
 	setSessionCookie(b, newSession)
 	if resp, _ := b.call(t, "GET", "/portal/api/me", "", ""); resp.StatusCode != 401 {
@@ -296,8 +296,8 @@ func TestLocalPortalDuringOIDCOutageAndRecovery(t *testing.T) {
 		t.Fatal("same-name SSO login became the protected local administrator")
 	}
 	resp, body = b.call(t, "POST", "/portal/logout", `{}`, f.cfg.Portal.BaseURL)
-	if resp.StatusCode != 200 || strings.Contains(string(body), p.issuer) {
-		t.Fatal("local logout called Keycloak")
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"logout_url":"/"`) {
+		t.Fatal("local logout did not return to the public homepage independently of Keycloak")
 	}
 	resp, body = sso.call(t, "POST", "/portal/logout", `{}`, f.cfg.Portal.BaseURL)
 	if resp.StatusCode != 200 || !strings.Contains(string(body), fmt.Sprintf("%s/logout", p.issuer)) {

@@ -142,7 +142,7 @@ public discovery and completes real logins against the container to verify both 
 
 `OLR_PORT` and `KEYCLOAK_PORT` change the default public origins in Compose. The realm's
 redirects use its `PORTAL_BASE_URL` import placeholder, defaulting to
-`http://localhost:8080/portal/callback` and `http://localhost:8080/portal/` after logout.
+`http://localhost:8080/portal/callback` and `http://localhost:8080/` after logout.
 When copying `.env.example`, keep its explicit origins in sync with any changed ports.
 Use `localhost` in the browser, matching the registered origin and cookies.
 

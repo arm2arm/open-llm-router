@@ -88,12 +88,12 @@ func (h *Handler) signout(w http.ResponseWriter, r *http.Request, u user) {
 	}
 	h.cookie(w, sessionCookie, "", -1)
 	h.cookie(w, loginCookie, "", -1)
-	logoutURL := "/portal/login/local"
+	logoutURL := "/"
 	if sso := h.sso.Load(); u.AuthMethod == "oidc" && sso != nil && h.ssoAvailable.Load() {
 		providerURL, _ := url.Parse(sso.logout)
 		q := providerURL.Query()
 		q.Set("client_id", sso.oauth.ClientID)
-		q.Set("post_logout_redirect_uri", h.cfg.Portal.BaseURL+"/portal/")
+		q.Set("post_logout_redirect_uri", h.cfg.Portal.BaseURL+"/")
 		providerURL.RawQuery = q.Encode()
 		logoutURL = providerURL.String()
 	}

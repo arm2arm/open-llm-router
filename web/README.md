@@ -18,7 +18,7 @@ displayed during the journey. No test artifacts are uploaded in CI.
 
 For hot reload, run the router with `PORTAL_BASE_URL=http://localhost:5173`,
 `PORTAL_COOKIE_SECURE=false`, and register `http://localhost:5173/portal/callback`
-and the matching post-logout redirect in your development OIDC client. The
+and `http://localhost:5173/` as the post-logout redirect in your development OIDC client. The
 Compose realm gets these from `PORTAL_BASE_URL` when first imported; use a fresh
 development Keycloak volume or update the client when changing the URL later.
 Then run `npm run dev`. `OLR_DEV_ROUTER` optionally changes the proxy destination

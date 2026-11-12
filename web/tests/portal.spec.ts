@@ -224,6 +224,10 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
   await expect(page.getByRole('button', { name: /logout/i })).toBeVisible()
   await page.getByRole('button', { name: /logout/i }).click()
+  await expect(page).toHaveURL('/')
+  await expect(
+    page.getByRole('link', { name: 'Sign in', exact: true }),
+  ).toBeVisible()
   await page.goto('/portal/keys')
   await expect(
     page.getByRole('button', { name: 'Continue with Keycloak' }),

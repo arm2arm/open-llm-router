@@ -387,6 +387,10 @@ func TestPortalUserIsolationRevocationAndLogout(t *testing.T) {
 	if json.Unmarshal(data, &logout) != nil || resp.StatusCode != 200 || !strings.HasPrefix(logout.URL, f.provider.issuer+"/logout?") || strings.Contains(logout.URL, "id_token_hint") {
 		t.Fatal("invalid logout")
 	}
+	providerLogout, err := url.Parse(logout.URL)
+	if err != nil || providerLogout.Query().Get("post_logout_redirect_uri") != f.cfg.Portal.BaseURL+"/" {
+		t.Fatal("SSO logout did not return to the public homepage")
+	}
 	resp, _ = a.call(t, "GET", "/portal/api/me", "", "")
 	if resp.StatusCode != 401 {
 		t.Fatal("logged-out session survived")
