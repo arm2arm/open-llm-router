@@ -12,6 +12,14 @@ async function login(page: Page) {
   await expect(
     page.getByRole('heading', { name: 'My requests', exact: true }),
   ).toBeVisible()
+  // These synthetic trace journeys require the explicitly approved CI site
+  // fixture AND an explicit personal opt-in before sending any content.
+  const consent = await page.request.put('/portal/api/trace-preferences', {
+    headers: { Origin: new URL(page.url()).origin },
+    data: { enabled: true, retention_days: 7 },
+  })
+  expect(consent.ok()).toBe(true)
+  await page.reload()
 }
 
 async function apiKey(context: BrowserContext, baseURL: string) {

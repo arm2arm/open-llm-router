@@ -76,6 +76,18 @@ jobs:
           python3 deploy/observability/tools/dashboard.py | diff - deploy/observability/grafana/dashboards/open-llm-router.json
       - name: Verify trusted-edge authentication throttling
         run: python3 tests/security/check_edge.py
+      - name: Prepare explicitly approved synthetic content-capture fixture
+        run: |
+          python3 - <<'PYCONFIG'
+          import os, pathlib
+          source = pathlib.Path("config.example.yaml").read_text()
+          marker = "content_tracing:\n  enabled: false"
+          assert marker in source
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "trace-fixture.yaml"
+          path.write_text(source.replace(marker, "content_tracing:\n  enabled: true", 1))
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"OLR_CONFIG_FILE={path}\n")
+          PYCONFIG
       - name: Build images and start the stack
         run: make up
       - name: Probe router and both mock backends
