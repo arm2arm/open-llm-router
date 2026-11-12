@@ -16,6 +16,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
 	"github.com/arm2arm/open-llm-router/internal/portal"
@@ -62,12 +63,17 @@ func startUsageRouter(t *testing.T, handler http.Handler, options ...usageOption
 	if err != nil {
 		t.Fatal(err)
 	}
-	authenticator, err := auth.New(t.Context(), f.pool)
+	credentials, err := db.OpenCredentials(t.Context(), f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(credentials.Close)
+	authenticator, err := auth.New(t.Context(), credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(options) > 0 && options[0].tokens != nil {
-		options[0].tokens(f.pool)(authenticator)
+		options[0].tokens(credentials)(authenticator)
 	}
 	if len(options) > 0 && options[0].forwarders != nil {
 		authenticator.Forwarders = *options[0].forwarders

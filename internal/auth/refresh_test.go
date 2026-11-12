@@ -46,7 +46,7 @@ func TestConcurrentCacheRefreshUsesOneLookup(t *testing.T) {
 	a.cache[hash] = cacheEntry{principal: store.record.Principal, until: time.Now().Add(-time.Second)}
 	var ready, done sync.WaitGroup
 	start := make(chan struct{})
-	for range 256 {
+	for range MaxCredentialWork {
 		ready.Add(1)
 		done.Go(func() {
 			ready.Done()

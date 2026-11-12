@@ -22,17 +22,19 @@ import (
 // independently of listening/local authentication; failed discovery is
 // retried and API keys remain usable throughout an IdP outage.
 type oidcServices struct {
-	pool     *pgxpool.Pool
-	fresh    func() (uint64, bool)
-	log      *slog.Logger
-	mu       sync.Mutex
-	verifier atomic.Pointer[apitoken.Verifier]
-	audience atomic.Bool // the active configuration accepts IdP tokens
-	stop     func()
+	pool        *pgxpool.Pool
+	credentials *pgxpool.Pool
+	work        *auth.WorkLimiter
+	fresh       func() (uint64, bool)
+	log         *slog.Logger
+	mu          sync.Mutex
+	verifier    atomic.Pointer[apitoken.Verifier]
+	audience    atomic.Bool // the active configuration accepts IdP tokens
+	stop        func()
 }
 
-func newOIDCServices(cfg *config.Config, pool *pgxpool.Pool, authenticator *auth.Authenticator, log *slog.Logger) *oidcServices {
-	s := &oidcServices{pool: pool, log: log, fresh: authenticator.Freshness, stop: func() {}}
+func newOIDCServices(cfg *config.Config, pool, credentials *pgxpool.Pool, authenticator *auth.Authenticator, log *slog.Logger) *oidcServices {
+	s := &oidcServices{pool: pool, credentials: credentials, work: authenticator.WorkBudget(), log: log, fresh: authenticator.Freshness, stop: func() {}}
 	authenticator.Tokens = func(ctx context.Context, raw string) (auth.Principal, error) {
 		if !s.audience.Load() {
 			return auth.Principal{}, auth.ErrInvalidKey // not a key, and IdP tokens are off
@@ -61,7 +63,7 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 		wg.Go(func() {
 			retryOIDC(ctx, s.log, "API tokens", func(ctx context.Context) bool {
 				attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
-				verifier, err := apitoken.New(attempt, oidcCfg, s.pool, s.fresh)
+				verifier, err := apitoken.New(attempt, oidcCfg, s.credentials, s.fresh, s.work)
 				cancel()
 				if err != nil {
 					return false

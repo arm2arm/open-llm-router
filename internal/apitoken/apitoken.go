@@ -34,6 +34,8 @@ type Verifier struct {
 	admin    auth.Admin
 	mu       sync.Mutex
 	cache    map[[32]byte]entry
+	work     *auth.WorkLimiter
+	failures auth.FailureCache
 	now      func() time.Time
 	// fresh reports the invalidation generation and whether caching is safe
 	// (the invalidation listener is connected).
@@ -47,8 +49,9 @@ type entry struct {
 }
 
 // New discovers the provider. fresh is normally Authenticator.Freshness;
-// nil disables caching. Close releases its connections.
-func New(ctx context.Context, cfg *config.OIDC, pool *pgxpool.Pool, fresh func() (uint64, bool)) (*Verifier, error) {
+// nil disables positive caching. work is the authenticator's shared work budget;
+// nil creates a standalone budget. Close releases its connections.
+func New(ctx context.Context, cfg *config.OIDC, pool *pgxpool.Pool, fresh func() (uint64, bool), work *auth.WorkLimiter) (*Verifier, error) {
 	idp, err := oidcclient.New(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -56,8 +59,11 @@ func New(ctx context.Context, cfg *config.OIDC, pool *pgxpool.Pool, fresh func()
 	if fresh == nil {
 		fresh = func() (uint64, bool) { return 0, false }
 	}
+	if work == nil {
+		work = auth.NewWorkLimiter()
+	}
 	return &Verifier{cfg: cfg, idp: idp, admin: auth.Admin{Pool: pool}, cache: map[[32]byte]entry{}, now: time.Now, fresh: fresh,
-		verifier: idp.Provider.Verifier(&oidc.Config{ClientID: cfg.Audience})}, nil
+		work: work, verifier: idp.Provider.Verifier(&oidc.Config{ClientID: cfg.Audience})}, nil
 }
 
 func (v *Verifier) Close() { v.idp.Close() }
@@ -65,6 +71,9 @@ func (v *Verifier) Close() { v.idp.Close() }
 // Authenticate returns the principal of a valid access token, or
 // auth.ErrInvalidKey.
 func (v *Verifier) Authenticate(ctx context.Context, raw string) (auth.Principal, error) {
+	if err := ctx.Err(); err != nil {
+		return auth.Principal{}, err
+	}
 	hash := sha256.Sum256([]byte(raw))
 	// Read the generation before any database lookup: an invalidation that
 	// races with this request makes the stored entry stale at once.
@@ -75,6 +84,21 @@ func (v *Verifier) Authenticate(ctx context.Context, raw string) (auth.Principal
 	if ok && cacheable && cached.generation == generation && v.now().Before(cached.until) {
 		return cached.principal, nil
 	}
+	if err := v.failures.Check(hash, generation, v.now()); err != nil {
+		return auth.Principal{}, err
+	}
+	if !v.work.TryAcquire() {
+		return auth.Principal{}, auth.ErrAuthBusy
+	}
+	defer v.work.Release()
+	p, err := v.authenticate(ctx, raw, hash, generation, cacheable)
+	if errors.Is(err, auth.ErrInvalidKey) && ctx.Err() == nil {
+		v.failures.Remember(hash, generation, v.now())
+	}
+	return p, err
+}
+
+func (v *Verifier) authenticate(ctx context.Context, raw string, hash [32]byte, generation uint64, cacheable bool) (auth.Principal, error) {
 	token, err := v.verifier.Verify(v.idp.Context(ctx), raw)
 	if err != nil || token.Subject == "" || token.Issuer != v.cfg.Issuer {
 		return auth.Principal{}, auth.ErrInvalidKey

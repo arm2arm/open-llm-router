@@ -163,7 +163,13 @@ func serve(args []string) error {
 		return err
 	}
 	authCtx, cancelAuth := context.WithTimeout(ctx, 10*time.Second)
-	authenticator, err := auth.New(authCtx, database)
+	credentialDB, err := db.OpenCredentials(authCtx, database)
+	if err != nil {
+		cancelAuth()
+		return err
+	}
+	defer credentialDB.Close()
+	authenticator, err := auth.New(authCtx, credentialDB)
 	cancelAuth()
 	if err != nil {
 		return err
@@ -171,7 +177,7 @@ func serve(args []string) error {
 	defer authenticator.Close()
 	authenticator.Forwarders = cfg.Forwarders
 
-	ssoServices := newOIDCServices(cfg, database, authenticator, log)
+	ssoServices := newOIDCServices(cfg, database, credentialDB, authenticator, log)
 	defer ssoServices.Close()
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
