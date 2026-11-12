@@ -18,18 +18,40 @@ timings are not a performance benchmark. [Capture workflow](images/README.md).*
    table, which refreshes every 5 seconds while the page is open. Background capture
    becomes available shortly after completion. Existing historical requests cannot
    be backfilled.
-3. Select a request ID in the table. **Conversation** shows input/output messages,
-   collapsible reasoning, tool calls with reconstructed arguments, and tool results
-   in input messages. The router forwards tool calls; the client executes tools and
-   submits their results in subsequent requests. It does not execute or trace tools
-   itself.
-4. **Stream events** shows text, reasoning and tool argument deltas, relative arrival
-   times, completion and provider errors. Filter by event type. Events appear in
-   pages of 100. This is a completed-request replay, not a live token console.
-5. **Details** shows the full request ID, operation, expiry and selected generation
-   parameters. Correlate the ID with `X-Request-Id` in the response and server logs.
-   Search the table by model, protocol, status, operation or request ID; filter for
-   streams, failures or requests with detail.
+3. Select a request ID in the table. The trace opens in a side panel with its own
+   address (`/portal/requests/<request id>`), so a reload or bookmark reopens it. Press
+   **j** / **k** or the arrow buttons to move to the next older or newer request.
+   - **Overview:** total time, first token, output speed, tokens (cached and reasoning
+     when the provider reports them) and the finish reason. A timing bar splits the
+     call into admission, replica queue, failed attempts, waiting for the first byte and
+     streaming; a second bar shows when reasoning, text and tool arguments arrived.
+     **Routing** shows the requested → canonical → upstream model, every attempt by
+     pool position, the router's changes to the forwarded body and the names of the
+     forwarded headers. **Request** lists IDs, the served model, the upstream status,
+     provider usage fields and all request parameters.
+   - **Conversation:** input and output messages with Markdown formatting (or plain
+     text), folded long prompts and folded earlier rounds of long agent loops, a copy
+     button per message and a search that highlights matches. Tool calls link to the
+     message holding their result, and results name the call they answer.
+   - **Tools:** each tool call paired with its result by ID: arguments and result side
+     by side, with a status (result returned, awaiting your client, or none). Calls
+     the model requested in this response are listed first. **Declared tools** shows
+     each tool's description, JSON schema and call count; calls to undeclared tools are
+     flagged. The router forwards tool calls; your client executes them and submits
+     their results in the next request.
+   - **Timeline:** consecutive deltas merged into segments (for example 39 reasoning
+     events, then 49 text events) on a time axis; expand one to read its text. **All
+     events** shows the individual deltas, filterable by type, in pages of 100.
+   - **Raw:** the request body as the client sent it, the body forwarded to the model
+     server (the client body with the router's recorded changes applied), the response
+     body or the first 200 stream frames, and the full normalized trace. Each view is a
+     collapsible JSON tree with copy and download buttons. Omitted content appears as
+     markers such as `«image payload omitted»`.
+4. Search the table by model, status, finish reason, protocol, operation or request ID;
+   filter for streams, failures, requests with detail, tool calls or truncated capture;
+   and limit the time range. The **Tools** column shows how many calls the model
+   requested and how many results the client sent. Filters are kept in the page
+   address.
 
 Timing cards show total latency, time to first byte (labelled first token), token
 counts and estimated output speed. Event times measure when the router observed

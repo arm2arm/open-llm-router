@@ -352,7 +352,7 @@ function Workspace({
                 <Route path="/keys" element={<Keys me={me.data} />} />
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/connect" element={<Connect />} />
-                <Route path="/requests" element={<RequestsPage />} />
+                <Route path="/requests/:id?" element={<RequestsPage />} />
                 <Route
                   path="/account"
                   element={<AccountPage me={me.data} session={session} />}

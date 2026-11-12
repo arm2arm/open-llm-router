@@ -1,18 +1,18 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity,
   ArrowDownLeft,
   ArrowUpRight,
-  Braces,
-  Clock3,
-  Fingerprint,
+  ChevronDown,
+  ChevronUp,
   RefreshCw,
   Search,
   ShieldCheck,
-  Sparkles,
   Trash2,
   Workflow,
+  Wrench,
   Zap,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -24,51 +24,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { api, type RequestRecord } from '@/lib/api'
+import { api } from '@/lib/api'
+import {
+  date,
+  label,
+  ms,
+  n,
+  ok,
+  operation,
+  plural,
+  shortDate,
+  type Row,
+} from './requests/model'
+import { Metric } from './requests/widgets'
+import { TraceDetail } from './requests/trace-detail'
 
 type Preferences = { enabled: boolean; retention_days: number }
-type Block = {
-  type: string
-  text?: string
-  name?: string
-  id?: string
-  arguments?: string
-}
-type Message = { role: string; blocks: Block[] }
-type Trace = {
-  request_id: string
-  expires_at: string
-  detail: {
-    operation: string
-    input: Message[]
-    output: Message[]
-    events: { ms: number; type: string; text?: string }[]
-    parameters: Record<string, unknown>
-    truncated: boolean
-    warnings: string[]
-  }
-}
-const n = (v: number) => new Intl.NumberFormat().format(v)
-const ms = (v: number | null) =>
-  v === null ? '—' : v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${n(v)} ms`
-const date = (v: string) => new Date(v).toLocaleString()
-const shortDate = (v: string) =>
-  new Date(v).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
-const label = (v: string) => v.replaceAll('_', ' ')
-const operation = (r: RequestRecord) =>
-  !r.operation
-    ? 'Request'
-    : r.operation === 'embeddings'
-      ? 'Embedding'
-      : r.operation === 'completions'
-        ? 'Completion'
-        : 'Chat'
+type Filter = 'all' | 'stream' | 'errors' | 'traces' | 'tools' | 'truncated'
+const ranges = {
+  any: 0,
+  '15m': 15 * 60e3,
+  '1h': 60 * 60e3,
+  '24h': 24 * 60 * 60e3,
+} as const
+
 function ErrorNotice({ error }: { error: Error | null }) {
   return error ? (
     <p className="error" role="alert">
@@ -77,12 +56,31 @@ function ErrorNotice({ error }: { error: Error | null }) {
   ) : null
 }
 
+function matches(r: Row, search: string, filter: Filter, since: number) {
+  const s = r.trace_summary
+  return (
+    `${r.model} ${r.status} ${r.request_id ?? ''} ${r.protocol} ${r.operation} ${s?.finish_reason ?? ''}`
+      .toLowerCase()
+      .includes(search.toLowerCase()) &&
+    (since === 0 || new Date(r.time).getTime() >= since) &&
+    (filter === 'all' ||
+      (filter === 'stream' && r.stream) ||
+      (filter === 'errors' && !ok(r.status)) ||
+      (filter === 'traces' && r.trace_available) ||
+      (filter === 'tools' && !!s && s.tool_calls + s.tool_results > 0) ||
+      (filter === 'truncated' && !!s?.truncated))
+  )
+}
+
 export function RequestsPage() {
   const client = useQueryClient()
+  const navigate = useNavigate()
+  const { id } = useParams()
+  const [params, setParams] = useSearchParams()
   const query = useQuery({
     queryKey: ['requests'],
     queryFn: ({ signal }) =>
-      api<{ requests: RequestRecord[]; limit: number }>(
+      api<{ requests: Row[]; limit: number }>(
         'requests',
         'GET',
         undefined,
@@ -94,30 +92,52 @@ export function RequestsPage() {
     queryKey: ['trace-preferences'],
     queryFn: () => api<Preferences>('trace-preferences'),
   })
-  const [search, setSearch] = useState('')
-  const [mode, setMode] = useState('all')
-  const [selected, setSelected] = useState<RequestRecord | null>(null)
+  const search = params.get('q') ?? ''
+  const filter = (params.get('filter') ?? 'all') as Filter
+  const range = (params.get('range') ?? 'any') as keyof typeof ranges
+  const setParam = (key: string, value: string, fallback: string) =>
+    setParams(
+      (p) => {
+        if (value === fallback) p.delete(key)
+        else p.set(key, value)
+        return p
+      },
+      { replace: true },
+    )
   const [confirmClear, setConfirmClear] = useState(false)
   const clear = useMutation({
     mutationFn: () => api('request-traces', 'DELETE'),
     onSuccess: () => {
-      setSelected(null)
+      close()
       setConfirmClear(false)
       client.removeQueries({ queryKey: ['request-trace'] })
       void client.invalidateQueries({ queryKey: ['requests'] })
     },
   })
-  const all = query.data?.requests ?? []
-  const rows = all.filter(
-    (r) =>
-      `${r.model} ${r.status} ${r.request_id ?? ''} ${r.protocol} ${r.operation}`
-        .toLowerCase()
-        .includes(search.toLowerCase()) &&
-      (mode === 'all' ||
-        (mode === 'stream' && r.stream) ||
-        (mode === 'errors' && !r.status.startsWith('2')) ||
-        (mode === 'traces' && r.trace_available)),
-  )
+  const all = useMemo(() => query.data?.requests ?? [], [query.data])
+  // eslint-disable-next-line react-hooks/purity -- the range is relative to each render
+  const since = ranges[range] ? Date.now() - ranges[range] : 0
+  const rows = all.filter((r) => matches(r, search, filter, since))
+  const selected = id ? all.find((r) => r.request_id === id) : undefined
+  const position = rows.findIndex((r) => r.request_id === id)
+  const open = (rid: string) =>
+    navigate({ pathname: `/requests/${rid}`, search: params.toString() })
+  function close() {
+    navigate({ pathname: '/requests', search: params.toString() })
+  }
+  const step = (delta: number) => {
+    for (let i = position + delta; i >= 0 && i < rows.length; i += delta) {
+      const r = rows[i]
+      if (r.trace_available && r.request_id) return open(r.request_id)
+    }
+  }
+  function keys(e: KeyboardEvent) {
+    const target = e.target as HTMLElement
+    if (target.closest('input, textarea, select, [contenteditable]')) return
+    if (e.key === 'j') step(1)
+    if (e.key === 'k') step(-1)
+  }
+  const tools = all.reduce((s, r) => s + (r.trace_summary?.tool_calls ?? 0), 0)
   return (
     <>
       <div className="page-head">
@@ -129,14 +149,16 @@ export function RequestsPage() {
             response.
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => void query.refetch()}
-          disabled={query.isFetching}
-        >
-          <RefreshCw size={15} />
-          Refresh
-        </Button>
+        <div className="trace-head-actions">
+          <Button
+            variant="outline"
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+          >
+            <RefreshCw size={15} />
+            Refresh
+          </Button>
+        </div>
       </div>
       <ErrorNotice error={query.error ?? prefs.error} />
       {prefs.data && (
@@ -150,25 +172,25 @@ export function RequestsPage() {
           icon={<Activity size={17} />}
           title="Recent requests"
           value={n(all.length)}
-          hint={`Last ${query.data?.limit ?? 200} requests`}
+          hint={`${n(all.filter((r) => !ok(r.status)).length)} failed or interrupted`}
         />
         <Metric
-          icon={<Zap size={17} />}
-          title="Streaming"
-          value={n(all.filter((r) => r.stream).length)}
-          hint="Incremental responses"
+          icon={<Wrench size={17} />}
+          title="Tool calls"
+          value={n(tools)}
+          hint={`${n(all.filter((r) => r.stream).length)} streamed requests`}
         />
         <Metric
           icon={<ArrowUpRight size={17} />}
           title="Input tokens"
           value={n(all.reduce((s, r) => s + r.input_tokens, 0))}
-          hint="Across recent requests"
+          hint={`${n(all.reduce((s, r) => s + (r.trace_summary?.cached_tokens ?? 0), 0))} cached`}
         />
         <Metric
           icon={<ArrowDownLeft size={17} />}
           title="Output tokens"
           value={n(all.reduce((s, r) => s + r.output_tokens, 0))}
-          hint="Across recent requests"
+          hint={`${n(all.reduce((s, r) => s + (r.trace_summary?.reasoning_tokens ?? 0), 0))} reasoning`}
         />
       </div>
       <section className="panel trace-history" aria-label="Recent requests">
@@ -177,20 +199,32 @@ export function RequestsPage() {
             <Search size={16} />
             <Input
               aria-label="Search requests"
-              placeholder="Search model, status or request ID…"
+              placeholder="Search model, status, finish reason or request ID…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => setParam('q', e.target.value, '')}
             />
           </div>
           <select
             aria-label="Filter requests"
-            value={mode}
-            onChange={(e) => setMode(e.target.value)}
+            value={filter}
+            onChange={(e) => setParam('filter', e.target.value, 'all')}
           >
             <option value="all">All requests</option>
             <option value="stream">Streaming</option>
             <option value="errors">Errors & interrupted</option>
             <option value="traces">With traces</option>
+            <option value="tools">With tool calls</option>
+            <option value="truncated">Truncated capture</option>
+          </select>
+          <select
+            aria-label="Time range"
+            value={range}
+            onChange={(e) => setParam('range', e.target.value, 'any')}
+          >
+            <option value="any">Any time</option>
+            <option value="15m">Last 15 minutes</option>
+            <option value="1h">Last hour</option>
+            <option value="24h">Last 24 hours</option>
           </select>
           <Button
             variant="ghost"
@@ -220,6 +254,7 @@ export function RequestsPage() {
                   <th>Time / request</th>
                   <th>Model / type</th>
                   <th>Status</th>
+                  <th>Tools</th>
                   <th>Tokens</th>
                   <th>Latency</th>
                   <th>Key</th>
@@ -227,96 +262,64 @@ export function RequestsPage() {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.request_id ?? `${r.time}-${i}`}>
-                    <td className="whitespace-nowrap">
-                      {shortDate(r.time)}
-                      {r.trace_available && r.request_id ? (
-                        <Button
-                          variant="ghost"
-                          className="trace-request-link"
-                          size="sm"
-                          aria-label={`Inspect request ${r.request_id}`}
-                          onClick={() => setSelected(r)}
-                        >
-                          <Workflow size={14} />
-                          <code>{r.request_id.slice(0, 12)}</code>
-                        </Button>
-                      ) : (
-                        <span
-                          className="trace-secondary"
-                          title="Capture may be disabled, expired, pending or skipped when tracing is at capacity. Older requests have no content."
-                        >
-                          {r.request_id?.slice(0, 12) ?? 'Older request'} · No
-                          detail
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <strong>{r.model || '—'}</strong>
-                      <span className="trace-secondary">
-                        {r.protocol} · {operation(r)}{' '}
-                        {r.stream && (
-                          <span className="trace-stream">
-                            <Zap size={11} />
-                            Stream
-                          </span>
-                        )}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${r.status.startsWith('2') ? '' : 'inactive'}`}
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                    <td>
-                      {n(r.output_tokens)} out
-                      <span className="trace-secondary">
-                        {n(r.input_tokens)} in
-                      </span>
-                    </td>
-                    <td>
-                      {ms(r.latency_ms)}
-                      <span className="trace-secondary">
-                        First {ms(r.ttfb_ms)}
-                      </span>
-                    </td>
-                    <td>
-                      <code className="text-xs text-muted-foreground">
-                        {r.forwarded
-                          ? 'via application'
-                          : r.key_prefix
-                            ? `${r.key_prefix}…`
-                            : 'removed'}
-                      </code>
-                    </td>
-                  </tr>
+                  <RequestRow
+                    key={r.request_id ?? `${r.time}-${i}`}
+                    r={r}
+                    active={r.request_id === id}
+                    open={open}
+                  />
                 ))}
               </tbody>
             </table>
           </div>
         )}
         <p className="trace-footnote">
-          Select a request ID to inspect. Updates every 5 seconds while this
-          page is open. Traces appear after completion; event timing shows how
-          streamed content arrived.
+          Select a request ID to inspect; use j / k to move between requests.
+          Updates every 5 seconds while this page is open.
         </p>
       </section>
       <Dialog
-        open={selected !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null)
+        open={!!id}
+        onOpenChange={(o) => {
+          if (!o) close()
         }}
       >
-        <DialogContent className="trace-dialog">
-          <DialogHeader>
-            <DialogTitle>Request trace</DialogTitle>
-            <DialogDescription>
-              {selected?.model} · {selected && date(selected.time)}
-            </DialogDescription>
+        <DialogContent className="trace-dialog" onKeyDown={keys}>
+          <DialogHeader className="trace-dialog-head">
+            <div>
+              <DialogTitle>Request trace</DialogTitle>
+              <DialogDescription>
+                {selected ? (
+                  `${selected.model || 'unknown model'} · ${date(selected.time)}`
+                ) : (
+                  <code>{id}</code>
+                )}
+              </DialogDescription>
+            </div>
+            <div className="trace-nav">
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Previous request (k)"
+                title="Newer request (k)"
+                disabled={position <= 0}
+                onClick={() => step(-1)}
+              >
+                <ChevronUp size={15} />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Next request (j)"
+                title="Older request (j)"
+                disabled={position < 0 || position >= rows.length - 1}
+                onClick={() => step(1)}
+              >
+                <ChevronDown size={15} />
+              </Button>
+            </div>
           </DialogHeader>
-          {selected && <TraceDetail record={selected} />}
+          {id && <TraceDetail key={id} id={id} record={selected} />}
         </DialogContent>
       </Dialog>
       <Dialog open={confirmClear} onOpenChange={setConfirmClear}>
@@ -340,6 +343,102 @@ export function RequestsPage() {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+function RequestRow({
+  r,
+  active,
+  open,
+}: {
+  r: Row
+  active: boolean
+  open: (id: string) => void
+}) {
+  const s = r.trace_summary
+  return (
+    <tr className={active ? 'trace-row-active' : ''}>
+      <td className="whitespace-nowrap">
+        {shortDate(r.time)}
+        {r.trace_available && r.request_id ? (
+          <Button
+            variant="ghost"
+            className="trace-request-link"
+            size="sm"
+            aria-label={`Inspect request ${r.request_id}`}
+            onClick={() => open(r.request_id!)}
+          >
+            <Workflow size={14} />
+            <code>{r.request_id.slice(0, 12)}</code>
+          </Button>
+        ) : (
+          <span
+            className="trace-secondary"
+            title="Capture may be disabled, expired, pending or skipped when tracing is at capacity. Older requests have no content."
+          >
+            {r.request_id?.slice(0, 12) ?? 'Older request'} · No detail
+          </span>
+        )}
+      </td>
+      <td>
+        <strong>{r.model || '—'}</strong>
+        <span className="trace-secondary">
+          {r.protocol} · {operation(r)}{' '}
+          {r.stream && (
+            <span className="trace-stream">
+              <Zap size={11} />
+              Stream
+            </span>
+          )}
+        </span>
+      </td>
+      <td>
+        <span className={`badge ${ok(r.status) ? '' : 'inactive'}`}>
+          {r.status}
+        </span>
+        {s?.finish_reason && (
+          <span className="trace-secondary">{label(s.finish_reason)}</span>
+        )}
+      </td>
+      <td>
+        {s && s.tool_calls > 0 && (
+          <span className="trace-tool-chip">
+            <Wrench size={11} />
+            {plural(s.tool_calls, 'call')} requested
+          </span>
+        )}
+        {s && s.tool_results > 0 && (
+          <span className="trace-secondary">
+            {plural(s.tool_results, 'result')} sent
+          </span>
+        )}
+        {s && s.tool_calls + s.tool_results === 0 && (
+          <span className="trace-secondary">
+            {s.tools ? `${plural(s.tools, 'tool')} declared` : '—'}
+          </span>
+        )}
+      </td>
+      <td>
+        {n(r.output_tokens)} out
+        <span className="trace-secondary">
+          {n(r.input_tokens)} in
+          {s?.cached_tokens ? ` · ${n(s.cached_tokens)} cached` : ''}
+        </span>
+      </td>
+      <td>
+        {ms(r.latency_ms)}
+        <span className="trace-secondary">First {ms(r.ttfb_ms)}</span>
+      </td>
+      <td>
+        <code className="text-xs text-muted-foreground">
+          {r.forwarded
+            ? 'via application'
+            : r.key_prefix
+              ? `${r.key_prefix}…`
+              : 'removed'}
+        </code>
+      </td>
+    </tr>
   )
 }
 
@@ -419,264 +518,5 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
       </p>
       <ErrorNotice error={save.error} />
     </section>
-  )
-}
-function Metric({
-  icon,
-  title,
-  value,
-  hint,
-}: {
-  icon: React.ReactNode
-  title: string
-  value: string
-  hint: string
-}) {
-  return (
-    <div className="trace-metric">
-      <span>
-        {icon}
-        {title}
-      </span>
-      <strong>{value}</strong>
-      <small>{hint}</small>
-    </div>
-  )
-}
-function pretty(value: string) {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2)
-  } catch {
-    return value
-  }
-}
-function Content({ block }: { block: Block }) {
-  if (block.type === 'reasoning')
-    return (
-      <details className="trace-reasoning">
-        <summary>
-          <Sparkles size={14} />
-          Reasoning
-        </summary>
-        <pre>{block.text}</pre>
-      </details>
-    )
-  if (block.type === 'tool_call' || block.type === 'tool_result')
-    return (
-      <div className="trace-tool">
-        <div>
-          <Braces size={15} />
-          <strong>
-            {block.type === 'tool_call' ? 'Tool call' : 'Tool result'}
-            {block.name ? ` · ${block.name}` : ''}
-          </strong>
-        </div>
-        {block.id && <code className="trace-secondary">{block.id}</code>}
-        <pre>{pretty(block.arguments ?? block.text ?? '')}</pre>
-      </div>
-    )
-  return (
-    <pre
-      className={`trace-text ${['image', 'document', 'audio'].includes(block.type) ? 'text-muted-foreground' : ''}`}
-    >
-      {block.text}
-    </pre>
-  )
-}
-function Messages({ title, messages }: { title: string; messages: Message[] }) {
-  return (
-    <section className="trace-messages">
-      <h3>
-        {title}
-        <span>
-          {messages.length} message{messages.length === 1 ? '' : 's'}
-        </span>
-      </h3>
-      {messages.length === 0 ? (
-        <p className="trace-secondary">No content captured.</p>
-      ) : (
-        messages.map((m, i) => (
-          <article key={i} className={`trace-message trace-role-${m.role}`}>
-            <div className="trace-role">{m.role}</div>
-            {m.blocks.map((b, j) => (
-              <Content key={j} block={b} />
-            ))}
-          </article>
-        ))
-      )}
-    </section>
-  )
-}
-function TraceDetail({ record }: { record: RequestRecord }) {
-  // Content is fetched only on demand and removed from the query cache when
-  // the dialog closes. Never persist trace bodies in browser storage.
-  const query = useQuery({
-    queryKey: ['request-trace', record.request_id],
-    queryFn: ({ signal }) =>
-      api<Trace>(`requests/${record.request_id}`, 'GET', undefined, signal),
-    gcTime: 0,
-    staleTime: 0,
-    refetchOnWindowFocus: false,
-  })
-  const [tab, setTab] = useState('conversation')
-  const [eventKind, setEventKind] = useState('all')
-  const [eventLimit, setEventLimit] = useState(100)
-  const d = query.data?.detail
-  const events =
-    d?.events.filter((e) => eventKind === 'all' || e.type === eventKind) ?? []
-  return (
-    <div className="trace-detail">
-      <ErrorNotice error={query.error} />
-      <div className="trace-detail-metrics">
-        <Metric
-          icon={<Clock3 size={15} />}
-          title="Total time"
-          value={ms(record.latency_ms)}
-          hint={`First token ${ms(record.ttfb_ms)}`}
-        />
-        <Metric
-          icon={<Zap size={15} />}
-          title="Output speed"
-          value={
-            record.output_tokens > 0 &&
-            record.ttfb_ms !== null &&
-            record.latency_ms > record.ttfb_ms
-              ? `${((record.output_tokens * 1000) / (record.latency_ms - record.ttfb_ms)).toFixed(1)} tok/s`
-              : '—'
-          }
-          hint={`${n(record.input_tokens)} in · ${n(record.output_tokens)} out`}
-        />
-        <Metric
-          icon={<Activity size={15} />}
-          title={record.stream ? 'Streaming' : 'JSON response'}
-          value={record.status}
-          hint={`${record.protocol} · ${operation(record)}`}
-        />
-      </div>
-      {query.isPending && <p role="status">Loading trace…</p>}
-      {d && (
-        <>
-          {d.warnings.map((w, i) => (
-            <p className="trace-warning" key={i}>
-              {w}
-            </p>
-          ))}
-          <div className="trace-tabs" role="tablist" aria-label="Trace views">
-            {[
-              ['conversation', 'Conversation'],
-              ['events', `Stream events (${d.events.length})`],
-              ['details', 'Details'],
-            ].map(([id, name]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                id={`trace-tab-${id}`}
-                aria-controls="trace-panel"
-                aria-selected={tab === id}
-                tabIndex={tab === id ? 0 : -1}
-                onKeyDown={(e) => {
-                  const tabs = ['conversation', 'events', 'details']
-                  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-                    e.preventDefault()
-                    const next =
-                      tabs[
-                        (tabs.indexOf(tab) + (e.key === 'ArrowRight' ? 1 : 2)) %
-                          3
-                      ]
-                    setTab(next)
-                    document.getElementById(`trace-tab-${next}`)?.focus()
-                  }
-                }}
-                onClick={() => setTab(id)}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-          <div
-            id="trace-panel"
-            role="tabpanel"
-            aria-labelledby={`trace-tab-${tab}`}
-          >
-            {tab === 'conversation' && (
-              <div className="trace-conversation">
-                <Messages title="Input" messages={d.input} />
-                <Messages title="Output" messages={d.output} />
-              </div>
-            )}
-            {tab === 'events' && (
-              <>
-                <div className="trace-event-head">
-                  <p>
-                    Observed delivery times relative to request start. Tool
-                    calls shown here are model requests; tool results appear in
-                    subsequent input messages.
-                  </p>
-                  <select
-                    aria-label="Filter stream events"
-                    value={eventKind}
-                    onChange={(e) => {
-                      setEventKind(e.target.value)
-                      setEventLimit(100)
-                    }}
-                  >
-                    <option value="all">All events</option>
-                    {[...new Set(d.events.map((e) => e.type))].map((k) => (
-                      <option key={k} value={k}>
-                        {label(k)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {events.length ? (
-                  <ol className="trace-timeline">
-                    {events.slice(0, eventLimit).map((e, i) => (
-                      <li key={i}>
-                        <time>+{ms(e.ms)}</time>
-                        <span
-                          className={`trace-event-kind trace-event-${e.type}`}
-                        >
-                          {label(e.type)}
-                        </span>
-                        <pre>{e.text || '—'}</pre>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="empty">
-                    No stream events. JSON responses are shown in Conversation.
-                  </p>
-                )}
-                {events.length > eventLimit && (
-                  <Button
-                    variant="outline"
-                    onClick={() => setEventLimit((v) => v + 100)}
-                  >
-                    Show 100 more events
-                  </Button>
-                )}
-              </>
-            )}
-            {tab === 'details' && (
-              <div className="trace-properties">
-                <p>
-                  <Fingerprint size={15} />
-                  Request ID <code>{record.request_id}</code>
-                </p>
-                <p>
-                  Operation <code>{d.operation}</code>
-                </p>
-                <p>
-                  Expires <strong>{date(query.data!.expires_at)}</strong>
-                </p>
-                <h3>Request parameters</h3>
-                <pre>{JSON.stringify(d.parameters, null, 2)}</pre>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
   )
 }

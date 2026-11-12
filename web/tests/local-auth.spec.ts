@@ -294,6 +294,9 @@ test('personal traces, reasoning, tools, retention, opt-out and erasure', async 
     .getByRole('button', { name: `Inspect request ${toolID}`, exact: true })
     .click()
   const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('heading', { name: 'Routing' })).toBeVisible()
+  await expect(dialog).toContainText(toolID)
+  await dialog.getByRole('tab', { name: /^Conversation/ }).click()
   await expect(
     dialog.getByText('Tool call · weather', { exact: true }),
   ).toBeVisible()
@@ -307,11 +310,18 @@ test('personal traces, reasoning, tools, retention, opt-out and erasure', async 
   expect((await dialog.innerText()).includes('private-image-marker')).toBe(
     false,
   )
-  await dialog.getByRole('tab', { name: /^Stream events/ }).click()
+  await dialog.getByRole('tab', { name: /^Timeline/ }).click()
+  await expect(dialog.locator('.trace-segments')).toContainText('tool call')
+  await dialog.getByRole('button', { name: 'All events', exact: true }).click()
   await dialog.getByLabel('Filter stream events').selectOption('tool_call')
   await expect(dialog.locator('.trace-timeline')).toContainText('weather')
-  await dialog.getByRole('tab', { name: 'Details', exact: true }).click()
-  await expect(dialog).toContainText(toolID)
+  await dialog.getByRole('tab', { name: /^Raw/ }).click()
+  await expect(
+    dialog.getByText('Request body as received (sanitized)'),
+  ).toBeVisible()
+  expect((await dialog.innerText()).includes('private-image-marker')).toBe(
+    false,
+  )
   const trace = await (
     await context.request.get(`${tracing}/portal/api/requests/${toolID}`)
   ).json()
@@ -319,12 +329,16 @@ test('personal traces, reasoning, tools, retention, opt-out and erasure', async 
     13 * 86_400_000,
   )
   expect(JSON.stringify(trace).includes(key)).toBe(false)
+  expect(JSON.stringify(trace.detail.request)).toContain(
+    'image payload omitted',
+  )
   expect(JSON.stringify(trace).includes('private-header-marker')).toBe(false)
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   await page
     .getByRole('button', { name: `Inspect request ${thinkingID}`, exact: true })
     .click()
-  await dialog.getByText('Reasoning', { exact: true }).click()
+  await dialog.getByRole('tab', { name: /^Conversation/ }).click()
+  await dialog.locator('summary', { hasText: 'Reasoning' }).click()
   await expect(dialog).toContainText('Considering the request.')
   await page.setViewportSize({ width: 390, height: 844 })
   await expect
