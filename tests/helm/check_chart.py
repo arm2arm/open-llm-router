@@ -142,7 +142,9 @@ class HelmChart(unittest.TestCase):
         self.assertNotEqual(checksum, self.render()["Deployment", NAME]["spec"]["template"]["metadata"]["annotations"]["checksum/config"])
 
     def test_production_example_external_services(self):
-        rendered = self.render(yaml.safe_load((CHART / "examples/production.yaml").read_text()))
+        production = yaml.safe_load((CHART / "examples/production.yaml").read_text())
+        production["image"]["digest"] = "sha256:" + "a" * 64
+        rendered = self.render(production)
         self.assertEqual(len(rendered), 6)
         ingress = rendered["Ingress", NAME]
         self.assertEqual(ingress["spec"]["tls"][0]["secretName"], "olr-tls")
@@ -162,6 +164,40 @@ class HelmChart(unittest.TestCase):
         pod = rendered["Deployment", NAME]["spec"]["template"]["spec"]
         self.assertNotIn("initContainers", pod)
         self.assertIn({"name": "PORTAL_COOKIE_SECURE", "value": "true"}, pod["containers"][0]["env"])
+
+    def test_production_rejects_mutable_images_and_disabled_security(self):
+        import copy
+        production = yaml.safe_load((CHART / "examples/production.yaml").read_text())
+        production["image"]["digest"] = "sha256:" + "a" * 64
+        invalid = []
+        for digest in ("", "sha256:short", "latest"):
+            values = copy.deepcopy(production)
+            values["image"]["digest"] = digest
+            invalid.append(values)
+        for service in ("postgresql", "keycloak", "demoBackend"):
+            values = copy.deepcopy(production)
+            values[service] = {"enabled": True, "image": "mutable:latest" if service != "demoBackend" else {"digest": ""}}
+            invalid.append(values)
+        for section, key in (("networkPolicy", "enabled"), ("config", "security")):
+            values = copy.deepcopy(production)
+            values[section][key] = False if section == "networkPolicy" else {"require_tls": False}
+            invalid.append(values)
+        for values in invalid:
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "values.yaml"
+                path.write_text(yaml.safe_dump(values))
+                result = self.invoke("template", "trial", CHART, "-f", path)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("schema", result.stderr)
+
+    def test_bundled_and_demo_image_digests_render_in_all_containers(self):
+        digest = "sha256:" + "b" * 64
+        resources = self.render({"demoBackend": {"image": {"digest": digest}}})
+        router = resources["Deployment", NAME]["spec"]["template"]["spec"]
+        self.assertRegex(router["initContainers"][0]["image"], r"@sha256:[a-f0-9]{64}$")
+        for kind, suffix in (("StatefulSet", "-postgresql"), ("Deployment", "-keycloak"), ("Deployment", "-demo")):
+            image = resources[kind, NAME + suffix]["spec"]["template"]["spec"]["containers"][0]["image"]
+            self.assertRegex(image, r"@sha256:[a-f0-9]{64}$")
 
     def test_external_database_with_chart_managed_secret(self):
         url = "postgres://user:pass@db.invalid/olr?sslmode=verify-full"
@@ -217,6 +253,8 @@ class HelmChart(unittest.TestCase):
             args = ["lint", CHART, "--strict"]
             if values:
                 args += ["-f", CHART / "examples" / values]
+                if values == "production.yaml":
+                    args += ["--set", "image.digest=sha256:" + "a" * 64]
             lint = self.invoke(*args)
             self.assertEqual(lint.returncode, 0, lint.stdout + lint.stderr)
         with tempfile.TemporaryDirectory() as directory:

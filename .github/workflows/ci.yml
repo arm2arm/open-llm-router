@@ -159,3 +159,21 @@ jobs:
           python3 -m venv /tmp/olr-policy
           /tmp/olr-policy/bin/pip install PyYAML==6.0.3
           PYTHON=/tmp/olr-policy/bin/python bash tests/security/network_policy.sh
+
+  release-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test fail-closed image signature and attestation deployment gate
+        run: |
+          python3 -m venv /tmp/olr-release
+          /tmp/olr-release/bin/pip install PyYAML==6.0.3
+          /tmp/olr-release/bin/python tests/security/check_release.py
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Scan repository for provider and generic secrets
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          gitleaks dir --redact --no-banner

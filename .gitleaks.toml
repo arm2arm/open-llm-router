@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Blank example client secret consumes the next public env-var name"
+condition = "AND"
+paths = ['''^deploy/compose/pilot\.env\.example$''']
+regexTarget = "secret"
+regexes = ['''^OIDC_AUDIENCE$''']

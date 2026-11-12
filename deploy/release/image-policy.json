@@ -1,0 +1,10 @@
+{
+  "images": {
+    "ghcr.io/arm2arm/open-llm-router": {
+      "certificate_identity": "https://github.com/arm2arm/open-llm-router/.github/workflows/release.yml@refs/heads/main",
+      "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+      "repository": "arm2arm/open-llm-router",
+      "signer_workflow": "arm2arm/open-llm-router/.github/workflows/release.yml"
+    }
+  }
+}
