@@ -1,0 +1,95 @@
+{{- if .Values.postgresql.enabled }}
+{{- $component := dict "root" . "component" "postgresql" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "olr.componentName" $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "olr.componentSelector" $component | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "olr.componentSelector" $component | nindent 4 }}
+  ports:
+    - {name: postgres, port: 5432, targetPort: postgres}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "olr.componentName" $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "olr.componentSelector" $component | nindent 4 }}
+spec:
+  serviceName: {{ include "olr.componentName" $component }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "olr.componentSelector" $component | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "olr.componentSelector" $component | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgresql
+          image: {{ .Values.postgresql.image | quote }}
+          env:
+            - {name: POSTGRES_USER, value: {{ .Values.postgresql.username | quote }}}
+            - {name: POSTGRES_DB, value: {{ .Values.postgresql.database | quote }}}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "olr.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            exec:
+              command: [sh, -ec, 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 2
+            failureThreshold: 90
+          readinessProbe:
+            exec:
+              command: [sh, -ec, 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [sh, -ec, 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          {{- if .Values.postgresql.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "olr.componentName" $component }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

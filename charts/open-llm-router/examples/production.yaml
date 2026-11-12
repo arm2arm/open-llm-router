@@ -4,6 +4,13 @@ image:
   repository: registry.example.org/olr
   tag: REPLACE_WITH_TESTED_GIT_SHA
   # digest: sha256:...  # 64 hexadecimal digits; preferred for deployments
+# Use your existing managed database, model servers and production Keycloak.
+postgresql:
+  enabled: false
+keycloak:
+  enabled: false
+demoBackend:
+  enabled: false
 existingSecret: olr-secrets
 portal:
   baseURL: https://llm.example.org

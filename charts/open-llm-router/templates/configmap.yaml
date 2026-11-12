@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "olr.fullname" . }}-config
+  name: {{ include "olr.fullname" . | trunc 56 | trimSuffix "-" }}-config
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "olr.labels" . | nindent 4 }}

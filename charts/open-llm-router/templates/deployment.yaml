@@ -1,6 +1,6 @@
 {{- range $name, $_ := .Values.env }}
-{{- if or (eq $name "OLR_CONFIG") (eq $name "PORTAL_BASE_URL") (eq $name "PORTAL_COOKIE_SECURE") }}
-{{- fail (printf "env.%s is managed by the chart; use config or portal values instead" $name) }}
+{{- if or (eq $name "OLR_CONFIG") (eq $name "PORTAL_BASE_URL") (eq $name "PORTAL_COOKIE_SECURE") (eq $name "OLR_DEMO_BACKEND_URL") (eq $name "OLR_DATABASE_URL") (and $.Values.keycloak.enabled (hasPrefix "OIDC_" $name)) }}
+{{- fail (printf "env.%s is managed by the chart; use the dedicated chart values instead" $name) }}
 {{- end }}
 {{- end }}
 {{- if and .Values.portal.cookieSecure (not (hasPrefix "https://" .Values.portal.baseURL)) }}
@@ -40,6 +40,49 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if or .Values.postgresql.enabled .Values.keycloak.enabled }}
+      initContainers:
+        {{- if .Values.postgresql.enabled }}
+        - name: wait-for-postgresql
+          image: {{ .Values.postgresql.image | quote }}
+          command: [sh, -ec]
+          args:
+            - 'until pg_isready -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE"; do sleep 2; done'
+          env:
+            - {name: PGHOST, value: {{ include "olr.componentName" (dict "root" . "component" "postgresql") | quote }}}
+            - {name: PGUSER, value: {{ .Values.postgresql.username | quote }}}
+            - {name: PGDATABASE, value: {{ .Values.postgresql.database | quote }}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+        {{- end }}
+        {{- if .Values.keycloak.enabled }}
+        - name: wait-for-keycloak
+          image: {{ .Values.keycloak.image | quote }}
+          command: [/bin/bash, -ec]
+          args:
+            - |
+              until (
+                exec 3<>/dev/tcp/"$KEYCLOAK_HOST"/8080
+                printf 'GET /realms/olr-demo/.well-known/openid-configuration HTTP/1.0\r\nHost: %s\r\n\r\n' "$KEYCLOAK_HOST" >&3
+                read -r response <&3
+                [[ "$response" == *" 200 "* ]]
+              ); do sleep 2; done
+          env:
+            - {name: KEYCLOAK_HOST, value: {{ include "olr.componentName" (dict "root" . "component" "keycloak") | quote }}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+        {{- end }}
+      {{- end }}
       containers:
         - name: router
           image: {{ include "olr.image" . | quote }}
@@ -50,7 +93,7 @@ spec:
               containerPort: 8080
           envFrom:
             - secretRef:
-                name: {{ required "existingSecret must name the Secret containing OLR_DATABASE_URL" .Values.existingSecret }}
+                name: {{ include "olr.secretName" . }}
           env:
             - name: OLR_CONFIG
               value: /etc/olr/config.yaml
@@ -58,6 +101,22 @@ spec:
               value: {{ .Values.portal.baseURL | quote }}
             - name: PORTAL_COOKIE_SECURE
               value: {{ .Values.portal.cookieSecure | quote }}
+            {{- if .Values.demoBackend.enabled }}
+            - name: OLR_DEMO_BACKEND_URL
+              value: {{ printf "http://%s:8000" (include "olr.componentName" (dict "root" . "component" "demo")) | quote }}
+            {{- end }}
+            {{- if .Values.keycloak.enabled }}
+            - name: OIDC_ISSUER
+              value: {{ printf "%s/realms/olr-demo" (.Values.keycloak.baseURL | trimSuffix "/") | quote }}
+            - name: OIDC_BACKCHANNEL_URL
+              value: {{ printf "http://%s:8080/realms/olr-demo" (include "olr.componentName" (dict "root" . "component" "keycloak")) | quote }}
+            - name: OIDC_PORTAL_CLIENT_ID
+              value: olr-portal
+            - name: OIDC_GROUPS_CLAIM
+              value: groups
+            - name: OIDC_USERNAME_CLAIM
+              value: preferred_username
+            {{- end }}
             {{- range $name, $value := .Values.env }}
             - name: {{ $name }}
               value: {{ $value | quote }}
@@ -89,7 +148,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "olr.fullname" . }}-config
+            name: {{ include "olr.fullname" . | trunc 56 | trimSuffix "-" }}-config
         - name: tmp
           emptyDir: {}
       {{- with .Values.nodeSelector }}

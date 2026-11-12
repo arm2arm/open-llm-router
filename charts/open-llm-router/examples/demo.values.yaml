@@ -1,0 +1,76 @@
+# Copy this file, choose image locations, then install the entire demo in one go:
+# helm upgrade --install olr charts/open-llm-router -n olr --create-namespace \
+#   -f /private/olr/demo.values.yaml --wait --timeout 10m
+# Build both images from this checkout (see docs/INSTALL.md).
+image:
+  repository: olr-router
+  tag: local
+
+demoBackend:
+  enabled: true
+  image:
+    repository: olr-mock-llm
+    tag: local
+
+# Blank passwords/keys are generated on first install and reused on upgrades.
+# To choose your own, fill these in BEFORE installation. Helm stores supplied
+# values and rendered Secrets in release history; keep this file private.
+secrets:
+  bootstrapAdminPassword: ""   # local admin; at least 15 characters
+  apiKeyEncryptionKey: ""     # openssl rand -base64 32; retain/back up this key
+  env: {}
+  # env:
+  #   GPU_API_TOKEN: your-backend-api-key
+  #   OLR_METRICS_TOKEN: your-metrics-token
+
+postgresql:
+  enabled: true
+  username: olr
+  database: olr
+  password: ""
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""           # cluster's default StorageClass
+
+keycloak:
+  enabled: true
+  baseURL: http://localhost:8081
+  adminPassword: ""           # Keycloak admin console: admin
+  clientSecret: ""            # shared automatically with the router
+  demoUserPassword: ""        # demo SSO user: staff (group: staff)
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+
+portal:
+  baseURL: http://localhost:8080
+  cookieSecure: false
+
+# These defaults point to the bundled deterministic backend, without a GPU.
+# Replace upstream_model and the COMPLETE pool list to connect a real backend;
+# then set demoBackend.enabled=false. ${...} expands in the router, not Helm.
+config:
+  models:
+    chat-model:
+      upstream_model: chat-model
+      protocols: [openai]
+      pool:
+        - url: ${OLR_DEMO_BACKEND_URL}
+          health_path: /health
+          weight: 1
+          max_inflight: 4
+  # Example real endpoint (replace the pool above):
+  #   upstream_model: exact-model-from-your-server
+  #   pool:
+  #     - url: http://ollama.models.svc.cluster.local:11434
+  #       health_path: /
+  #       bearer_token_env: GPU_API_TOKEN
+  #       weight: 1
+  #       max_inflight: 1
+
+# Optional destinations/token names for endpoints added later in Admin.
+# env:
+#   OLR_BACKEND_ALLOWED_CIDRS: "192.168.1.0/24"
+#   OLR_BACKEND_TOKEN_ENVS: "GPU_API_TOKEN"

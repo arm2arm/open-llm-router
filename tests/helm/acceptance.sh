@@ -9,13 +9,17 @@ cluster=olr-helm-$$
 work=$(mktemp -d)
 export KUBECONFIG=$work/kubeconfig
 pf=
+kc_pf=
 cleanup() {
   status=$?
   if [ "$status" -ne 0 ]; then
     kubectl -n olr get pods --request-timeout=10s || true
-    kubectl -n olr logs deployment/olr-open-llm-router --tail=80 --request-timeout=10s || true
+    for app in deployment/olr-open-llm-router deployment/olr-open-llm-router-keycloak statefulset/olr-open-llm-router-postgresql; do
+      kubectl -n olr logs "$app" --all-containers --tail=80 --request-timeout=10s || true
+    done
   fi
   stop_forward
+  if [ -n "$kc_pf" ]; then kill "$kc_pf" 2>/dev/null || true; wait "$kc_pf" 2>/dev/null || true; fi
   "$kind_bin" delete cluster --name "$cluster" || true
   rm -rf "$work"
 }
@@ -33,35 +37,25 @@ docker build --target mock-llm -t olr-mock-llm:helm-test .
 "$kind_bin" load docker-image olr-router:helm-test olr-mock-llm:helm-test --name "$cluster"
 kubectl create namespace olr
 kubectl label namespace olr pod-security.kubernetes.io/enforce=restricted
-kubectl -n olr apply -f deploy/k8s/test/postgres.yaml
-sed 's/image: mock-llm/image: olr-mock-llm:helm-test/' deploy/k8s/test/mocks.yaml > "$work/mocks.yaml"
-kubectl -n olr apply -f "$work/mocks.yaml"
-kubectl -n olr rollout status statefulset/postgres --timeout=180s
-cat > "$work/secrets.env" <<'EOF'
-OLR_DATABASE_URL=postgres://olr:olr-k8s-test-only@postgres:5432/olr?sslmode=disable
-OLR_BOOTSTRAP_ADMIN_PASSWORD=helm-only-bootstrap-password
-OLR_API_KEY_ENCRYPTION_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
-EOF
-kubectl -n olr create secret generic olr-secrets --from-env-file="$work/secrets.env"
 port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 base=http://localhost:$port
+kc_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 cat > "$work/values.yaml" <<EOF
 image:
   repository: olr-router
   tag: helm-test
+demoBackend:
+  image:
+    repository: olr-mock-llm
+    tag: helm-test
 portal:
   baseURL: $base
-  cookieSecure: false
-config:
-  models:
-    chat-model:
-      upstream_model: chat-model
-      pool:
-        - {url: http://mock-llm-a:8000, health_path: /health, weight: 1, max_inflight: 4}
+keycloak:
+  baseURL: http://localhost:$kc_port
 EOF
 install() {
   "$helm_bin" upgrade --install olr charts/open-llm-router -n olr \
-    -f "$work/values.yaml" --wait --timeout 180s "$@"
+    -f "$work/values.yaml" --wait --timeout 300s "$@"
 }
 forward() {
   stop_forward
@@ -81,19 +75,27 @@ models() {
   curl --fail --silent --show-error "$base/v1/models" -H "Authorization: Bearer $key" > "$work/models.json"
   python3 -c 'import json,sys; assert any(m["id"]=="chat-model" for m in json.load(open(sys.argv[1]))["data"])' "$work/models.json"
 }
+# No database, Keycloak, mocks or Secrets are provisioned outside Helm.
 install
+kubectl -n olr get secret olr-open-llm-router-credentials -o json > "$work/initial-secret.json"
+secret_data() {
+  kubectl -n olr get secret olr-open-llm-router-credentials -o 'jsonpath={.data}'
+}
+first_secret=$(secret_data)
 first_checksum=$(checksum)
 forward
 # Complete first local administrator login without putting a password in argv.
-cat > "$work/login.json" <<'EOF'
-{"username":"admin","password":"helm-only-bootstrap-password"}
-EOF
+python3 - "$work" <<'PYLOGIN'
+import base64, json, pathlib, sys
+work = pathlib.Path(sys.argv[1])
+data = json.loads((work / "initial-secret.json").read_text())["data"]
+password = base64.b64decode(data["OLR_BOOTSTRAP_ADMIN_PASSWORD"]).decode()
+(work / "login.json").write_text(json.dumps({"username": "admin", "password": password}))
+(work / "change.json").write_text(json.dumps({"current_password": password, "new_password": "helm-only-replacement-password"}))
+PYLOGIN
 curl --fail --silent --show-error -c "$work/cookies" -H "Origin: $base" -H 'Content-Type: application/json' \
   --data-binary @"$work/login.json" "$base/portal/login/local" > "$work/login-response.json"
 python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["must_change_password"]' "$work/login-response.json"
-cat > "$work/change.json" <<'EOF'
-{"current_password":"helm-only-bootstrap-password","new_password":"helm-only-replacement-password"}
-EOF
 curl --fail --silent --show-error -b "$work/cookies" -H "Origin: $base" -H 'Content-Type: application/json' \
   --data-binary @"$work/change.json" "$base/portal/password" > /dev/null
 cat > "$work/login.json" <<'EOF'
@@ -103,6 +105,28 @@ curl --fail --silent --show-error -c "$work/cookies" -H "Origin: $base" -H 'Cont
   --data-binary @"$work/login.json" "$base/portal/login/local" > /dev/null
 curl --fail --silent --show-error -b "$work/cookies" "$base/portal/api/me" > "$work/me.json"
 python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["admin"] and m["user"]["protected_admin"]' "$work/me.json"
+# Test the bundled realm through real browser-style authorization-code login.
+kubectl -n olr port-forward service/olr-open-llm-router-keycloak "$kc_port:8080" > "$work/keycloak-forward.log" 2>&1 &
+kc_pf=$!
+for attempt in $(seq 1 30); do
+  if curl --fail --silent --max-time 2 "http://localhost:$kc_port/realms/olr-demo/.well-known/openid-configuration" > /dev/null; then break; fi
+  sleep 1
+done
+sso() {
+  python3 - "$base" "$work/initial-secret.json" <<'PYSSO'
+import base64, json, sys
+sys.path.insert(0, "tests/clients")
+from check_portal import Browser
+password = base64.b64decode(json.load(open(sys.argv[2]))["data"]["OLR_DEMO_USER_PASSWORD"]).decode()
+browser = Browser(sys.argv[1])
+me = browser.login("staff", password)
+assert me["user"]["groups"] == ["staff"]
+key = browser.request("/portal/api/keys", "POST", {"label": "helm-sso"}, want=201)["key"]
+browser.request("/v1/models", key=key)
+browser.logout()
+PYSSO
+}
+sso
 user=$(kubectl -n olr exec deployment/olr-open-llm-router -- olr admin user add -username helm-test -groups staff)
 key=$(kubectl -n olr exec deployment/olr-open-llm-router -- olr admin key create -user "$user" -label helm-test)
 models
@@ -111,14 +135,33 @@ curl --fail --silent --show-error -N "$base/v1/chat/completions" \
   -d '{"model":"chat-model","messages":[],"stream":true}' > "$work/stream.sse"
 python3 -c 'import sys; assert "data: [DONE]" in open(sys.argv[1]).read()' "$work/stream.sse"
 install --set config.models.chat-model.idle_timeout_s=121
+[ "$(secret_data)" = "$first_secret" ]
 [ "$(checksum)" != "$first_checksum" ]
 forward
 models
-"$helm_bin" rollback olr 1 -n olr --wait --timeout 180s
+"$helm_bin" rollback olr 1 -n olr --wait --timeout 300s
 [ "$(checksum)" = "$first_checksum" ]
+[ "$(secret_data)" = "$first_secret" ]
 forward
 models
-"$helm_bin" uninstall olr -n olr --wait --timeout 180s
-kubectl -n olr get secret olr-secrets > /dev/null
-kubectl -n olr get statefulset postgres > /dev/null
-echo 'Helm acceptance passed: install, local admin, streaming, upgrade, rollback and uninstall.'
+"$helm_bin" uninstall olr -n olr --wait --timeout 300s
+# Storage and credentials survive uninstall, workloads do not.
+[ "$(secret_data)" = "$first_secret" ]
+kubectl -n olr get pvc olr-open-llm-router-postgresql olr-open-llm-router-keycloak > /dev/null
+[ -z "$(kubectl -n olr get deployment,statefulset,service -o name)" ]
+install
+[ "$(secret_data)" = "$first_secret" ]
+forward
+models
+# The SSO password/realm survive reinstall alongside the router's API key.
+kill "$kc_pf" 2>/dev/null || true
+wait "$kc_pf" 2>/dev/null || true
+kubectl -n olr port-forward service/olr-open-llm-router-keycloak "$kc_port:8080" > "$work/keycloak-forward.log" 2>&1 &
+kc_pf=$!
+for attempt in $(seq 1 30); do
+  if curl --fail --silent --max-time 2 "http://localhost:$kc_port/realms/olr-demo/.well-known/openid-configuration" > /dev/null; then break; fi
+  sleep 1
+done
+sso
+"$helm_bin" uninstall olr -n olr --wait --timeout 300s
+echo 'Helm acceptance passed: full-stack install, local admin, SSO, streaming, stable credentials, upgrade, rollback and persistent reinstall.'

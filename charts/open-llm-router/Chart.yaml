@@ -2,7 +2,7 @@ apiVersion: v2
 name: open-llm-router
 description: OpenAI and Anthropic routing with local administration, SSO and per-user limits
 type: application
-version: 0.1.0
+version: 0.2.0
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/arm2arm/open-llm-router
 sources:
