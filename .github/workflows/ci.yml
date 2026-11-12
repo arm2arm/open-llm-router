@@ -66,6 +66,8 @@ jobs:
         run: cd web && npx playwright install --with-deps chromium
       - name: Validate Compose configuration
         run: docker compose config --quiet
+      - name: Validate production pilot Compose with synthetic site values
+        run: python3 tests/pilot/check_compose.py
       - name: Render the Kubernetes manifests
         run: kubectl kustomize deploy/k8s/base > /dev/null && kubectl kustomize deploy/k8s/test > /dev/null
       - name: Validate the observability stack and the generated dashboard

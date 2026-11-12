@@ -13,6 +13,8 @@ forwarders such as Open WebUI; group sync from Keycloak; Prometheus metrics, a G
 dashboard and OTLP traces. Security review: [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
 Kubernetes manifests: [deploy/k8s](deploy/k8s). Requirements in [docs/PLAN.md](docs/PLAN.md),
 work items in the [issues](https://github.com/arm2arm/open-llm-router/issues).
+Production deployment and the two-week pilot acceptance checklist:
+[docs/PILOT.md](docs/PILOT.md).
 
 Authors: A. Khalatyan (AIP), with Hermes agent.
 
