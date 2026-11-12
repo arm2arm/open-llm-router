@@ -45,6 +45,17 @@ func TestManagedDestinationAndCredentialPolicy(t *testing.T) {
 	if policy.allowed(netip.MustParseAddr("::ffff:169.254.169.254")) {
 		t.Fatal("mapped metadata address allowed")
 	}
+	if policy.allowed(netip.MustParseAddr("100.64.1.1")) {
+		t.Fatal("shared private address space allowed without an operator grant")
+	}
+	policy.networks = append(policy.networks, netip.MustParsePrefix("100.64.0.0/10"))
+	if !policy.allowed(netip.MustParseAddr("100.64.1.1")) || policy.allowed(netip.MustParseAddr("100.100.100.200")) {
+		t.Fatal("shared-network grant did not retain metadata exclusion")
+	}
+	policy.trusted["file-backend:8000"] = true
+	if destinations, err := policy.addresses(t.Context(), "FILE-BACKEND:8000"); err != nil || len(destinations) != 1 || destinations[0] != "file-backend:8000" {
+		t.Fatal("file-defined DNS trust was not case insensitive", err)
+	}
 	for _, value := range []string{"0.1.2.3", "192.0.0.192", "240.0.0.1"} {
 		if policy.allowed(netip.MustParseAddr(value)) {
 			t.Fatal("control destination allowed", value)

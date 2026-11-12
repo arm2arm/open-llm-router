@@ -103,7 +103,8 @@ func (p *Policy) allowed(ip netip.Addr) bool {
 	if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return false
 	}
-	if !ip.IsPrivate() {
+	shared := netip.MustParsePrefix("100.64.0.0/10").Contains(ip)
+	if !ip.IsPrivate() && !shared {
 		return true
 	}
 	for _, network := range p.networks {
@@ -115,12 +116,13 @@ func (p *Policy) allowed(ip netip.Addr) bool {
 }
 
 func (p *Policy) addresses(ctx context.Context, destination string) ([]string, error) {
-	if p.trusted[destination] {
-		return []string{destination}, nil
-	}
 	host, port, err := net.SplitHostPort(destination)
 	if err != nil {
 		return nil, errors.New("invalid backend destination")
+	}
+	destination = net.JoinHostPort(strings.ToLower(host), port)
+	if p.trusted[destination] {
+		return []string{destination}, nil
 	}
 	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	if err != nil || len(ips) == 0 {
