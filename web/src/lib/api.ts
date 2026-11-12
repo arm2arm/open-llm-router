@@ -120,7 +120,9 @@ export type Key = {
   last_used: string | null
   expires: string | null
   revoked: boolean
+  expired: boolean
   class: 'interactive' | 'batch'
+  trusted_forwarder: boolean
 }
 export type ModelUsage = {
   model: string
@@ -189,6 +191,9 @@ export type AdminUser = {
   tokens_today: number
   tokens_this_month: number
   overrides: Record<string, number | null>
+  protected_admin: boolean
+  has_local_password: boolean
+  must_change_password: boolean
 }
 export type Override = {
   field: string
@@ -204,11 +209,16 @@ export type AdminUserDetail = {
     email: string
     groups: string[]
     protected_admin: boolean
+    issuer: string
+    has_local_password: boolean
+    must_change_password: boolean
   }
   enabled: boolean
   limits: Limits
   overrides: Override[]
   keys: Key[]
+  models: string[]
+  admin: boolean
 }
 export type GroupTotals = {
   group: string

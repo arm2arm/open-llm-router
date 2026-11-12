@@ -165,6 +165,19 @@ requires a replacement password, and later rotation is under **Account**. The
 reserved local administrator cannot be deleted, disabled, demoted or
 converted to an SSO identity through ordinary application/SQL operations.
 
+### Manage ordinary local users
+
+Use **Admin → Create local user** for a password-enabled account and assign existing
+configured groups. New users must replace their temporary password at first login.
+Under **Manage**, edit local memberships, inspect effective models/limits and key
+metadata, revoke individual keys, disable/re-enable, or reset the local password.
+Resetting permanently revokes every key and ends all sessions; membership changes
+end sessions and update existing keys' access. Disabling deletes sessions and blocks
+keys; re-enabling requires fresh browser login but restores unrevoked keys.
+Keycloak passwords/memberships remain IdP-managed. These actions cannot reset or
+reassign the protected administrator. See the
+[administrator guide](ADMIN_GUIDE.md#manage-local-users-in-admin) for the full workflow.
+
 ### Add a model or a replica
 
 Edit the config file — a new entry under `models` or a new `pool` replica with its `weight`

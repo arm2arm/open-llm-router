@@ -170,6 +170,9 @@ func (a Admin) changeWith(ctx context.Context, mutate func(pgx.Tx) error) error 
 	if errors.Is(err, ErrInvalidPassword) {
 		return ErrInvalidPassword
 	}
+	if errors.Is(err, ErrLocalIdentity) || errors.Is(err, ErrPasswordReuse) || errors.Is(err, ErrPasswordPolicy) {
+		return err
+	}
 	if err != nil {
 		return errors.New("authentication change transaction failed")
 	}

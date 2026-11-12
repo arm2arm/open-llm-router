@@ -47,7 +47,10 @@ const sql = (database: string, command: string) =>
     command,
   ])
 
-async function startFixture(outage: boolean) {
+async function startFixture(
+  outage: boolean,
+  suffix = outage ? 'outage' : 'local',
+) {
   const port = await new Promise<number>((resolve, reject) => {
     const listener = createServer()
     listener.on('error', reject)
@@ -58,7 +61,7 @@ async function startFixture(outage: boolean) {
       listener.close(() => resolve(address.port))
     })
   })
-  const database = `portal_browser_${process.pid}_${outage ? 'outage' : 'local'}`
+  const database = `portal_browser_${process.pid}_${suffix}`
   const fixture = {
     database,
     container: `${database}-router`,
@@ -70,7 +73,7 @@ async function startFixture(outage: boolean) {
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://127.0.0.1:1, weight: 1, max_inflight: 4}\n`,
+    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   const image = docker([
     'inspect',
@@ -121,8 +124,8 @@ async function startFixture(outage: boolean) {
         `Disposable router did not start: ${dockerLogs(fixture.container)}`,
       )
     })
-  // A regular local identity exercises authorization without adding user
-  // management UI that belongs to #75. Copy only this fixture's password hash.
+  // A pre-existing ordinary identity exercises login authorization independently
+  // of user creation. Copy only this disposable fixture's password hash.
   sql(
     database,
     `WITH added AS (INSERT INTO users(issuer,sub,username) VALUES('local','reader','reader') RETURNING id) INSERT INTO local_credentials(user_id,version,password_hash,must_change_password) SELECT added.id,c.version,c.password_hash,false FROM added CROSS JOIN local_credentials c JOIN users u ON u.id=c.user_id WHERE u.protected_admin`,
@@ -132,10 +135,12 @@ async function startFixture(outage: boolean) {
 
 let local: string
 let outage: string
+let administration: string
 test.beforeAll(async () => {
   test.setTimeout(60_000)
   local = await startFixture(false)
   outage = await startFixture(true)
+  administration = await startFixture(false, 'administration')
 })
 test.afterAll(() => {
   for (const fixture of fixtures.reverse()) {
@@ -341,4 +346,236 @@ test('unreachable Keycloak keeps the default choice visible and direct local log
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true)
+})
+
+test('administrator creates a local user and manages memberships, keys, disablement and password reset', async ({
+  page,
+  context,
+  browser,
+}) => {
+  const temporary = 'person-temporary-password-only'
+  const personal = 'person-replacement-password-only'
+  const reset = 'person-reset-password-only'
+  const personContext = await browser.newContext()
+  const person = await personContext.newPage()
+  const base = administration
+  const managePerson = async () => {
+    await page.reload()
+    await page
+      .getByTestId('users-table')
+      .getByRole('row')
+      .filter({ hasText: 'browser-user' })
+      .getByRole('button', { name: 'Manage', exact: true })
+      .click()
+    await expect(
+      page.getByRole('form', { name: 'Local group memberships' }),
+    ).toBeVisible()
+  }
+  const createKey = async (label: string) => {
+    await person
+      .getByRole('button', { name: 'Create key', exact: true })
+      .click()
+    await person.getByLabel('Key label').fill(label)
+    await person
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Create key', exact: true })
+      .click()
+    const key = await person.getByTestId('new-key').inputValue()
+    await person.getByRole('button', { name: 'I’ve saved my key' }).click()
+    return key
+  }
+  const apiStatus = async (key: string) =>
+    (
+      await personContext.request.get(`${base}/v1/models`, {
+        headers: { Authorization: `Bearer ${key}` },
+      })
+    ).status()
+  try {
+    await page.goto(`${base}/portal/login/local`)
+    await signIn(page, initial)
+    await passwordFields(page, initial, changed)
+    await signIn(page, changed)
+    await page.getByRole('link', { name: 'Admin', exact: true }).click()
+    const root = page
+      .getByTestId('users-table')
+      .getByRole('row')
+      .filter({ hasText: 'Protected local administrator' })
+    await root.getByRole('button', { name: 'Manage', exact: true }).click()
+    await expect(
+      page.getByRole('form', { name: 'Local group memberships' }),
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Reset local password', exact: true }),
+    ).toHaveCount(0)
+    await expect(
+      page.getByRole('button', { name: 'Disable user', exact: true }),
+    ).toHaveCount(0)
+    await page
+      .getByRole('button', { name: 'Create local user', exact: true })
+      .click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Username', { exact: true }).fill('browser-user')
+    await dialog
+      .getByLabel('Email (optional)', { exact: true })
+      .fill('shared@example.test')
+    await dialog
+      .getByLabel('Temporary password', { exact: true })
+      .fill(temporary)
+    await dialog.getByLabel('staff', { exact: true }).check()
+    await dialog
+      .getByRole('button', { name: 'Create user', exact: true })
+      .click()
+    await expect(page.getByLabel('Effective access')).toContainText('test')
+    await expect(
+      page
+        .getByRole('table', { name: 'Effective limits' })
+        .getByRole('row')
+        .filter({ hasText: 'Requests per minute' }),
+    ).toContainText('7')
+
+    await person.goto(`${base}/portal/login/local`)
+    await signIn(person, temporary, 'browser-user')
+    await expect(
+      person.getByRole('heading', { name: 'Change your password' }),
+    ).toBeVisible()
+    await passwordFields(person, temporary, personal)
+    await signIn(person, personal, 'browser-user')
+    await expect(
+      person.getByRole('link', { name: 'Admin', exact: true }),
+    ).toHaveCount(0)
+    const key = await createKey('laptop')
+    expect(await apiStatus(key)).toBe(200)
+    await managePerson()
+    const keys = page.getByRole('region', { name: 'User API keys' })
+    await expect(keys).toContainText('laptop')
+    expect((await page.locator('body').innerText()).includes(key)).toBe(false)
+    await keys
+      .getByRole('button', { name: 'Revoke laptop', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Keep key', exact: true }).click()
+    expect(await apiStatus(key)).toBe(200)
+    await keys
+      .getByRole('button', { name: 'Revoke laptop', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Revoke key', exact: true }).click()
+    await expect(keys).toContainText('Revoked')
+    expect(await apiStatus(key)).toBe(401)
+    const retained = await createKey('retained until reset')
+
+    const memberships = page.getByRole('form', {
+      name: 'Local group memberships',
+    })
+    await memberships.getByLabel('staff', { exact: true }).uncheck()
+    await memberships.getByLabel('students', { exact: true }).check()
+    await memberships.getByRole('button', { name: 'Save memberships' }).click()
+    await expect(page.getByLabel('Effective access')).toContainText('limited')
+    await expect(
+      page
+        .getByRole('table', { name: 'Effective limits' })
+        .getByRole('row')
+        .filter({ hasText: 'Requests per minute' }),
+    ).toContainText('3')
+    expect(
+      (await personContext.request.get(`${base}/portal/api/me`)).status(),
+    ).toBe(401)
+    const models = await personContext.request.get(`${base}/v1/models`, {
+      headers: { Authorization: `Bearer ${retained}` },
+    })
+    expect(
+      (await models.json()).data.map((model: { id: string }) => model.id),
+    ).toEqual(['limited'])
+    await memberships.getByLabel('staff', { exact: true }).check()
+    await memberships.getByLabel('students', { exact: true }).uncheck()
+    await memberships.getByRole('button', { name: 'Save memberships' }).click()
+    await expect(page.getByLabel('Effective access')).toContainText('test')
+    await person.goto(`${base}/portal/login/local`)
+    await signIn(person, personal, 'browser-user')
+    await page
+      .getByRole('button', { name: 'Disable user', exact: true })
+      .click()
+    await expect(
+      page.getByRole('button', { name: 'Enable user', exact: true }),
+    ).toBeVisible()
+    expect(
+      (await personContext.request.get(`${base}/portal/api/me`)).status(),
+    ).toBe(401)
+    expect(await apiStatus(retained)).toBe(401)
+    await page.getByRole('button', { name: 'Enable user', exact: true }).click()
+    await expect(
+      page.getByRole('button', { name: 'Disable user', exact: true }),
+    ).toBeVisible()
+    expect(
+      (await personContext.request.get(`${base}/portal/api/me`)).status(),
+    ).toBe(401)
+    expect(await apiStatus(retained)).toBe(200)
+    await person.goto(`${base}/portal/login/local`)
+    await signIn(person, personal, 'browser-user')
+
+    await page
+      .getByRole('button', { name: 'Reset local password', exact: true })
+      .click()
+    await dialog.getByLabel('Temporary password', { exact: true }).fill(reset)
+    await dialog
+      .getByLabel('Confirm temporary password', { exact: true })
+      .fill(reset)
+    await dialog
+      .getByRole('button', {
+        name: 'Set password and revoke keys',
+        exact: true,
+      })
+      .click()
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Temporary password set.' }),
+    ).toBeVisible()
+    expect(
+      (await personContext.request.get(`${base}/portal/api/me`)).status(),
+    ).toBe(401)
+    expect(await apiStatus(retained)).toBe(401)
+    await person.goto(`${base}/portal/login/local`)
+    await signIn(person, reset, 'browser-user')
+    await passwordFields(person, reset, personal)
+    await signIn(person, personal, 'browser-user')
+    expect(await apiStatus(retained)).toBe(401)
+    expect(
+      await page.evaluate(
+        (secrets) =>
+          [
+            ...Object.values(localStorage),
+            ...Object.values(sessionStorage),
+          ].some((value) => secrets.some((secret) => value.includes(secret))),
+        [temporary, personal, reset, key, retained],
+      ),
+    ).toBe(false)
+    expect(
+      await person.evaluate(
+        (secrets) =>
+          [
+            ...Object.values(localStorage),
+            ...Object.values(sessionStorage),
+          ].some((value) => secrets.some((secret) => value.includes(secret))),
+        [temporary, personal, reset, key, retained],
+      ),
+    ).toBe(false)
+    const logs = dockerLogs(
+      fixtures.find((fixture) => fixture.base === base)!.container,
+    )
+    expect(
+      [temporary, personal, reset, key, retained].some(
+        (secret) => logs.includes(secret) || page.url().includes(secret),
+      ),
+    ).toBe(false)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      )
+      .toBe(true)
+    expect(
+      (await context.request.get(`${base}/portal/api/admin/users`)).status(),
+    ).toBe(200)
+  } finally {
+    await personContext.close()
+  }
 })

@@ -1,6 +1,6 @@
 # Admin capability audit and implementation plan
 
-Audit baseline: commit `6cedb62`, updated for the implementation of issues #72–#73,
+Audit baseline: commit `6cedb62`, updated for the implementation of issues #72–#75,
 12 November 2026. The remaining delivery stages below are proposals.
 Current setup and operation are documented in [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
 
@@ -17,9 +17,9 @@ no due dates or assignees have been set.
 | 2 | [M8 · Admin-managed Keycloak configuration](https://github.com/arm2arm/open-llm-router/milestone/10) | [#77](https://github.com/arm2arm/open-llm-router/issues/77) revisions/secrets; [#78](https://github.com/arm2arm/open-llm-router/issues/78) authentication settings; [#79](https://github.com/arm2arm/open-llm-router/issues/79) SSO activation/rollback; [#80](https://github.com/arm2arm/open-llm-router/issues/80) authorization freshness/group naming |
 | 3 | [M9 · Admin-managed endpoints and policies](https://github.com/arm2arm/open-llm-router/milestone/11) | [#81](https://github.com/arm2arm/open-llm-router/issues/81) routing API/runtime; [#82](https://github.com/arm2arm/open-llm-router/issues/82) endpoint/model UI; [#83](https://github.com/arm2arm/open-llm-router/issues/83) group-policy editor; [#84](https://github.com/arm2arm/open-llm-router/issues/84) administration history; [#85](https://github.com/arm2arm/open-llm-router/issues/85) integrated acceptance/docs |
 
-The #72 credential/bootstrap foundation, #73 local authentication APIs and #74
-browser sign-in/password flows are implemented in this checkout. Continue with
-#75 for local user/key administration and #76 for recovery.
+The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
+browser sign-in/password flows and #75 local user/key administration are implemented
+in this checkout. Continue with #76 for protected-administrator recovery.
 Explicit cloud-provider adapters in delivery stage 4 below remain
 a future extension; these milestones cover existing compatible backends.
 Stage 5's authorization/audit/acceptance work is included in M8 and M9. The
@@ -48,7 +48,7 @@ additional evidence that the production pilot in #21 has been completed.
 | Local development stack with Keycloak | Yes | `deploy/compose/docker-compose.yml`, imported dev/brokered realms |
 | External Keycloak connection | Yes, via YAML/environment and restart | `internal/config`, `internal/oidcclient`, portal OIDC setup |
 | Keycloak configuration in Admin | No | Portal routes have no authentication-settings editor/API |
-| Local users and API keys | Yes, CLI/API-key authentication | Ordinary local users still have no password login; reserved administrator has credential storage and rotation |
+| Local users and API keys | Yes, Admin/API/CLI (#75) | Create password-enabled users, require first change/reset, metadata-only key listing/revoke; CLI API-key users can be given a local password |
 | Protected permanent local administrator | Yes (#72) | Migration 0004, transactional bootstrap, Argon2id, required first change, database guards |
 | Local password authentication and independent startup | Yes, JSON API (#73) | Migration 0005, restricted first-change sessions, rotation/revocation, throttling and OIDC retry; Keycloak absence/outage does not block local Admin |
 | Local sign-in/password forms and dual-login UI | Yes (#74) | Keycloak primary action, direct local route, outage state, required first change, Account password rotation and identity-source labels |
@@ -56,10 +56,10 @@ additional evidence that the production pilot in #21 has been completed.
 | Endpoint/model creation and editing in Admin | No | `/admin/replicas` is GET-only; UI displays health/capacity |
 | Group model grants and default limits | Yes, YAML plus restart | `config.Group`, `policy.Resolve` |
 | Group-policy editor in Admin | No | `/admin/groups` returns usage totals; no policy mutation routes |
-| Group membership management | Keycloak externally; local groups only at CLI creation | Sync reads group names; there is no exposed existing-local-user group editor |
+| Group membership management | Keycloak externally; local memberships in Admin/API (#75) | Assign existing configured groups; sessions end and keys receive updated access; effective models/limits shown |
 | Per-user quota/rate/concurrency overrides | Yes, Admin/API/CLI | Numeric fields plus `strict_quota`, reason/actor/time |
 | Enable/disable user | Yes, Admin/API; disable through CLI | Protected local administrator cannot be disabled; UI hides its disable action |
-| Key administration | Self-service create/revoke, operator CLI create/revoke | No operator key-revoke action in the Admin UI |
+| Key administration | Self-service create/revoke, operator CLI create/revoke, Admin list/revoke | Admin exposes metadata only; revocation is scoped to the displayed owner |
 | User deletion | Operator CLI | Protected local administrator cannot be erased; database guards cover ordinary SQL/cascades |
 | Remote compatible backend | Conditional on current native-protocol contract | Origin-only URL, Bearer token, HTTP-200 health probe; not a cloud-provider integration |
 | Provider adapters and provider registry | No | No custom auth headers, base paths, signing, provider model discovery or shared provider capacity |
@@ -97,8 +97,12 @@ recovery, session fixation/expiry/revocation, CSRF and existing SSO/API-key flow
 Completed for #74: browser local-only/dual login, first-change and Account password
 rotation, identity-source labels and session-specific logout. Browser tests cover
 local-only mode, an unreachable IdP, the bundled development Keycloak and denied
-Admin access for a regular local user. Additional local users and recovery remain
-assigned to #75–#76.
+Admin access for a regular local user.
+Completed for #75: Admin/API local user creation, existing-group membership editing,
+temporary password resets, disablement with session deletion, effective access and
+metadata-only operator key revocation. Tests cover source/protection guards, shared
+cache invalidation, concurrent issuance, SSO regressions and the browser lifecycle.
+Protected-administrator recovery remains assigned to #76.
 
 - Add a local credential store keyed by user UUID, with a maintained password
   hashing implementation, per-password salt and calibrated work factor. Keep

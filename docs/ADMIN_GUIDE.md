@@ -1,6 +1,6 @@
 # Administrator guide
 
-This guide describes the implementation including issues #72–#73 (12 November 2026). Start here
+This guide describes the implementation including issues #72–#75 (12 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
 The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
@@ -17,7 +17,8 @@ working functionality.
 | Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next API-key request; cached OIDC access-token principals can take up to one minute |
 | Disable/re-enable a router user | Portal **Admin** or portal API; CLI can disable | Portal/API-key access observes the change; OIDC token cache can take up to one minute |
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
-| Issue/revoke a user's API key as an operator | `olr admin key create/revoke` | No restart |
+| Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
+| Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
 | Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment | Router restart/recreation |
 | Configure Keycloak, endpoints or group policies from the Admin page | **Not implemented** | See the feature plan |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
@@ -106,8 +107,8 @@ The sidebar and **Account** page label the identity as **Protected local
 administrator**, **Local account**, or **Keycloak account**. The bundled realm's
 `admin` is a Keycloak account with a separate UUID and credentials. Keycloak users
 manage their password through their organization, rather than this local form.
-Additional local password-user management is tracked in #75; ordinary CLI API-key
-users do not automatically acquire password credentials.
+Admins can create additional local password users and set a password on an existing
+CLI API-key user. CLI-created users do not automatically acquire credentials.
 
 Set `PORTAL_BASE_URL` to the public HTTPS origin. For local HTTP only, explicitly
 set `PORTAL_COOKIE_SECURE=false`. An HTTP origin with secure cookies leaves the
@@ -583,8 +584,9 @@ olr_admin key revoke -id KEY_UUID
 olr_admin user disable -id "$OLR_TARGET_USER_ID"
 ```
 
-The admin UI shows key counts but does not provide an operator revoke button.
-Users revoke their own keys on **API keys**. Re-enable a router user through the
+The admin UI lists key metadata and provides an operator revoke button; raw keys
+are never displayed there. Users create and revoke their own keys on **API keys**.
+Re-enable a router user through the
 Admin page/API; there is currently no `olr admin user enable` CLI command.
 
 For a local API-only account:
@@ -598,10 +600,47 @@ olr_admin key create -user USER_UUID -label automation -class batch
 This creates identity `(local, automation)`, not a Keycloak identity or password.
 SSO identities use `(issuer, sub)`; the same username or email does not link them.
 Group membership for SSO accounts is managed in Keycloak. The public CLI has no
-group-edit command for an existing local user. Keycloak sync updates enabled
+group-edit command for an existing local user; use **Admin → Manage** instead.
+Keycloak sync updates enabled
 users already known to this router; it is not a bulk realm-user import and never
 re-enables disabled users. Re-login or sync refreshes groups for API-key users;
 issued OIDC access tokens retain their embedded group claims until replaced.
+
+### Manage local users in Admin
+
+1. Sign in as the protected local administrator or a user in a configured
+   `admin: true` group. Complete any required first password change.
+2. Open **Admin → Create local user**. Enter an exact username, optional email,
+   temporary password and existing configured groups. Passwords must have at least
+   15 UTF-8 characters and fit within 1024 bytes. Group selection can grant Admin
+   authority, so check the administrator labels before saving.
+3. Deliver the temporary password through a private channel. The user opens
+   `/portal/login/local`, replaces it and signs in again. An empty group selection
+   grants no models. A matching Keycloak username or email remains a separate identity.
+4. Find the user and select **Manage**. Review identity source, password status,
+   effective model access, limits and existing quota overrides. Save local group
+   memberships here; edit the groups' model grants/default limits in YAML.
+
+| Action | Browser sessions | API keys and access |
+|---|---|---|
+| Save local memberships | All sessions end; user signs in again | Existing keys use updated groups, model grants and limits on the next request |
+| Disable | All sessions are deleted | Keys cannot authenticate while disabled |
+| Re-enable | Requires a new login; old cookies stay invalid | Unrevoked, unexpired keys work again |
+| Reset local password / Set local password | All sessions end; next login requires replacement of the temporary password | All existing keys are permanently revoked; the user creates replacements after changing the password |
+| Revoke one key | Sessions remain active | That key stops authorizing new requests; metadata and usage history remain |
+
+**Reset local password** cannot reuse the current password. **Set local password**
+can enable login for an API-key-only local user and has the same revocation effects.
+Admin creation/reset share local-password rate limits and the two-worker hashing cap;
+429 responses include `Retry-After`. Changes invalidate API-key caches across routers.
+Already running inference requests continue; cached OIDC access-token principals can
+take up to one minute to observe disablement or limit changes.
+
+Keycloak account details show the authoritative issuer. Their memberships and
+passwords are managed by the IdP; the local editing/reset APIs reject these accounts.
+The protected local administrator has no disable, group reassignment or Admin reset
+action. It rotates its own password under **Account**, using the current password;
+host-side recovery without that password remains #76. The Admin page does not delete users.
 
 ## 5. Routine operation and troubleshooting
 
@@ -625,8 +664,8 @@ Full erasure is an operator CLI operation; see [RUNBOOK.md](RUNBOOK.md#erase-a-u
 | Group policy changes unexpectedly | Multiple memberships, omitted limits and group-sync name/path consistency |
 | Keycloak unavailable | Open `/portal/login/local` or use the local API/operator CLI; inspect `/portal/api/auth` for SSO availability |
 
-Protected credentials, local sessions, independent portal startup and dual-login
-browser forms are implemented. Admin-managed external Keycloak configuration remains in
+Protected credentials, local sessions, independent portal startup, dual-login
+browser forms and local user/key administration are implemented. Admin-managed external Keycloak configuration remains in
 [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
 local tests and this documentation do not replace deployed acceptance and two
 weeks of real user activity.

@@ -165,16 +165,47 @@ authorization remains enforced on the server regardless of browser navigation.
 
 - `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
-  month, overrides by field and `protected_admin`.
+  month, overrides by field, `issuer`, `protected_admin`, `has_local_password` and
+  `must_change_password`.
 - `GET /portal/api/admin/users/{id}`: the user, effective `limits`, `overrides` with `reason`,
-  `set_by` and `set_at`, and key metadata.
+  `set_by` and `set_at`, sorted allowed public `models` (including aliases), effective
+  `admin` and key metadata. The user includes `issuer`, `has_local_password` and
+  `must_change_password`; keys include `id`, `prefix`, `label`, `created`, `last_used`,
+  `expires`, `revoked`, `expired`, `class` and `trusted_forwarder`, never hashes or raw keys.
+- `POST /portal/api/admin/users` with
+  `{"username":"alice","email":"alice@example.org","groups":["staff"],"password":"…"}`
+  creates a new local identity and returns 201 `{"id":"UUID","must_change_password":true}`.
+  Username is exact, 1–128 bytes, without whitespace/control characters. Email is optional
+  and must be a valid address of at most 254 bytes. Password policy matches `/portal/password`.
+  Group names must be distinct existing configured groups (maximum 64); omitted groups
+  mean `[]`. Existing local usernames return 409; an SSO account with matching name/email
+  remains separate. Unknown JSON fields and invalid input return 400.
+- `PUT /portal/api/admin/users/{id}/groups` with `{"groups":["staff"]}` assigns configured
+  memberships to an ordinary local user. The array is required; `[]` removes all memberships.
+  Returns 204, deletes all browser sessions and synchronously invalidates API-key caches
+  on every router. Existing keys use the updated access/limits on their next request.
+  Existing per-user overrides are preserved.
+- `POST /portal/api/admin/users/{id}/password` with `{"password":"…"}` sets a temporary
+  password on an ordinary local user, including a CLI API-key-only account. Returns 204,
+  deletes all sessions, permanently revokes all existing API keys and invalidates their
+  caches. The user must change this password at next login. Reusing the current password
+  returns 400. Creation/reset share global/IP login budgets, have a separate per-admin
+  actor bucket (10/minute), and use the existing two-worker password-hashing cap; 429
+  includes `Retry-After`.
+- The group/password routes return 403 for Keycloak identities and the protected local
+  administrator; their source/protection checks also run in the store transaction.
+  Creating the reserved local `admin` returns 403. There is no portal deletion API.
+- `DELETE /portal/api/admin/users/{id}/keys/{key}` with `{}` returns 204 after revoking a
+  key belonging to that user. Unknown/mismatched owners return 404. Metadata and usage
+  remain; browser sessions remain active. API-key caches invalidate on every router.
 - `PUT /portal/api/admin/users/{id}/overrides/{field}` with `{"value":N,"reason":"…"}` (`null` for
   unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`;
   `DELETE …/overrides/{field}` with `{}` clears it. Both return 204 and take effect at the user's
   next API-key request on every router. Cached OIDC access-token principals can
   take up to one minute to refresh.
 - `PUT /portal/api/admin/users/{id}/enabled` with `{"enabled":false}` disables a user (sessions
-  and API-key access stop working at once) or re-enables them; cached OIDC access-token
+  are deleted and API-key access stops working at once) or re-enables them; re-enabling
+  requires a fresh browser login and restores only unrevoked, unexpired keys. Cached OIDC access-token
   principals can remain valid for up to one minute. Admins cannot disable themselves.
   Disabling the protected local administrator returns 403, including for another admin.
 - `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
