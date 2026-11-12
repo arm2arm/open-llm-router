@@ -141,7 +141,7 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 		t.Fatal("conflicting draft", err, view.Draft)
 	}
 	conflicting := view.Draft.ID
-	_, err = service.Activate(ctx, settings.DomainAuthentication, 2, conflicting, actor)
+	_, err = service.Activate(ctx, settings.DomainAuthentication, 2, conflicting, actor, false)
 	var invalid *settings.ValidationError
 	if !errors.As(err, &invalid) || strings.Contains(err.Error(), "other.example") {
 		t.Fatal("conflicting activation", err)
@@ -176,10 +176,10 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 		t.Fatal("valid draft", err, view.Draft)
 	}
 	first := view.Draft.ID
-	if _, err := service.Activate(ctx, settings.DomainAuthentication, view.Version, conflicting, actor); !errors.Is(err, settings.ErrRevision) {
+	if _, err := service.Activate(ctx, settings.DomainAuthentication, view.Version, conflicting, actor, false); !errors.Is(err, settings.ErrRevision) {
 		t.Fatal("activated a revision that is not the draft", err)
 	}
-	view, err = service.Activate(ctx, settings.DomainAuthentication, view.Version, first, actor)
+	view, err = service.Activate(ctx, settings.DomainAuthentication, view.Version, first, actor, false)
 	if err != nil || view.Active.ID != first || view.Draft != nil {
 		t.Fatal("activate", err)
 	}
@@ -193,7 +193,7 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal("rotation draft", err)
 	}
-	view, err = service.Activate(ctx, settings.DomainAuthentication, view.Version, view.Draft.ID, actor)
+	view, err = service.Activate(ctx, settings.DomainAuthentication, view.Version, view.Draft.ID, actor, false)
 	if err != nil || apply(env).Config.OIDCSyncSecret != secretValues[2] {
 		t.Fatal("rotation", err)
 	}

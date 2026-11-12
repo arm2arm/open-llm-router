@@ -59,6 +59,18 @@ function Failure({ error }: { error: Error | null }) {
     </div>
   ) : null
 }
+// Mirrors the server rule: enabling SSO needs passed checks and a test
+// sign-in; turning it off does not.
+function readyToActivate(revision: SettingsRevision) {
+  if (!revision.document?.enabled) return true
+  const checks = revision.checks
+  return (
+    !!checks?.connection &&
+    checks.connection.results.every((result) => result.status !== 'failed') &&
+    checks.test_sign_in?.status === 'passed'
+  )
+}
+
 const asError = (error: unknown) =>
   error instanceof Error
     ? error
@@ -532,7 +544,7 @@ export function AuthenticationSettingsPanel() {
             </div>
             <div>
               <dt className="subtitle">This router is running</dt>
-              <dd>
+              <dd data-testid="authentication-runtime">
                 {data.runtime.revision
                   ? `revision ${data.runtime.revision}`
                   : 'the file configuration'}
@@ -551,6 +563,44 @@ export function AuthenticationSettingsPanel() {
               </div>
             )}
           </dl>
+          {managed &&
+            data.settings.active &&
+            data.runtime.revision !== data.settings.active.id && (
+              <div role="note" className="grid gap-2">
+                <p className="subtitle">
+                  This router runs{' '}
+                  {data.runtime.revision
+                    ? `revision ${data.runtime.revision}`
+                    : 'the file configuration'}
+                  , not active revision {data.settings.active.id} (for example
+                  after a CLI activation).
+                </p>
+                <div>
+                  <Button
+                    variant="outline"
+                    disabled={pending || !data.can_change}
+                    onClick={() => void act('apply', {})}
+                  >
+                    Apply active revision to this router
+                  </Button>
+                </div>
+              </div>
+            )}
+          {data.other_issuers.length > 0 && (
+            <div role="note" className="subtitle">
+              Accounts of previous identity providers are kept separate and are
+              no longer updated by group sync. Disable them under Users when
+              they should lose access:
+              <ul>
+                {data.other_issuers.map((issuer) => (
+                  <li key={issuer.issuer}>
+                    <code>{issuer.issuer}</code>: {issuer.enabled_users} enabled
+                    users, {issuer.active_keys} active keys
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="grid gap-2" aria-label="Identity provider URLs">
             <h3 className="panel-title">Register these on the portal client</h3>
             <dl className="grid gap-1 text-sm">
@@ -648,12 +698,9 @@ export function AuthenticationSettingsPanel() {
             <div className="grid gap-2" aria-label="Draft status">
               {data.settings.draft.validation?.valid ? (
                 <p className="subtitle">
-                  Draft {data.settings.draft.id} is valid. Routers apply an
-                  activated revision when they restart:{' '}
-                  <code>
-                    olr admin settings activate -expect-version{' '}
-                    {data.settings.version} -revision {data.settings.draft.id}
-                  </code>
+                  {readyToActivate(data.settings.draft)
+                    ? `Draft ${data.settings.draft.id} passed its checks. Activating applies it to this router at once; other routers apply it when they restart.`
+                    : `Draft ${data.settings.draft.id} is valid. Run the connection checks (none may fail) and a successful test sign-in before activating it.`}
                 </p>
               ) : (
                 <div role="alert" className="error">
@@ -665,7 +712,23 @@ export function AuthenticationSettingsPanel() {
                   </ul>
                 </div>
               )}
-              <div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={
+                    pending ||
+                    !data.can_change ||
+                    !data.settings.draft.validation?.valid ||
+                    !readyToActivate(data.settings.draft)
+                  }
+                  onClick={() =>
+                    void act('activate', {
+                      version: data.settings.version,
+                      revision: data.settings.draft?.id,
+                    })
+                  }
+                >
+                  Activate draft
+                </Button>
                 <Button
                   variant="outline"
                   disabled={pending || !data.can_change}
@@ -693,6 +756,9 @@ export function AuthenticationSettingsPanel() {
                     <th>Status</th>
                     <th>Created</th>
                     <th>By</th>
+                    <th>
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -702,6 +768,24 @@ export function AuthenticationSettingsPanel() {
                       <td>{revision.status.replace('_', ' ')}</td>
                       <td>{new Date(revision.created_at).toLocaleString()}</td>
                       <td>{revision.created_by}</td>
+                      <td>
+                        {revision.status === 'previously_active' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={pending || !data.can_change}
+                            aria-label={`Roll back to revision ${revision.id}`}
+                            onClick={() =>
+                              void act('rollback', {
+                                version: data.settings.version,
+                                revision: revision.id,
+                              })
+                            }
+                          >
+                            Roll back
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -39,8 +39,8 @@ func (h *Handler) session(r *http.Request) (user, error) {
 		FROM sessions s JOIN users u ON u.id=s.user_id
 		LEFT JOIN local_credentials c ON c.user_id=u.id
 		WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled AND
-		((s.auth_method='oidc' AND u.issuer<>'local') OR
-		(s.auth_method='local' AND u.issuer='local' AND c.revision=s.credential_revision))`, hash[:]).
+		((s.auth_method='oidc' AND u.issuer<>'local' AND u.issuer=$2) OR
+		(s.auth_method='local' AND u.issuer='local' AND c.revision=s.credential_revision))`, hash[:], h.current().issuer()).
 		Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.ProtectedAdmin, &u.AuthMethod, &u.PasswordChangeRequired, &u.SessionCreated, &u.Overrides)
 	return u, err
 }
@@ -90,7 +90,8 @@ func (h *Handler) signout(w http.ResponseWriter, r *http.Request, u user) {
 	h.cookie(w, sessionCookie, "", -1)
 	h.cookie(w, loginCookie, "", -1)
 	logoutURL := "/"
-	if sso := h.sso.Load(); u.AuthMethod == "oidc" && sso != nil && h.ssoAvailable.Load() {
+	if state := h.current(); u.AuthMethod == "oidc" && state.provider.Load() != nil && state.available.Load() {
+		sso := state.provider.Load()
 		providerURL, _ := url.Parse(sso.logout)
 		q := providerURL.Query()
 		q.Set("client_id", sso.oauth.ClientID)

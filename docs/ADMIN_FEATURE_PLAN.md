@@ -19,8 +19,9 @@ no due dates or assignees have been set.
 
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
 browser sign-in/password flows, #75 local user/key administration, #76
-protected-administrator recovery, the #77 managed-settings foundation and the #78
-Admin → Authentication page are implemented in this checkout. Endpoint editing for existing logical models now implements part
+protected-administrator recovery, the #77 managed-settings foundation, the #78
+Admin → Authentication page and #79 live activation/rollback are implemented in
+this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
 acceptance work.
@@ -169,6 +170,15 @@ redacted messages; test sign-in verifies the identity token and claims with a
 draft's settings without creating users or sessions. Changes need a local admin
 sign-in from the last 15 minutes; outbound checks refuse link-local/metadata
 destinations and never follow redirects. Activation from Admin is #79.
+
+Completed for #79: Admin activation prepares and validates the replacement
+portal OIDC client before changing anything, requires passed checks and test
+sign-in for SSO-enabled drafts, then switches the portal client, API-token
+verifier (dropping its principal cache) and group sync together and stops the
+old ones. Rollback and **Apply** work while a provider is down. Sessions are
+checked against the current issuer; an issuer change discards pending SSO logins,
+keeps accounts separated and reports previous issuers' accounts. Tests cover
+switching between isolated realms, failed activation, rollback and SSO off.
 
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required

@@ -354,6 +354,11 @@ export type AuthenticationView = {
     sso_configured: boolean
     sso_available: boolean
   }
+  other_issuers: {
+    issuer: string
+    enabled_users: number
+    active_keys: number
+  }[]
   can_change: boolean
   change_requirement?: string
   encryption_key_configured: boolean

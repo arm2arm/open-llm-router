@@ -24,7 +24,7 @@ var MaxPendingLogins = 10000
 var errTooManyLogins = errors.New("too many pending logins")
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.OIDC == nil {
+	if h.current().oidc == nil {
 		http.Redirect(w, r, "/portal/login/local", http.StatusSeeOther)
 		return
 	}
@@ -38,8 +38,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 // Interactive sign-in always has a path back to local authentication when the
 // provider becomes unavailable between displaying and choosing the SSO action.
 func (h *Handler) browserLogin(w http.ResponseWriter, r *http.Request) {
-	sso := h.sso.Load()
-	if !h.safeCookies() || !h.ssoAvailable.Load() || sso == nil {
+	state := h.current()
+	sso := state.provider.Load()
+	if !h.safeCookies() || !state.available.Load() || sso == nil {
 		http.Redirect(w, r, "/portal/sign-in?sso=unavailable", http.StatusSeeOther)
 		return
 	}
@@ -138,7 +139,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := sso.verifier.Verify(ctx, raw)
-	if err != nil || id.Subject == "" || id.Issuer != h.cfg.OIDC.Issuer || subtle.ConstantTimeCompare([]byte(id.Nonce), []byte(nonce)) != 1 {
+	// Claims are checked against the configuration of the provider that
+	// verified the token, even if settings change during this request.
+	settings := sso.cfg
+	if err != nil || id.Subject == "" || id.Issuer != settings.Issuer || subtle.ConstantTimeCompare([]byte(id.Nonce), []byte(nonce)) != 1 {
 		fail(w, 400, "invalid_request_error", "identity token validation failed")
 		return
 	}
@@ -157,11 +161,11 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		raw, ok := claims[name]
 		return !ok || json.Unmarshal(raw, value) == nil
 	}
-	if !decode(h.cfg.OIDC.UsernameClaim, &username) || !decode("email", &email) || !decode(h.cfg.OIDC.GroupsClaim, &groups) || !decode("azp", &party) || (party != "" && party != sso.oauth.ClientID) || (len(id.Audience) > 1 && party != sso.oauth.ClientID) {
+	if !decode(settings.UsernameClaim, &username) || !decode("email", &email) || !decode(settings.GroupsClaim, &groups) || !decode("azp", &party) || (party != "" && party != sso.oauth.ClientID) || (len(id.Audience) > 1 && party != sso.oauth.ClientID) {
 		fail(w, 400, "invalid_request_error", "invalid identity claims")
 		return
 	}
-	if !hasRequiredClaim(claims, h.cfg.OIDC.RequiredClaim) {
+	if !hasRequiredClaim(claims, settings.RequiredClaim) {
 		fail(w, 403, "permission_error", "your account is not entitled to use this service")
 		return
 	}

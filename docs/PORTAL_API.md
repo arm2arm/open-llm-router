@@ -382,6 +382,20 @@ contain secret values: secrets appear as `configured`, `reference`
   user or session, and only the administrator who started it, still freshly
   signed in locally, can complete it.
 
+- `POST …/activate` with `{"version":N,"revision":R}` activates the current draft
+  and applies it to this router at once. An SSO-enabled draft needs stored checks
+  without failures and a passed test sign-in (400 otherwise), and its provider must
+  be reachable now; on any refusal nothing changes. The portal login client,
+  API-token verification and group sync switch together.
+- `POST …/rollback` with `{"version":N,"revision":R}` re-activates a previously
+  active revision (404 otherwise) and applies it, even while that provider is down.
+- `POST …/apply` with `{}` applies the active revision to this router, for example
+  after a CLI activation.
+- The view also contains `other_issuers`: `{issuer, enabled_users, active_keys}`
+  for SSO accounts of issuers other than the current one. On an issuer change,
+  pending SSO logins are discarded and other issuers' SSO sessions stop
+  authenticating; accounts are never merged across issuers.
+
 Connection checks and test sign-in contact only the issuer (or its back-channel
 URL), never follow redirects, and refuse link-local, metadata, multicast and
 unspecified addresses at connection time. Loopback and private networks are

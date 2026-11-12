@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/idpcheck"
 	"github.com/arm2arm/open-llm-router/internal/settings"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -85,9 +87,13 @@ type authenticationView struct {
 		SSOConfigured bool   `json:"sso_configured"`
 		SSOAvailable  bool   `json:"sso_available"`
 	} `json:"runtime"`
-	CanChange          bool   `json:"can_change"`
-	ChangeRequirement  string `json:"change_requirement,omitempty"`
-	EncryptionKeyReady bool   `json:"encryption_key_configured"`
+	// OtherIssuers are SSO accounts of previously used issuers. They keep
+	// their keys, are never merged with current accounts, and group sync no
+	// longer updates them; disable them in Admin when no longer needed.
+	OtherIssuers       []issuerUsers `json:"other_issuers"`
+	CanChange          bool          `json:"can_change"`
+	ChangeRequirement  string        `json:"change_requirement,omitempty"`
+	EncryptionKeyReady bool          `json:"encryption_key_configured"`
 }
 
 func (h *Handler) authenticationView(r *http.Request, u user) (authenticationView, error) {
@@ -98,8 +104,13 @@ func (h *Handler) authenticationView(r *http.Request, u user) (authenticationVie
 	}
 	out.Settings = view
 	out.URLs.Redirect, out.URLs.PostLogout, out.URLs.WebOrigin = h.cfg.Portal.BaseURL+"/portal/callback", h.cfg.Portal.BaseURL+"/", h.cfg.Portal.BaseURL
-	out.Runtime.Revision, out.Runtime.Problem = h.SettingsRuntime.Revision, h.SettingsRuntime.Problem
-	out.Runtime.SSOConfigured, out.Runtime.SSOAvailable = h.cfg.OIDC != nil, h.ssoAvailable.Load()
+	runtime := h.settingsRuntime()
+	out.Runtime.Revision, out.Runtime.Problem = runtime.Revision, runtime.Problem
+	if out.OtherIssuers, err = h.otherIssuers(r); err != nil {
+		return out, err
+	}
+	state := h.current()
+	out.Runtime.SSOConfigured, out.Runtime.SSOAvailable = state.oidc != nil, state.available.Load()
 	out.CanChange = recentLocal(u)
 	if !out.CanChange {
 		out.ChangeRequirement = "Changes need a local administrator sign-in within the last 15 minutes."
@@ -359,4 +370,141 @@ func (h *Handler) verifyTestSignIn(r *http.Request, revision int64, nonce, verif
 	}
 	return idpcheck.Result{Name: idpcheck.TestSignIn, Status: idpcheck.Passed,
 		Message: fmt.Sprintf("signed in with a verified identity token: %s present, %d groups (%d configured here)", cfg.OIDC.UsernameClaim, len(groups), known)}
+}
+
+// AuthServices switches the router's other OIDC services (API-token
+// verification and group sync) together with the portal.
+type AuthServices interface{ Switch(*config.Config) }
+
+// SetSettingsRuntime records what this process runs; main sets it at startup.
+func (h *Handler) SetSettingsRuntime(snapshot settings.Snapshot) { h.runtime.Store(&snapshot) }
+
+func (h *Handler) settingsRuntime() settings.Snapshot {
+	if snapshot := h.runtime.Load(); snapshot != nil {
+		return *snapshot
+	}
+	return settings.Snapshot{Domain: settings.DomainAuthentication}
+}
+
+// prepareAuthentication builds everything a revision needs before any state
+// changes. The returned commit switches the portal, the background services
+// and the recorded runtime revision; abort releases the prepared provider.
+func (h *Handler) prepareAuthentication(r *http.Request, revision int64, strict bool) (commit, abort func(), err error) {
+	cfg, revision, err := h.Settings.Candidate(r.Context(), settings.DomainAuthentication, revision)
+	if err != nil {
+		return nil, nil, err
+	}
+	prepared, err := h.PrepareSSO(r.Context(), cfg, strict)
+	if err != nil {
+		return nil, nil, &settings.ValidationError{Problems: []string{"the identity provider is not usable right now: " + err.Error()}}
+	}
+	commit = func() {
+		h.CommitSSO(context.WithoutCancel(r.Context()), prepared)
+		if h.AuthServices != nil {
+			h.AuthServices.Switch(cfg)
+		}
+		h.SetSettingsRuntime(settings.Snapshot{Domain: settings.DomainAuthentication, Revision: revision, Config: cfg})
+	}
+	return commit, prepared.Close, nil
+}
+
+type revisionBody struct {
+	Version  int64 `json:"version"`
+	Revision int64 `json:"revision"`
+}
+
+// activateAuthentication applies a draft to this router without a restart.
+// The draft must have passed its connection checks and a test sign-in, and
+// its provider must be reachable now; otherwise nothing changes.
+func (h *Handler) activateAuthentication(w http.ResponseWriter, r *http.Request, u user) {
+	h.switchAuthentication(w, r, u, true)
+}
+
+// rollbackAuthentication re-activates a previously active revision. It works
+// while that provider is down: SSO then reports unavailable and retries.
+func (h *Handler) rollbackAuthentication(w http.ResponseWriter, r *http.Request, u user) {
+	h.switchAuthentication(w, r, u, false)
+}
+
+func (h *Handler) switchAuthentication(w http.ResponseWriter, r *http.Request, u user, activate bool) {
+	var body revisionBody
+	if !h.jsonBody(w, r, &body) {
+		return
+	}
+	if body.Version <= 0 || body.Revision <= 0 {
+		fail(w, 400, "invalid_request_error", "version and revision are required")
+		return
+	}
+	h.authMu.Lock()
+	defer h.authMu.Unlock()
+	commit, abort, err := h.prepareAuthentication(r, body.Revision, activate)
+	if settingsError(w, err) {
+		return
+	}
+	if activate {
+		_, err = h.Settings.Activate(r.Context(), settings.DomainAuthentication, body.Version, body.Revision, portalActor(u), true)
+	} else {
+		_, err = h.Settings.Rollback(r.Context(), settings.DomainAuthentication, body.Version, body.Revision, portalActor(u))
+	}
+	if err != nil {
+		abort()
+		settingsError(w, err)
+		return
+	}
+	commit()
+	h.authenticationSettings(w, r, u)
+}
+
+// applyAuthentication makes this router run the active revision, for example
+// after `olr admin settings activate` or a rollback by another router.
+func (h *Handler) applyAuthentication(w http.ResponseWriter, r *http.Request, u user) {
+	var body struct{}
+	if !h.jsonBody(w, r, &body) {
+		return
+	}
+	h.authMu.Lock()
+	defer h.authMu.Unlock()
+	view, err := h.Settings.View(r.Context(), settings.DomainAuthentication)
+	if settingsError(w, err) {
+		return
+	}
+	if !view.Managed {
+		fail(w, 409, "conflict_error", settings.ErrNotManaged.Error())
+		return
+	}
+	commit, _, err := h.prepareAuthentication(r, view.Active.ID, false)
+	if settingsError(w, err) {
+		return
+	}
+	commit()
+	_ = audit.Record(r.Context(), h.pool, audit.Event{Action: "settings.apply", Actor: portalActor(u), TargetType: "settings",
+		TargetID: settings.DomainAuthentication, Revision: view.Active.ID, Result: audit.Succeeded})
+	h.authenticationSettings(w, r, u)
+}
+
+// otherIssuers counts SSO users and active keys of issuers other than the
+// one in use. They are never linked to the current issuer's accounts.
+func (h *Handler) otherIssuers(r *http.Request) ([]issuerUsers, error) {
+	rows, err := h.pool.Query(r.Context(), `SELECT u.issuer,count(*) FILTER (WHERE u.enabled),
+		(SELECT count(*) FROM api_keys k JOIN users o ON o.id=k.user_id WHERE o.issuer=u.issuer AND o.enabled AND NOT k.revoked AND k.expires>clock_timestamp())
+		FROM users u WHERE u.issuer<>'local' AND u.issuer<>$1 GROUP BY u.issuer ORDER BY u.issuer`, h.current().issuer())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []issuerUsers{}
+	for rows.Next() {
+		var entry issuerUsers
+		if err := rows.Scan(&entry.Issuer, &entry.EnabledUsers, &entry.ActiveKeys); err != nil {
+			return nil, err
+		}
+		list = append(list, entry)
+	}
+	return list, rows.Err()
+}
+
+type issuerUsers struct {
+	Issuer       string `json:"issuer"`
+	EnabledUsers int64  `json:"enabled_users"`
+	ActiveKeys   int64  `json:"active_keys"`
 }

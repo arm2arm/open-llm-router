@@ -80,13 +80,13 @@ and the [pilot checklist](docs/PILOT.md).
 | Area | Available today |
 |---|---|
 | Routing | OpenAI and Anthropic native APIs; SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
-| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks and test sign-in in Admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
+| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; local user management; expiring per-user keys and optional encrypted Admin key copy |
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
 | Usage and operations | Usage history and timing; personal text, reasoning, tool and stream traces with user-controlled capture and 7-day default retention; user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
 | Deployment | Local Compose demo, real-backend examples, production pilot Compose, [Helm chart](charts/open-llm-router) and [Kubernetes manifests](deploy/k8s) |
 
-**Still planned:** activating Keycloak settings from Admin without a restart; creating logical models and
+**Still planned:** creating logical models and
 aliases in Admin; editing group policies in Admin;
 and shared limits/live configuration across multiple router processes. Logical
 names, aliases and group defaults currently use YAML, while Keycloak settings use
