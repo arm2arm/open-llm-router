@@ -58,7 +58,6 @@ services and HTTPS ingress.
 | `image.pullPolicy`, `imagePullSecrets` | `IfNotPresent`, `[]` | Image policy and pull Secrets; pull Secrets apply to all workloads |
 | `existingSecret` | Empty | Empty creates credentials; otherwise reference an existing same-namespace Secret |
 | `secrets.bootstrapAdminPassword` | Generated | Initial local `admin` password, at least 15 characters |
-| `secrets.apiKeyEncryptionKey` | Generated | Base64-encoded 32-byte key for recovering newly issued API keys |
 | `secrets.env` | `{}` | Additional secret environment values, such as backend API tokens |
 | `postgresql.enabled`, `image` | `true`, `postgres:17` | Bundled single-instance PostgreSQL |
 | `postgresql.username`, `database`, `password` | `olr`, `olr`, generated | Database initialization; keep stable after first install |
@@ -109,7 +108,6 @@ The referenced Secret must provide:
 |---|---|
 | `OLR_DATABASE_URL` | Every install; for bundled PostgreSQL, point it at `<release>-open-llm-router-postgresql:5432` with matching credentials |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | First local admin creation; omitted after initialization if desired |
-| `OLR_API_KEY_ENCRYPTION_KEY` | API-key recovery; use a stable base64-encoded 32-byte key |
 | `OLR_SETTINGS_ENCRYPTION_KEY` | Optional: secrets stored with `olr admin settings`; a separate stable base64-encoded 32-byte key. The chart does not generate it |
 | `POSTGRES_PASSWORD` | Bundled PostgreSQL; match the password in `OLR_DATABASE_URL` |
 | `KC_BOOTSTRAP_ADMIN_PASSWORD` | Bundled Keycloak console administrator |
@@ -148,7 +146,8 @@ rejects a changed bundled database password; rotate it in PostgreSQL and the
 Secret together. Change Keycloak users/client secrets and portal redirect/logout
 origins in Keycloak's console, then synchronize the deployment values/Secret.
 The local bootstrap password is ignored after the administrator is initialized.
-Keep the API-key encryption key unchanged and backed up separately.
+API keys are hash-only and shown once. Recovery settings were removed; upgrades
+drop historical ciphertext. Remove legacy API-key encryption secrets and replace lost keys.
 
 Changes to `config` update the router's checksum; image/environment changes also
 roll out its pod. Changes to Secret values require restarting the consumers.

@@ -78,7 +78,9 @@ func TestAnthropicStreamAndPartialTail(t *testing.T) {
 }
 
 func TestCaptureBoundsAndNonblockingAdmission(t *testing.T) {
-	s := &Service{slots: make(chan struct{}, Slots), queue: make(chan *Capture, Slots)}
+	s := &Service{enabled: true, slots: make(chan struct{}, Slots), queue: make(chan *Capture, Slots)}
+	consent := map[string]Preferences{"user": {Enabled: true, RetentionDays: 7}}
+	s.prefs.Store(&consent)
 	for range Slots {
 		c := s.Begin("user", "chat", time.Now())
 		if c == nil {

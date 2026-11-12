@@ -40,13 +40,16 @@ func TestTraceStorageDoesNotHoldStreamingResponse(t *testing.T) {
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n")
 	}), usageOptions{configure: func(_ *config.Config, p *proxy.Handler, _ *server.Server, pool *pgxpool.Pool) {
 		var err error
-		traces, err = requesttrace.New(t.Context(), pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		traces, err = requesttrace.New(t.Context(), pool, slog.New(slog.NewTextHandler(io.Discard, nil)), config.ContentTracing{Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(traces.Close)
 		p.Traces = traces
 	}})
+	if err := traces.Save(t.Context(), f.owner, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +93,9 @@ func TestPersonalRequestTraces(t *testing.T) {
 	f := startPortal(t)
 	a, b, root := f.browser(t), f.browser(t), f.browser(t)
 	alice := a.login(t, "trace-alice", []string{"staff"})
+	if err := f.traces.Save(t.Context(), alice, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
 	b.login(t, "trace-bob", []string{"staff"})
 	root.login(t, "trace-admin", []string{"admins"})
 	resp, data := a.call(t, "GET", "/portal/api/trace-preferences", "", "")
@@ -226,6 +232,9 @@ func TestTraceRetentionAndUserErasure(t *testing.T) {
 	f := startPortal(t)
 	a := f.browser(t)
 	alice := a.login(t, "retention-alice", []string{"staff"})
+	if err := f.traces.Save(t.Context(), alice, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
 	id := reqid.New()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail) VALUES($1,$2,now()-interval '3 days',now()+interval '4 days','{}')`, id, alice); err != nil {
 		t.Fatal(err)
@@ -260,7 +269,13 @@ func TestForwardedTraceBelongsToAttributedUser(t *testing.T) {
 	f := startPortal(t, usageOptions{forwarders: &config.Forwarders{UnknownUser: config.UnknownUserReject, HeaderMap: map[string]string{"X-Olr-End-User": "username"}}})
 	a, b := f.browser(t), f.browser(t)
 	alice := a.login(t, "forwarded-trace-alice", []string{"staff"})
+	if err := f.traces.Save(t.Context(), alice, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
 	bob := b.login(t, "forwarded-trace-bob", []string{"staff"})
+	if err := f.traces.Save(t.Context(), bob, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
 	key, err := (auth.Admin{Pool: f.pool}).CreateForwarderKey(t.Context(), bob, "forwarder", "interactive", time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -289,5 +304,53 @@ func TestForwardedTraceBelongsToAttributedUser(t *testing.T) {
 	}
 	if r, _ := b.call(t, "GET", path, "", ""); r.StatusCode != 404 {
 		t.Fatal("forwarder's key owner read attributed content")
+	}
+}
+
+func TestContentTracingDefaultKillSwitchAndRestart(t *testing.T) {
+	pool := openDatabase(t, newDatabase(t).dsn)
+	owner := user(t, pool, "local", "private-tracing")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	traces, err := requesttrace.New(t.Context(), pool, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(traces.Close)
+	p, err := traces.Preferences(t.Context(), owner)
+	if err != nil || p.Enabled || p.Available {
+		t.Fatal("unsafe defaults", p, err)
+	}
+	if err := traces.Save(t.Context(), owner, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if traces.Begin(owner, "chat", time.Now()) != nil {
+		t.Fatal("user bypassed global gate")
+	}
+	traces.SetEnabled(true)
+	c := traces.Begin(owner, "chat", time.Now())
+	if c == nil {
+		t.Fatal("opt-in ignored")
+	}
+	c.Input([]byte(`{"messages":[{"role":"user","content":"synthetic secret"}]}`))
+	traces.SetEnabled(false)
+	c.Finish(usage.Record{RequestID: "12345678901234567890123456789012", UserID: owner, StartedAt: time.Now()})
+	waitFor(t, func() bool { return traces.Processed.Load() == 1 })
+	var count int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM request_traces`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("persisted despite global disable", count, err)
+	}
+	restarted, err := requesttrace.New(t.Context(), pool, log, config.ContentTracing{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restarted.Close)
+	resumed := restarted.Begin(owner, "chat", time.Now())
+	if resumed == nil {
+		t.Fatal("saved opt-in lost on restart")
+	}
+	resumed.Finish(usage.Record{})
+	restarted.SetEnabled(false)
+	if restarted.Begin(owner, "chat", time.Now()) != nil {
+		t.Fatal("global gate did not override saved opt-in")
 	}
 }

@@ -142,26 +142,12 @@ func (h *Handler) revokeUserKey(w http.ResponseWriter, r *http.Request, _ user) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Keep a fail-closed tombstone for clients that still know the old endpoint.
+// There is no recovery implementation or plaintext credential in storage.
 func (h *Handler) copyUserKey(w http.ResponseWriter, r *http.Request, _ user) {
 	var body struct{}
 	if !h.jsonBody(w, r, &body) {
 		return
 	}
-	id, ok := pathUUID(w, r, "id", "user not found")
-	if !ok {
-		return
-	}
-	keyID, ok := pathUUID(w, r, "key", "key not found")
-	if !ok {
-		return
-	}
-	key, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher}).CopyKey(r.Context(), id, keyID)
-	if errors.Is(err, auth.ErrKeyUnavailable) {
-		fail(w, 409, "key_unavailable", auth.ErrKeyUnavailable.Error())
-		return
-	}
-	if localAdminError(w, err) {
-		return
-	}
-	respond(w, 200, map[string]string{"key": key})
+	fail(w, http.StatusGone, "key_recovery_removed", "API keys are shown only at creation; create a replacement and revoke the lost key")
 }

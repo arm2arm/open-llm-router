@@ -27,7 +27,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request, u user) {
 }
 
 func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
-	keys, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher, KeyPolicy: h.cfg.Auth}).ListKeys(r.Context(), u.ID)
+	keys, err := (auth.Admin{Pool: h.pool, KeyPolicy: h.cfg.Auth}).ListKeys(r.Context(), u.ID)
 	if err != nil {
 		unavailable(w)
 		return
@@ -67,7 +67,7 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 		fail(w, 400, "invalid_request_error", "class must be interactive or batch")
 		return
 	}
-	key, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher, KeyPolicy: h.cfg.Auth}).CreateKeyOfClass(r.Context(), u.ID, body.Label, body.Class, time.Duration(days)*24*time.Hour)
+	key, err := (auth.Admin{Pool: h.pool, KeyPolicy: h.cfg.Auth}).CreateKeyOfClass(r.Context(), u.ID, body.Label, body.Class, time.Duration(days)*24*time.Hour)
 	if errors.Is(err, auth.ErrKeyLimit) {
 		fail(w, http.StatusConflict, "key_limit_error", err.Error())
 		return

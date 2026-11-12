@@ -89,13 +89,11 @@ updates for Go modules, npm, Docker digests and Actions.
 ## Checklist
 
 - [x] Keys are generated with `crypto/rand` (32 bytes, base62), authenticated by
-  SHA-256 hash, never logged (only the prefix). Optional AES-256-GCM ciphertext
-  enables explicit full-session Admin copy of active keys. Random nonces and
-  owner/hash AAD prevent ciphertext substitution; the operator's encryption key
-  stays outside PostgreSQL. Lists omit hashes, ciphertext and plaintext.
-  `TestAdminEncryptedKeyCopy` covers authorization, CSRF, owner scope, inactive
-  keys, legacy keys and changed encryption keys; `TestKeyCipherAuthenticatedEncryption`
-  covers tampering and owner/hash binding.
+  SHA-256 hash, and never logged. Privileged recovery and ciphertext storage were
+  removed for OLR-SEC-04; migration drops historical ciphertext without changing
+  authentication hashes. `TestPrivilegedKeyRecoveryRemoved` verifies hash-only
+  issuance even with a legacy encryption environment variable, missing ciphertext
+  columns, denied non-admin/Origin requests and the retired admin endpoint.
 - [x] Client credentials and cookies are never forwarded: `Authorization`, `X-Api-Key`,
   `Cookie`, `Proxy-Authorization`, baggage and hop-by-hop headers are dropped before the
   backend request; the backend bearer token is set only towards the backend and never
@@ -124,7 +122,7 @@ updates for Go modules, npm, Docker digests and Actions.
 - [x] A user can read, change and delete only their own keys and usage: every portal query is
   scoped by the session user; another user's key gives the same 404 as a missing one.
 - [x] No prompts or responses in server logs, metrics or exported OpenTelemetry spans.
-  Personal content traces in Postgres are enabled by default, with a user opt-out and
+  Personal content traces in Postgres are disabled by default, with explicit user opt-in and
   1–30 day retention (default 7). Only the attributed user can read them, including
   against an admin session; deletion/opt-out invalidate pending writes. Tests cover
   ownership, expiry, erasure, bounded capture and omission of credentials/attachments.

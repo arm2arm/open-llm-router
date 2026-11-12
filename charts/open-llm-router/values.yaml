@@ -17,7 +17,6 @@ replicaCount: 1
 existingSecret: ""
 secrets:
   bootstrapAdminPassword: ""
-  apiKeyEncryptionKey: ""
   # Additional secret environment variables, e.g. backend tokens or OIDC secrets.
   env: {}
 
@@ -84,6 +83,9 @@ env: {}
 # The default endpoint resolves to this release's bundled demo backend.
 # For a real backend, disable demoBackend and replace upstream_model/pool.
 config:
+  content_tracing:
+    enabled: false
+    redact_patterns: []
   auth:
     default_key_lifetime_days: 90
     max_key_lifetime_days: 90

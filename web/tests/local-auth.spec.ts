@@ -92,7 +92,7 @@ async function startFixture(
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
+    `${suffix === 'tracing' ? 'content_tracing: {enabled: true}\n' : ''}${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   // Test a new image without restarting the developer's running router.
   const image =
@@ -237,7 +237,8 @@ test('personal traces, reasoning, tools, retention, opt-out and erasure', async 
   const key = (await issued.json()).key as string
   await page.goto(`${tracing}/portal/requests`)
   const toggle = page.getByRole('switch')
-  await expect(toggle).toBeChecked()
+  await expect(toggle).not.toBeChecked()
+  await toggle.click()
   await expect(page.getByLabel('Trace retention days')).toHaveValue('7')
   await page.getByLabel('Trace retention days').fill('14')
   await page.getByRole('button', { name: 'Save settings' }).click()
@@ -481,62 +482,15 @@ test('local-only first password change, rotation, revocation and logout', async 
       })
     ).status(),
   ).toBe(201)
-  const fixture = fixtures.find((fixture) => fixture.base === local)!
-  sql(
-    fixture.database,
-    "UPDATE api_keys SET key_ciphertext=NULL,key_encryption_id=NULL WHERE label='legacy personal key'",
-  )
   await page.reload()
   const personalKey = page
     .getByRole('table', { name: 'Personal API keys' })
     .getByRole('row')
     .filter({ hasText: 'admin personal key' })
-  const copy = personalKey.getByRole('button', {
-    name: 'Copy key admin personal key',
-    exact: true,
-  })
-  await expect(copy).toBeEnabled()
-  await expect(personalKey.getByRole('cell').nth(4)).toContainText('Active')
-  await expect(personalKey.getByRole('cell').nth(4)).toContainText('Copy key')
-  await copy.click()
-  await expect(
-    page
-      .getByRole('status')
-      .filter({ hasText: 'API key copied to clipboard.' }),
-  ).toBeVisible()
-  expect(
-    await page.evaluate(
-      async (key) => (await navigator.clipboard.readText()) === key,
-      secret,
-    ),
-  ).toBe(true)
+  const copy = personalKey.getByRole('button', { name: /^Copy key/ })
+  await expect(copy).toHaveCount(0)
+  await expect(personalKey).toContainText('Active')
   expect((await page.locator('body').innerText()).includes(secret)).toBe(false)
-  expect(
-    await page.evaluate(
-      (key) =>
-        [...Object.values(localStorage), ...Object.values(sessionStorage)].some(
-          (value) => value.includes(key),
-        ),
-      secret,
-    ),
-  ).toBe(false)
-  await expect(
-    page.getByRole('button', {
-      name: 'Copy key legacy personal key',
-      exact: true,
-    }),
-  ).toBeDisabled()
-  sql(
-    fixture.database,
-    "UPDATE api_keys SET expires=clock_timestamp()-interval '1 day' WHERE label='legacy personal key'",
-  )
-  await page.reload()
-  await expect(
-    page.getByRole('button', {
-      name: 'Copy key legacy personal key',
-      exact: true,
-    }),
-  ).toHaveCount(0)
   await personalKey
     .getByRole('button', { name: 'Revoke admin personal key', exact: true })
     .click()
@@ -788,27 +742,15 @@ test('administrator creates a local user and manages memberships, keys, disablem
     await managePerson()
     const keys = page.getByRole('region', { name: 'User API keys' })
     await expect(keys).toContainText('laptop')
-    await keys
-      .getByRole('button', { name: 'Copy key laptop', exact: true })
-      .click()
-    await expect(keys.getByRole('status')).toHaveText(
-      'API key copied to clipboard.',
-    )
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(key)
+    await expect(keys.getByRole('button', { name: /^Copy key/ })).toHaveCount(0)
     expect(
-      await page.evaluate(() =>
-        JSON.stringify({ ...localStorage, ...sessionStorage }),
-      ),
-    ).not.toContain(key)
-    const fixture = fixtures.find((fixture) => fixture.base === base)!
-    sql(
-      fixture.database,
-      "UPDATE api_keys SET key_ciphertext=NULL,key_encryption_id=NULL WHERE label='laptop'",
-    )
-    await managePerson()
-    await expect(
-      keys.getByRole('button', { name: 'Copy key laptop', exact: true }),
-    ).toBeDisabled()
+      (
+        await context.request.post(
+          `${base}/portal/api/admin/users/${owner}/keys/${metadata.find((item) => item.label === 'laptop')!.id}/copy`,
+          { headers: { Origin: base }, data: {} },
+        )
+      ).status(),
+    ).toBe(410)
     expect(await apiStatus(key)).toBe(200)
     expect((await page.locator('body').innerText()).includes(key)).toBe(false)
     await keys

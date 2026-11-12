@@ -11,8 +11,8 @@ working functionality.
 
 ## Personal request tracing
 
-Every account has **My requests → Detailed logging**, enabled by default with a 7-day
-lifetime. Users may disable capture, choose 1–30 days, inspect conversation/reasoning/tool
+Every account has **My requests → Detailed logging**, disabled by default. Site approval (`content_tracing.enabled`) and individual opt-in
+are required. Retention defaults to 7 days; users may disable capture, choose 1–30 days, inspect conversation/reasoning/tool
 content and stream events, or delete their traces. Admin access does not permit reading
 other users' content. Publish the updated [privacy notice](PRIVACY.md), protect Postgres
 and backups as content-bearing storage, and see [the tracing guide](REQUEST_TRACING.md)
@@ -764,41 +764,21 @@ For Hermes, configure the selected profile's `display.streaming: true` and
 changing its configuration. Reasoning controls must match the selected backend
 model; for example use `agent.reasoning_effort: low` if that level is supported.
 
-### Copy user API keys as Admin
+### Replace lost API keys
 
-In **Admin → Manage user → API keys**, **Copy key** appears beside **Active**.
-Administrators also see the same control beside **Active** for their own keys on
-**API keys** (`/portal/keys`). Regular users do not see this table control.
-Only a full admin session can request the plaintext, and only for an active key
-belonging to an enabled user who has completed any required password change.
-Copy requires HTTPS or localhost and browser clipboard permission. The key is
-sent only in the explicit copy response, never in lists, page text or browser
-storage. Treat the clipboard as a credential and clear it after use.
+API keys are shown once at creation. Administrators cannot recover or copy an existing
+user key. Ask the user to create a replacement on **API keys**, update the client,
+verify it works, and revoke the lost key. Operators can issue a replacement with
+`olr admin key create -user UUID`; site lifetime and count limits still apply.
 
-Enable encryption before issuing keys:
-
-```sh
-# Generate once and store privately in your secret manager / root .env.
-openssl rand -base64 32
-# OLR_API_KEY_ENCRYPTION_KEY=<generated value>
-docker compose up -d --no-deps --force-recreate router
-```
-
-`OLR_API_KEY_ENCRYPTION_KEY` is a base64-encoded 32-byte AES-256-GCM key. Pass the
-same value to every router process and to CLI key issuance. Compose forwards the
-root `.env` setting; production deployments must inject it as a secret. Back it
-up separately from PostgreSQL and keep it stable across upgrades. A different or
-missing encryption key disables recovery of previously encrypted keys; changing
-it does not invalidate their normal SHA-256 authentication. Key re-encryption and
-master-key rotation are not implemented, so retain the original key until its
-API keys have been replaced. Invalid nonempty values fail startup.
-
-New API keys retain their authentication hash and additionally store randomized,
-authenticated ciphertext bound to the owner and hash. Without the setting, new
-keys remain hash-only. Existing hash-only keys cannot be recovered. Issue a new
-key through the user's **API keys** page or `olr admin key create -user UUID`,
-update the client, verify it works, then revoke the old key. No key is replaced
-or revoked automatically. Revoked and expired keys cannot be copied.
+Recovery was removed for OLR-SEC-04. The upgrade migration irreversibly drops old
+ciphertext and encryption identifiers while preserving authentication hashes. The
+former copy endpoint returns 410 to an authenticated administrator and never returns
+credentials. There is no recovery opt-in, break-glass permission or step-up window.
+Remove `OLR_API_KEY_ENCRYPTION_KEY` from your secret manager and deployment; legacy
+environment values cannot re-enable recovery. Retire historical encryption keys and
+content-bearing backups according to your approved backup lifecycle. Do not roll back
+to a version that requires the removed columns. Replace keys suspected of exposure.
 
 #### Destination and credential setup
 

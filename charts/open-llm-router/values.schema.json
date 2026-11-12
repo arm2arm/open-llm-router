@@ -189,11 +189,15 @@
       "properties": {
         "bootstrapAdminPassword": {
           "type": "string",
-          "anyOf": [{"const": ""}, {"minLength": 15, "maxLength": 1024}]
-        },
-        "apiKeyEncryptionKey": {
-          "type": "string",
-          "pattern": "^$|^[A-Za-z0-9+/]{43}=$"
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "minLength": 15,
+              "maxLength": 1024
+            }
+          ]
         },
         "env": {
           "type": "object",

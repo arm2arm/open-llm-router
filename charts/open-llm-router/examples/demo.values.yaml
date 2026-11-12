@@ -17,7 +17,6 @@ demoBackend:
 # values and rendered Secrets in release history; keep this file private.
 secrets:
   bootstrapAdminPassword: ""   # local admin; at least 15 characters
-  apiKeyEncryptionKey: ""     # openssl rand -base64 32; retain/back up this key
   env: {}
   # env:
   #   GPU_API_TOKEN: your-backend-api-key

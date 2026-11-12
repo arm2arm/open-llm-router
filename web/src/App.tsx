@@ -53,7 +53,6 @@ import {
 } from '@/lib/api'
 import { clients, snippet, type Client } from '@/lib/snippets'
 import { AdminPage, DailyChart, RequestsPage } from '@/pages'
-import { AdminKeyCopyButton, useAdminKeyCopy } from '@/key-copy'
 import {
   AccountPage,
   AuthFrame,
@@ -349,7 +348,7 @@ function Workspace({
           ) : (
             me.data && (
               <Routes>
-                <Route path="/keys" element={<Keys me={me.data} />} />
+                <Route path="/keys" element={<Keys />} />
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/connect" element={<Connect />} />
                 <Route path="/requests/:id?" element={<RequestsPage />} />
@@ -377,8 +376,7 @@ function Workspace({
   )
 }
 
-function Keys({ me }: { me: Me }) {
-  const keyCopy = useAdminKeyCopy(me.user.id)
+function Keys() {
   const query = useQuery({
     queryKey: ['keys'],
     queryFn: () => api<{ keys: Key[] }>('keys'),
@@ -455,12 +453,6 @@ function Keys({ me }: { me: Me }) {
           void query.refetch()
         }}
       />
-      <ErrorMessage error={keyCopy.error} />
-      {keyCopy.copied && (
-        <p role="status" className="subtitle mb-3">
-          API key copied to clipboard.
-        </p>
-      )}
       <section className="panel" aria-label="Your API keys">
         <div className="panel-head">
           <div>
@@ -536,9 +528,6 @@ function Keys({ me }: { me: Me }) {
                           )}
                           {status}
                         </span>
-                        {me.admin && status === 'Active' && (
-                          <AdminKeyCopyButton keyInfo={key} copy={keyCopy} />
-                        )}
                       </td>
                       <td>
                         <Button
@@ -569,9 +558,9 @@ function Keys({ me }: { me: Me }) {
       <div className="hint">
         <ShieldCheck size={18} className="shrink-0 mt-1" />
         <p>
-          Save your key when you create it. Administrators can copy keys when
-          encrypted recovery is enabled. Revoking a key takes effect
-          immediately; a revoked key can then be removed for good.
+          Save your key when you create it. Lost keys must be replaced. Revoking
+          a key takes effect immediately; a revoked key can then be removed for
+          good.
           <br />
           <NavLink
             to="/connect"

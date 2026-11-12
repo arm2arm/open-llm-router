@@ -54,7 +54,11 @@ import { Metric } from './requests/widgets'
 import { TraceDetail, type ConversationNav } from './requests/trace-detail'
 import { useLive, useNow, type LiveStatus, type Running } from './requests/live'
 
-type Preferences = { enabled: boolean; retention_days: number }
+type Preferences = {
+  enabled: boolean
+  retention_days: number
+  available: boolean
+}
 type Filter = 'all' | 'stream' | 'errors' | 'traces' | 'tools' | 'truncated'
 const ranges = {
   any: 0,
@@ -776,7 +780,7 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
             calls. Text may contain sensitive information.
           </p>
           <p>
-            Enabled by default · 7-day default retention · Images and file
+            Requires your opt-in · 7-day default retention · Images and file
             payloads omitted
           </p>
         </div>
@@ -786,10 +790,17 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
           <input
             type="checkbox"
             role="switch"
+            disabled={!preferences.available}
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
           />
-          <span>{enabled ? 'Capture enabled' : 'Capture disabled'}</span>
+          <span>
+            {!preferences.available
+              ? 'Disabled by site policy'
+              : enabled
+                ? 'Capture enabled'
+                : 'Capture disabled'}
+          </span>
         </label>
         <label className="trace-days">
           Keep traces for{' '}

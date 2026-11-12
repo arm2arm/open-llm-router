@@ -12,14 +12,12 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/activity"
-	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
 	"github.com/arm2arm/open-llm-router/internal/limits"
@@ -57,7 +55,6 @@ type Handler struct {
 	RoutingRuntime RoutingRuntime
 	routingRuntime atomic.Pointer[settings.Snapshot]
 	routingMu      sync.Mutex
-	keyCipher      *auth.KeyCipher
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
@@ -65,11 +62,6 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 		return nil, err
 	}
 	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), passwordSlots: make(chan struct{}, 2)}
-	var err error
-	h.keyCipher, err = auth.LoadKeyCipher(os.Getenv)
-	if err != nil {
-		return nil, err
-	}
 	h.ssoState.Store(h.startSSO(cfg.OIDC, cfg.OIDCClientSecret, nil))
 	h.mux.HandleFunc("GET /portal/login", h.login)
 	h.mux.HandleFunc("GET /portal/login/local", func(w http.ResponseWriter, r *http.Request) {

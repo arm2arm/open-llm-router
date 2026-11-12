@@ -46,7 +46,6 @@ func (s postgresStore) touch(ctx context.Context, keyID string) error {
 // containing query arguments, credentials, or hashes to a caller or log.
 type Admin struct {
 	Pool      *pgxpool.Pool
-	KeyCipher *KeyCipher
 	KeyPolicy config.Auth
 }
 
@@ -111,7 +110,7 @@ type KeyInfo struct {
 var ErrKeyLifetime = errors.New("key lifetime exceeds site maximum")
 var ErrKeyLimit = errors.New("active API key limit reached; revoke an existing key first")
 
-// CreateKey returns a plaintext key. Admin copy can recover encrypted keys. A positive
+// CreateKey returns a plaintext key once. Only its hash is stored. A positive
 // lifetime is mandatory; indefinite bootstrap keys cannot be created.
 func (a Admin) CreateKey(ctx context.Context, userID, label string, lifetime time.Duration) (string, error) {
 	return a.CreateKeyOfClass(ctx, userID, label, "interactive", lifetime)
@@ -168,19 +167,10 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		if active >= cap {
 			return ErrKeyLimit
 		}
-		var sealed []byte
-		var encryptionID *string
-		if a.KeyCipher != nil {
-			sealed, err = a.KeyCipher.seal(key, id, hash[:])
-			if err != nil {
-				return err
-			}
-			encryptionID = &a.KeyCipher.id
-		}
-		result, err := tx.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder,key_ciphertext,key_encryption_id)
-		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7,$8,$9
+		result, err := tx.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
+		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
 		FROM users WHERE id = $1 AND enabled AND NOT EXISTS
-		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted, sealed, encryptionID)
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
 		if err != nil {
 			return err
 		}
@@ -200,8 +190,8 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 
 func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class, trusted_forwarder,COALESCE(expires<=clock_timestamp(),false),
-		COALESCE(key_encryption_id=$2 AND $2<>'' AND key_ciphertext IS NOT NULL AND NOT revoked AND (expires IS NULL OR expires>clock_timestamp()),false)
-		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID, a.cipherID())
+		false
+		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID)
 	if err != nil {
 		return nil, errors.New("list API keys failed")
 	}
