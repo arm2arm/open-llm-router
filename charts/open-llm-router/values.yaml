@@ -88,6 +88,9 @@ config:
     default_key_lifetime_days: 90
   limits:
     timezone: UTC
+    max_body_bytes: 4194304
+    max_body_readers: 32
+    max_body_readers_per_user: 4
   models:
     chat-model:
       upstream_model: chat-model

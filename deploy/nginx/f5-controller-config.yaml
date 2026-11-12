@@ -1,0 +1,20 @@
+# F5 NGINX Ingress Controller (Open Source): merge data into the ConfigMap
+# named by the controller's -nginx-configmaps argument. This is controller-wide;
+# use a dedicated controller for the router when other apps need different limits.
+# Pair with charts/open-llm-router/examples/production.yaml (body cap and rate).
+# Restore real client IPs only from trusted load balancers, never arbitrary XFF.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: nginx-ingress
+data:
+  client-max-body-size: "4m"
+  http-snippets: |
+    limit_conn_zone $binary_remote_addr zone=olr_clients:10m;
+  server-snippets: |
+    client_body_timeout 120s;
+    limit_conn olr_clients 20;
+    limit_conn_status 429;
+  location-snippets: |
+    proxy_request_buffering off;

@@ -589,7 +589,7 @@ Compose reads it as an environment file. Use a deployment shell without conflict
 exported development settings, since shell values can override Compose interpolation.
 
 Set the TLS reverse proxy as described in [RUNBOOK.md](RUNBOOK.md#behind-a-tls-reverse-proxy):
-buffering off, 32 MiB body limit, timeouts at least the largest model timeout,
+buffering off, 4 MiB body limit, timeouts at least the largest model timeout,
 and private access to `/metrics`. The pilot file forces secure cookies and clears
 the development `OIDC_BACKCHANNEL_URL`.
 

@@ -100,10 +100,19 @@ const (
 	MinUsageDailyDays = 62
 )
 
-// Limits sets the calendar used by quotas and daily accounting.
+const (
+	DefaultMaxBodyBytes          = 4 << 20
+	DefaultMaxBodyReaders        = 32
+	DefaultMaxBodyReadersPerUser = 4
+)
+
+// Limits sets the quota calendar and process-local request upload bounds.
 type Limits struct {
-	Timezone string         `yaml:"timezone"`
-	Location *time.Location `yaml:"-"`
+	Timezone              string         `yaml:"timezone"`
+	Location              *time.Location `yaml:"-"`
+	MaxBodyBytes          int64          `yaml:"max_body_bytes"`
+	MaxBodyReaders        int            `yaml:"max_body_readers"`
+	MaxBodyReadersPerUser int            `yaml:"max_body_readers_per_user"`
 }
 
 // OIDC describes the identity provider used for portal login.
@@ -245,7 +254,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, problems
 	}
 
-	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{Timezone: "UTC"},
+	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays}, Limits: Limits{
+		Timezone: "UTC", MaxBodyBytes: DefaultMaxBodyBytes,
+		MaxBodyReaders: DefaultMaxBodyReaders, MaxBodyReadersPerUser: DefaultMaxBodyReadersPerUser},
 		Forwarders: Forwarders{UnknownUser: UnknownUserReject},
 		Retention:  Retention{UsageDays: DefaultUsageDays, UsageDailyDays: DefaultUsageDailyDays, RunAt: "03:00"}}
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
@@ -457,6 +468,15 @@ func isVarName(s string) bool {
 func (c *Config) validate() Problems {
 	var p Problems
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+	if c.Limits.MaxBodyBytes <= 0 {
+		add("limits.max_body_bytes: must be positive")
+	}
+	if c.Limits.MaxBodyReaders <= 0 {
+		add("limits.max_body_readers: must be positive")
+	}
+	if c.Limits.MaxBodyReadersPerUser <= 0 {
+		add("limits.max_body_readers_per_user: must be positive")
+	}
 	if c.Auth.DefaultKeyLifetimeDays <= 0 || c.Auth.DefaultKeyLifetimeDays > 36500 {
 		add("auth.default_key_lifetime_days: must be between 1 and 36500")
 	}

@@ -69,7 +69,7 @@ Direct SQL edits are picked up within the cache TTL; use the admin commands for 
 ## API behavior
 
 The router serves `POST /v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
-`/v1/messages` and `/v1/messages/count_tokens`. Request bodies are limited to 32 MiB.
+`/v1/messages` and `/v1/messages/count_tokens`. Request bodies are limited to 4 MiB by default (`limits.max_body_bytes`).
 Unknown fields and client protocol headers pass through. Client credentials and cookies are
 removed; replicas can use their own bearer token via `bearer_token_env` in the config.
 Backend URLs must be HTTP(S) origins without credentials, a path prefix or a query.

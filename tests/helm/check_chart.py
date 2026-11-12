@@ -149,6 +149,16 @@ class HelmChart(unittest.TestCase):
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "llm.example.org")
         self.assertEqual(ingress["metadata"]["annotations"]["nginx.org/proxy-buffering"], "False")
         self.assertEqual(ingress["metadata"]["annotations"]["nginx.org/proxy-read-timeout"], "960s")
+        annotations = ingress["metadata"]["annotations"]
+        self.assertEqual(annotations["nginx.org/client-max-body-size"], "4m")
+        self.assertEqual(annotations["nginx.org/limit-req-rate"], "10r/s")
+        self.assertEqual(annotations["nginx.org/limit-req-key"], "${binary_remote_addr}")
+        controller = yaml.safe_load((ROOT / "deploy/nginx/f5-controller-config.yaml").read_text())["data"]
+        self.assertEqual(controller["client-max-body-size"], "4m")
+        self.assertIn("limit_conn olr_clients 20;", controller["server-snippets"])
+        self.assertIn("client_body_timeout 120s;", controller["server-snippets"])
+        self.assertIn("proxy_request_buffering off;", controller["location-snippets"])
+
         pod = rendered["Deployment", NAME]["spec"]["template"]["spec"]
         self.assertNotIn("initContainers", pod)
         self.assertIn({"name": "PORTAL_COOKIE_SECURE", "value": "true"}, pod["containers"][0]["env"])

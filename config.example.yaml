@@ -12,9 +12,12 @@
 auth:
   default_key_lifetime_days: 90
 
-# IANA timezone for both daily accounting and day/month quota resets.
+# Quota calendar and upload admission (per router process).
 limits:
   timezone: UTC                    # default; e.g. Europe/Berlin
+  max_body_bytes: 4194304           # 4 MiB; match the ingress body cap
+  max_body_readers: 32              # uploads/parsing/normal admission; reject excess at once
+  max_body_readers_per_user: 4      # shared across keys/classes; capped by class concurrency
 
 # How long usage records are kept. A job deletes older rows at startup and
 # daily at run_at (limits.timezone). State these periods in the privacy notice.
