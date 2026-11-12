@@ -102,6 +102,13 @@ the initial password; later changes are available under **Account**.
 passwords, disable accounts and revoke user keys. See
 [local user administration](docs/ADMIN_GUIDE.md#manage-local-users-in-admin) for access and revocation behavior.
 
+**Admin → Endpoint configuration** adds, edits and removes backend replicas for
+existing logical models, tests connectivity and applies persisted revisions live.
+Use it to point `chat-model` at your Ollama or vLLM origin. See the
+[endpoint editor guide](docs/ADMIN_GUIDE.md#configure-endpoints-in-admin) for setup,
+network/credential policy and restore. New logical names, aliases and group
+policies still use YAML.
+
 ## Development
 
 Host-side development needs Go 1.27.4 and Node 22.23.1+ in addition to Docker. The Compose

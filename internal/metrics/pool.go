@@ -6,6 +6,7 @@ import (
 )
 
 type poolCollector struct {
+	source           func() *pool.Manager
 	pools            *pool.Manager
 	inflight, health *prometheus.Desc
 	queued           *prometheus.Desc
@@ -23,7 +24,11 @@ func (c *poolCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.queued
 }
 func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
-	for name, p := range c.pools.Pools {
+	pools := c.pools
+	if c.source != nil {
+		pools = c.source()
+	}
+	for name, p := range pools.Pools {
 		ch <- prometheus.MustNewConstMetric(c.queued, prometheus.GaugeValue, float64(p.Queued()), name)
 		for _, r := range p.Snapshot() {
 			health := 0.0

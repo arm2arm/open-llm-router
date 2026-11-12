@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, RefreshCw, Server, ShieldCheck, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { EndpointSettingsPanel } from '@/endpoints'
 import {
   AdminUserKeys,
   CreateLocalUser,
@@ -530,6 +531,7 @@ export function AdminPage({ self }: { self: string }) {
           }}
         />
       </div>
+      <EndpointSettingsPanel />
       <section className="panel" aria-label="Replica health">
         <div className="panel-head">
           <h2 className="panel-title">Replicas</h2>

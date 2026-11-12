@@ -31,6 +31,7 @@ import (
 )
 
 type Options struct {
+	PoolSource    func() *pool.Manager
 	Token         string
 	TraceEndpoint string // full OTLP/HTTP traces URL; empty disables spans
 	IncludeUserID bool
@@ -86,7 +87,11 @@ func New(ctx context.Context, options Options, pools *pool.Manager, writer inter
 	o.rejections = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "olr_limit_rejections_total", Help: "Calls rejected by a configured quota or concurrency limit."}, []string{"model", "protocol", "limit"})
 	o.Registry.MustRegister(o.rejections, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	if pools != nil {
-		o.Registry.MustRegister(newPoolCollector(pools))
+		collector := newPoolCollector(pools)
+		if options.PoolSource != nil {
+			collector.source = options.PoolSource
+		}
+		o.Registry.MustRegister(collector)
 	}
 	if writer != nil {
 		o.Registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "olr_usage_write_failures_total", Help: "Failed usage database transactions."}, func() float64 { return float64(writer.Counters().Failed) }), prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "olr_usage_dropped_total", Help: "Usage records dropped because the queue is full or closed."}, func() float64 { return float64(writer.Counters().Dropped) }))

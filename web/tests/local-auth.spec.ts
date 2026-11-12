@@ -73,7 +73,7 @@ async function startFixture(
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
+    `${outage ? 'oidc:\n  issuer: http://127.0.0.1:1/realms/unavailable\n  portal_client_id: browser-test\n' : ''}models:\n  test:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   const image = docker([
     'inspect',
@@ -136,11 +136,13 @@ async function startFixture(
 let local: string
 let outage: string
 let administration: string
+let endpointAdministration: string
 test.beforeAll(async () => {
   test.setTimeout(60_000)
   local = await startFixture(false)
   outage = await startFixture(true)
   administration = await startFixture(false, 'administration')
+  endpointAdministration = await startFixture(false, 'endpoints')
 })
 test.afterAll(() => {
   for (const fixture of fixtures.reverse()) {
@@ -578,4 +580,223 @@ test('administrator creates a local user and manages memberships, keys, disablem
   } finally {
     await personContext.close()
   }
+})
+
+test('administrator edits endpoints, tests, applies, restarts and restores a routed model', async ({
+  page,
+  context,
+}) => {
+  const base = endpointAdministration
+  const fixture = fixtures.find((fixture) => fixture.base === base)!
+  const owner = docker([
+    'exec',
+    fixture.container,
+    '/usr/local/bin/olr',
+    'admin',
+    'user',
+    'add',
+    '-username',
+    'endpoint-client',
+    '-groups',
+    'staff',
+  ])
+  const key = docker([
+    'exec',
+    fixture.container,
+    '/usr/local/bin/olr',
+    'admin',
+    'key',
+    'create',
+    '-user',
+    owner,
+    '-label',
+    'endpoint-browser-test',
+  ])
+  const complete = async () => {
+    const response = await context.request.post(`${base}/v1/chat/completions`, {
+      headers: { Authorization: `Bearer ${key}` },
+      data: {
+        model: 'test',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 16,
+      },
+    })
+    expect(response.status()).toBe(200)
+    expect((await response.json()).model).toBe('chat-model')
+  }
+  await page.goto(`${base}/portal/login/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  const panel = page.getByRole('region', {
+    name: 'Endpoint configuration',
+    exact: true,
+  })
+  const entry = panel.getByRole('article', {
+    name: 'Endpoints for test',
+    exact: true,
+  })
+  await expect(entry).toContainText('Source: YAML/environment')
+  await entry
+    .getByRole('button', { name: 'Edit endpoints for test', exact: true })
+    .click()
+  const dialog = page.getByRole('dialog')
+  const form = dialog.getByRole('form', {
+    name: 'Edit model endpoints',
+    exact: true,
+  })
+  await form.getByRole('button', { name: 'Add replica', exact: true }).click()
+  const second = form.getByRole('group', { name: 'Replica 2', exact: true })
+  await second
+    .getByLabel('Backend origin', { exact: true })
+    .fill('http://mock-llm-b:8000')
+  await second.getByLabel('Weight', { exact: true }).fill('2')
+  await form
+    .getByRole('button', { name: 'Remove replica 1', exact: true })
+    .click()
+  await form
+    .getByLabel('Upstream model name', { exact: true })
+    .fill('chat-model')
+  await form
+    .getByRole('button', { name: 'Test connections', exact: true })
+    .click()
+  await expect(
+    form.getByRole('region', { name: 'Connection test results', exact: true }),
+  ).toContainText('Healthy')
+  const uncommitted = await (
+    await context.request.get(`${base}/portal/api/admin/endpoints`)
+  ).json()
+  expect(
+    uncommitted.models.find(
+      (entry: { model: string }) => entry.model === 'test',
+    ).revision,
+  ).toBe(0)
+  await form
+    .getByRole('button', { name: 'Save and apply', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  await expect(entry).toContainText('Source: Admin database')
+  await expect(entry).toContainText('http://mock-llm-b:8000')
+  await expect(entry).not.toContainText('http://mock-llm-a:8000')
+  await complete()
+  const first = (
+    await (
+      await context.request.get(`${base}/portal/api/admin/endpoints`)
+    ).json()
+  ).models.find((entry: { model: string }) => entry.model === 'test')
+
+  // A second tab must retain its draft and surface a revision conflict.
+  await entry
+    .getByRole('button', { name: 'Edit endpoints for test', exact: true })
+    .click()
+  const current = structuredClone(first.configuration)
+  current.pool[0].weight = 3
+  expect(
+    (
+      await context.request.put(`${base}/portal/api/admin/endpoints`, {
+        headers: { Origin: base },
+        data: {
+          model: 'test',
+          revision: first.revision,
+          configuration: current,
+        },
+      })
+    ).status(),
+  ).toBe(200)
+  await form.getByLabel('Weight', { exact: true }).fill('4')
+  await form
+    .getByRole('button', { name: 'Save and apply', exact: true })
+    .click()
+  await expect(form.getByRole('alert')).toContainText('configuration changed')
+  await form
+    .getByRole('button', {
+      name: 'Discard draft and reload current configuration',
+      exact: true,
+    })
+    .click()
+  await expect(form.getByLabel('Weight', { exact: true })).toHaveValue('3')
+  await form
+    .getByLabel('Health path', { exact: true })
+    .fill('/nonexistent-health-check')
+  await form
+    .getByRole('button', { name: 'Test connections', exact: true })
+    .click()
+  await expect(
+    form.getByRole('region', { name: 'Connection test results', exact: true }),
+  ).toContainText('Failed')
+  await form
+    .getByRole('button', { name: 'Save and apply', exact: true })
+    .click()
+  await expect(form.getByRole('alert')).toContainText(
+    'failed their health check',
+  )
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await complete()
+
+  docker(['restart', fixture.container])
+  await expect
+    .poll(
+      async () => {
+        try {
+          return (await fetch(`${base}/readyz`)).status
+        } catch {
+          return 0
+        }
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(200)
+  await page.reload()
+  await expect(entry).toContainText('weight 3')
+  await complete()
+  await entry.getByText('Revision history and restore', { exact: true }).click()
+  await entry
+    .getByRole('button', {
+      name: `Restore test revision ${first.revision}`,
+      exact: true,
+    })
+    .click()
+  await expect(page.getByRole('alertdialog')).toContainText(
+    'http://mock-llm-b:8000',
+  )
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await entry
+    .getByRole('button', {
+      name: `Restore test revision ${first.revision}`,
+      exact: true,
+    })
+    .click()
+  await page
+    .getByRole('button', { name: 'Restore and apply', exact: true })
+    .click()
+  await expect(entry).toContainText('weight 2')
+  await complete()
+  await entry
+    .getByRole('button', { name: 'Restore test from file', exact: true })
+    .click()
+  await page
+    .getByRole('button', { name: 'Restore and apply', exact: true })
+    .click()
+  await expect(entry).toContainText('Source: YAML/environment')
+  await expect(entry).toContainText('http://mock-llm-a:8000')
+  await complete()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true)
+  expect(
+    await page.evaluate(
+      (secret) =>
+        [...Object.values(localStorage), ...Object.values(sessionStorage)].some(
+          (value) => value.includes(secret),
+        ),
+      key,
+    ),
+  ).toBe(false)
+  expect(dockerLogs(fixture.container).includes(key)).toBe(false)
 })

@@ -213,6 +213,70 @@ authorization remains enforced on the server regardless of browser navigation.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
   `max_inflight` and weight.
 
+## Admin endpoint configuration
+
+These routes require a full admin browser session. Mutation requests use the
+normal JSON and same-origin checks (8 KiB body limit, unknown fields refused).
+Resolved backend secrets are excluded from all responses and revisions.
+
+- `GET /portal/api/admin/endpoints` returns `models`, `credential_references` and
+  `allowed_private_networks`. Each entry contains `model`, `configuration`, current
+  `revision` (initially `0`), `source` (`file` or `database`), `file_configuration`
+  and the latest 20 `history` entries. History contains `id`, `created_at`, `file`
+  and `configuration` (`null` denotes file ownership).
+- `POST /portal/api/admin/endpoints/test` accepts `model` and `configuration`.
+  It validates and probes without saving/publishing. Health results return 200
+  with `{ok, message, replicas}`; `ok:false` means the probe failed. Validation
+  failures return 400. A passing probe does not prove the upstream model exists.
+- `PUT /portal/api/admin/endpoints` accepts `model`, the last observed `revision`
+  and the complete `configuration`. It validates, probes every replica in that
+  model, commits a revision and activates new requests. Returns 200 `{models}`.
+- `POST /portal/api/admin/endpoints/restore` accepts `model`, the last observed
+  `revision` and `target_revision`. Target `0` means current YAML/environment;
+  other targets must belong to the model. Restore validates/probes and creates
+  a new revision, returning 200 `{models}`.
+
+Example configuration for an existing logical `chat-model`:
+
+```json
+{
+  "model":"chat-model",
+  "revision":0,
+  "configuration":{
+    "upstream_model":"qwen3.8:27b-mlx",
+    "protocols":["openai"],
+    "timeout_s":900,
+    "idle_timeout_s":120,
+    "queue_timeout_s":0,
+    "session_affinity":false,
+    "priority":{"interactive":0,"batch":0},
+    "pool":[{
+      "url":"http://192.168.178.81:11434",
+      "health_path":"/",
+      "weight":1,
+      "max_inflight":1,
+      "bearer_token_env":""
+    }]
+  }
+}
+```
+
+Use GET's complete configuration as the edit base. A model requires 1–32 unique
+replica origins. Credential names must be server-allowlisted; new private origins
+require `OLR_BACKEND_ALLOWED_CIDRS`. URL credentials, base paths, queries and
+fragments are refused. New loopback/link-local/metadata destinations are blocked;
+file-defined destinations remain trusted. Health requests and inference apply the
+same checked-IP dial policy and do not follow redirects. See the
+[admin guide](ADMIN_GUIDE.md#destination-and-credential-setup) for operator setup.
+
+Errors: 400 invalid draft or failed activation probe; 403 non-admin or invalid
+Origin; 404 unknown logical model or revision from another model; 409 stale edit;
+503 storage/service unavailable. Failed activation leaves the current revision.
+Existing requests retain their routing snapshot; per-user admission and accounting
+are retained. Activation supports one router process, without a broadcast to peers.
+Logical names, aliases and group policies remain file-owned; these routes do not
+create/delete logical models or edit permissions.
+
 ## Models and client URLs
 
 `GET /portal/api/models`:

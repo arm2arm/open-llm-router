@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
@@ -25,9 +26,17 @@ const (
 type replica struct {
 	config    config.Replica
 	inflight  int
+	capacity  *atomic.Int64 // shared by routing revisions for the same model/origin
 	healthy   bool
 	failures  int
 	coolUntil time.Time
+}
+
+func (r *replica) count() int {
+	if r.capacity != nil {
+		return int(r.capacity.Load())
+	}
+	return r.inflight
 }
 
 // Pool serializes selection and reservation, so max_inflight cannot be exceeded.
@@ -37,6 +46,33 @@ type Pool struct {
 	mu       sync.Mutex
 	replicas []replica
 	waiters  []*waiter // ordered by priority, then arrival
+	events   *capacityEvents
+}
+
+// A release wakes queued requests across both active and draining revisions.
+// Channels avoid retaining old pools once their requests have finished.
+type capacityEvents struct {
+	mu      sync.Mutex
+	changed chan struct{}
+}
+
+func (e *capacityEvents) channel() <-chan struct{} {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.changed
+}
+
+func (e *capacityEvents) notify() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	close(e.changed)
+	e.changed = make(chan struct{})
 }
 
 type Lease struct {
@@ -78,6 +114,7 @@ func (p *Pool) Acquire(exclude *Lease) *Lease {
 // Callers already queued with the same or a better priority go first.
 func (p *Pool) AcquireRequest(ctx context.Context, r Request) *Lease {
 	p.mu.Lock()
+	changed := p.events.channel()
 	ahead := false
 	for _, w := range p.waiters {
 		ahead = ahead || w.priority <= r.Priority
@@ -103,11 +140,21 @@ func (p *Pool) AcquireRequest(ctx context.Context, r Request) *Lease {
 	p.mu.Unlock()
 	timer := time.NewTimer(r.Wait)
 	defer timer.Stop()
-	select {
-	case lease := <-w.lease:
-		return lease
-	case <-timer.C:
-	case <-ctx.Done():
+waiting:
+	for {
+		select {
+		case lease := <-w.lease:
+			return lease
+		case <-changed:
+			p.mu.Lock()
+			changed = p.events.channel()
+			p.dispatch()
+			p.mu.Unlock()
+		case <-timer.C:
+			break waiting
+		case <-ctx.Done():
+			break waiting
+		}
 	}
 	p.mu.Lock()
 	p.waiters = slices.DeleteFunc(p.waiters, func(other *waiter) bool { return other == w })
@@ -146,7 +193,7 @@ func (p *Pool) dispatch() {
 
 func (p *Pool) eligible(i int, r Request, now time.Time) bool {
 	rep := &p.replicas[i]
-	return !(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && rep.healthy && !now.Before(rep.coolUntil) && rep.inflight < rep.config.MaxInflight
+	return !(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight
 }
 
 // reserve picks a replica for r: the session's preferred replica if it is
@@ -167,7 +214,7 @@ func (p *Pool) reserve(r Request) *Lease {
 				continue
 			}
 			rep := &p.replicas[i]
-			s := float64(rep.inflight) / rep.config.Weight
+			s := float64(rep.count()) / rep.config.Weight
 			if best == -1 || s < score {
 				best, ties, score = i, 1, s
 			} else if s == score {
@@ -181,7 +228,20 @@ func (p *Pool) reserve(r Request) *Lease {
 	if best == -1 {
 		return nil
 	}
-	p.replicas[best].inflight++
+	rep := &p.replicas[best]
+	if rep.capacity != nil {
+		for {
+			count := rep.capacity.Load()
+			if count >= int64(rep.config.MaxInflight) {
+				return nil
+			}
+			if rep.capacity.CompareAndSwap(count, count+1) {
+				break
+			}
+		}
+	} else {
+		rep.inflight++
+	}
 	return &Lease{Replica: p.replicas[best].config, index: best, pool: p}
 }
 
@@ -218,9 +278,15 @@ func mix(x uint64) uint64 {
 func (l *Lease) Release() {
 	l.once.Do(func() {
 		l.pool.mu.Lock()
-		defer l.pool.mu.Unlock()
-		l.pool.replicas[l.index].inflight--
+		rep := &l.pool.replicas[l.index]
+		if rep.capacity != nil {
+			rep.capacity.Add(-1)
+		} else {
+			rep.inflight--
+		}
 		l.pool.dispatch()
+		l.pool.mu.Unlock()
+		l.pool.events.notify()
 	})
 }
 
@@ -244,24 +310,60 @@ func (p *Pool) Snapshot() []State {
 	defer p.mu.Unlock()
 	out := make([]State, len(p.replicas))
 	for i, r := range p.replicas {
-		out[i] = State{URL: r.config.URL, Inflight: r.inflight, Healthy: r.healthy && !time.Now().Before(r.coolUntil),
+		out[i] = State{URL: r.config.URL, Inflight: r.count(), Healthy: r.healthy && !time.Now().Before(r.coolUntil),
 			Weight: r.config.Weight, MaxInflight: r.config.MaxInflight}
 	}
 	return out
 }
 
 type Manager struct {
-	Pools  map[string]*Pool // immutable after construction
-	client *http.Client
+	Pools      map[string]*Pool // immutable after construction
+	client     *http.Client
+	capacities map[string]*atomic.Int64
+	events     *capacityEvents
 }
 
 func New(cfg *config.Config, transport http.RoundTripper) *Manager {
+	return Replace(cfg, transport, nil)
+}
+
+// Replace reuses unchanged pools and capacity counters of changed replicas.
+// Old leases keep their own immutable destination/credential until release.
+func Replace(cfg *config.Config, transport http.RoundTripper, previous *Manager) *Manager {
 	m := &Manager{Pools: make(map[string]*Pool), client: &http.Client{Transport: transport, Timeout: CheckTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	m.capacities = map[string]*atomic.Int64{}
+	m.events = &capacityEvents{changed: make(chan struct{})}
+	if previous != nil {
+		m.events = previous.events
+		for key, counter := range previous.capacities {
+			m.capacities[key] = counter
+		}
+	}
 	for name, model := range cfg.Models {
-		p := &Pool{}
+		if previous != nil {
+			if old := previous.Pools[name]; old != nil {
+				old.mu.Lock()
+				same := len(old.replicas) == len(model.Pool)
+				for i, r := range old.replicas {
+					same = same && r.config == model.Pool[i]
+				}
+				old.mu.Unlock()
+				if same {
+					m.Pools[name] = old
+					continue
+				}
+			}
+		}
+		p := &Pool{events: m.events}
 		for _, r := range model.Pool {
-			p.replicas = append(p.replicas, replica{config: r})
+			key := name + "\x00" + r.URL
+			counter := m.capacities[key]
+			if counter == nil {
+				counter = &atomic.Int64{}
+				m.capacities[key] = counter
+			}
+			p.replicas = append(p.replicas, replica{config: r, capacity: counter})
 		}
 		m.Pools[name] = p
 	}
@@ -281,10 +383,14 @@ func (m *Manager) Ready() bool {
 	return true
 }
 
-// Check probes in parallel. Every response is closed, including failures.
-func (m *Manager) Check(ctx context.Context) {
+// Check probes in parallel, returning each probe's success separately from the
+// ongoing two-failure health state. Every response is closed, including failures.
+func (m *Manager) Check(ctx context.Context) map[string][]bool {
 	var wg sync.WaitGroup
-	for _, p := range m.Pools {
+	results := make(map[string][]bool, len(m.Pools))
+	for name, p := range m.Pools {
+		checks := make([]bool, len(p.replicas))
+		results[name] = checks
 		for i := range p.replicas {
 			wg.Go(func() {
 				r := p.replicas[i].config
@@ -298,6 +404,7 @@ func (m *Manager) Check(ctx context.Context) {
 				}
 				resp, err := m.client.Do(req)
 				ok := err == nil && resp.StatusCode == http.StatusOK
+				checks[i] = ok
 				if resp != nil {
 					resp.Body.Close()
 				}
@@ -320,6 +427,7 @@ func (m *Manager) Check(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+	return results
 }
 
 // Run performs ongoing health checks. Call Check once before serving traffic.
