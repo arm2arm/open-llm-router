@@ -2,10 +2,11 @@ cff-version: 1.2.0
 message: "If you use open-llm-router, please cite it using the metadata from this file."
 title: "open-llm-router"
 abstract: >-
-  Small open-source LLM router for locally hosted models. It exposes
-  OpenAI- and Anthropic-compatible APIs, authenticates users with Keycloak
-  (OIDC/SSO) and per-user API keys, routes requests by model to vLLM
-  backends, and records per-user usage metadata without storing prompts.
+  Open-source LLM router for locally hosted models. It exposes OpenAI- and
+  Anthropic-compatible APIs, supports Keycloak SSO and local accounts with
+  per-user API keys, and routes requests to Ollama, vLLM and SGLang backends.
+  The web portal provides access controls, usage accounting and personal
+  request tracing with user-controlled capture and retention.
 type: software
 authors:
   - family-names: "Khalatyan"
@@ -21,8 +22,11 @@ keywords:
   - router
   - gateway
   - vLLM
+  - Ollama
+  - SGLang
   - OpenAI API
   - Anthropic API
   - Keycloak
   - OIDC
   - SSO
+  - observability
