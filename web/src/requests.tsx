@@ -12,7 +12,9 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
+  Layers,
   LoaderCircle,
   Pause,
   Radio,
@@ -43,10 +45,13 @@ import {
   operation,
   plural,
   shortDate,
+  groupRows,
+  runStats,
+  type Item,
   type Row,
 } from './requests/model'
 import { Metric } from './requests/widgets'
-import { TraceDetail } from './requests/trace-detail'
+import { TraceDetail, type ConversationNav } from './requests/trace-detail'
 import { useLive, useNow, type LiveStatus, type Running } from './requests/live'
 
 type Preferences = { enabled: boolean; retention_days: number }
@@ -143,9 +148,36 @@ export function RequestsPage() {
   const all = useMemo(() => query.data?.requests ?? [], [query.data])
   // eslint-disable-next-line react-hooks/purity -- the range is relative to each render
   const since = ranges[range] ? Date.now() - ranges[range] : 0
-  const rows = all.filter((r) => matches(r, search, filter, since))
+  const filtered = all.filter((r) => matches(r, search, filter, since))
+  // Agent runs are grouped by default; "?group=off" lists every call flat.
+  const grouped = params.get('group') !== 'off'
+  const items: Item[] = grouped
+    ? groupRows(filtered)
+    : filtered.map((row) => ({ kind: 'row', row }))
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // Display order, which j / k follow.
+  const rows = items.flatMap((item) =>
+    item.kind === 'row' ? [item.row] : item.rows,
+  )
   const selected = id ? all.find((r) => r.request_id === id) : undefined
   const position = rows.findIndex((r) => r.request_id === id)
+  // The selected call's place in its run, over all listed requests.
+  let conversation: ConversationNav | undefined
+  for (const item of groupRows(all)) {
+    if (item.kind !== 'group') continue
+    const run = [...item.rows].reverse()
+    const at = run.findIndex((r) => r.request_id === id)
+    if (at < 0) continue
+    const traced = (r?: Row) =>
+      r?.trace_available && r.request_id ? r.request_id : undefined
+    conversation = {
+      index: at + 1,
+      total: run.length,
+      previous: traced(run[at - 1]),
+      next: traced(run[at + 1]),
+      open: (rid: string) => open(rid),
+    }
+  }
   const open = (rid: string) =>
     navigate({ pathname: `/requests/${rid}`, search: params.toString() })
   function close() {
@@ -263,6 +295,16 @@ export function RequestsPage() {
             <option value="24h">Last 24 hours</option>
           </select>
           <Button
+            variant="outline"
+            size="sm"
+            aria-pressed={grouped}
+            title="Group the calls of one agent run or conversation"
+            onClick={() => setParam('group', grouped ? 'off' : 'on', 'on')}
+          >
+            <Layers size={14} />
+            Group runs
+          </Button>
+          <Button
             variant="ghost"
             size="sm"
             onClick={() => setConfirmClear(true)}
@@ -305,16 +347,39 @@ export function RequestsPage() {
                     open={open}
                   />
                 ))}
-                {rows.map((r, i) => (
-                  <RequestRow
-                    key={r.request_id ?? `${r.time}-${i}`}
-                    r={r}
-                    active={r.request_id === id}
-                    fresh={!!r.fresh}
-                    saving={liveOn && prefs.data?.enabled === true}
-                    open={open}
-                  />
-                ))}
+                {items.map((item, i) => {
+                  const row = (r: Row, j: number, member?: boolean) => (
+                    <RequestRow
+                      key={r.request_id ?? `${r.time}-${i}-${j}`}
+                      r={r}
+                      active={r.request_id === id}
+                      fresh={!!r.fresh}
+                      saving={liveOn && prefs.data?.enabled === true}
+                      member={member}
+                      open={open}
+                    />
+                  )
+                  if (item.kind === 'row') return row(item.row, 0)
+                  const shut = collapsed.has(item.key)
+                  return [
+                    <GroupRow
+                      key={item.key}
+                      rows={item.rows}
+                      open={!shut}
+                      active={id}
+                      toggle={() =>
+                        setCollapsed((prev) => {
+                          const next = new Set(prev)
+                          if (shut) next.delete(item.key)
+                          else next.add(item.key)
+                          return next
+                        })
+                      }
+                      inspect={open}
+                    />,
+                    ...(shut ? [] : item.rows.map((r, j) => row(r, j, true))),
+                  ]
+                })}
               </tbody>
             </table>
           </div>
@@ -370,7 +435,13 @@ export function RequestsPage() {
             </div>
           </DialogHeader>
           {id && (
-            <TraceDetail key={id} id={id} record={selected} pending={pending} />
+            <TraceDetail
+              key={id}
+              id={id}
+              record={selected}
+              pending={pending}
+              conversation={conversation}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -482,17 +553,97 @@ function RunningRow({
   )
 }
 
+function GroupRow({
+  rows,
+  open,
+  active,
+  toggle,
+  inspect,
+}: {
+  rows: Row[]
+  open: boolean
+  active?: string
+  toggle: () => void
+  inspect: (id: string) => void
+}) {
+  const s = runStats(rows)
+  const span = Math.max(s.end - s.start, 1)
+  const ordered = [...rows].reverse()
+  return (
+    <tr className="trace-group">
+      <td colSpan={7}>
+        <div className="trace-group-head">
+          <button
+            type="button"
+            className="trace-group-toggle"
+            aria-expanded={open}
+            onClick={toggle}
+          >
+            {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <Workflow size={14} />
+            <strong>Agent run</strong>
+          </button>
+          <span>{plural(s.calls, 'call')}</span>
+          {s.toolCalls > 0 && <span>{plural(s.toolCalls, 'tool call')}</span>}
+          <span title="From the first request to the end of the last">
+            {ms(s.end - s.start)} total · {ms(s.busy)} in the model
+          </span>
+          <span>
+            {n(s.input)} → {n(s.output)} tokens
+          </span>
+          {s.failed > 0 && <span className="trace-bad">{s.failed} failed</span>}
+          <span className="trace-secondary">
+            {s.models.join(', ')} · started{' '}
+            {shortDate(new Date(s.start).toISOString())}
+          </span>
+        </div>
+        <div
+          className="trace-run-bar"
+          role="group"
+          aria-label="Calls of this run over time"
+        >
+          {ordered.map((r, i) => {
+            const left = ((Date.parse(r.time) - s.start) / span) * 100
+            const width = (r.latency_ms / span) * 100
+            const label = `Call ${i + 1}: ${ms(r.latency_ms)}, ${r.trace_summary?.tool_calls ?? 0} tool calls, status ${r.status}`
+            return r.trace_available && r.request_id ? (
+              <button
+                type="button"
+                key={r.request_id}
+                className={`trace-run-call ${ok(r.status) ? '' : 'failed'} ${active === r.request_id ? 'active' : ''}`}
+                style={{ left: `${left}%`, width: `max(4px, ${width}%)` }}
+                title={label}
+                aria-label={label}
+                onClick={() => inspect(r.request_id!)}
+              />
+            ) : (
+              <span
+                key={`${r.time}-${i}`}
+                className="trace-run-call idle"
+                style={{ left: `${left}%`, width: `max(4px, ${width}%)` }}
+                title={label}
+              />
+            )
+          })}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 function RequestRow({
   r,
   active,
   fresh,
   saving,
+  member,
   open,
 }: {
   r: Row
   active: boolean
   fresh: boolean
   saving: boolean
+  member?: boolean
   open: (id: string) => void
 }) {
   const s = r.trace_summary
@@ -500,7 +651,7 @@ function RequestRow({
   const recent = Date.now() - Date.parse(r.time) - r.latency_ms < 15_000
   return (
     <tr
-      className={`${active ? 'trace-row-active' : ''} ${fresh ? 'trace-row-new' : ''}`}
+      className={`${active ? 'trace-row-active' : ''} ${fresh ? 'trace-row-new' : ''} ${member ? 'trace-row-member' : ''}`}
     >
       <td className="whitespace-nowrap">
         {shortDate(r.time)}

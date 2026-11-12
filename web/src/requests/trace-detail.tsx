@@ -12,6 +12,7 @@ import {
   Route,
   Search,
   Sparkles,
+  Workflow,
   Wrench,
   Zap,
 } from 'lucide-react'
@@ -37,6 +38,8 @@ import {
   type Row,
   type Trace,
   type ToolRun,
+  delta,
+  type Delta,
 } from './model'
 import {
   CopyButton,
@@ -73,21 +76,36 @@ export function useTrace(id: string | null | undefined, enabled = true) {
   })
 }
 
+// Position of a call within its agent run, from the request list.
+export type ConversationNav = {
+  index: number // 1-based, oldest first
+  total: number
+  previous?: string
+  next?: string
+  open: (id: string) => void
+}
+
 export function TraceDetail({
   id,
   record,
-  newHashes,
+  conversation,
   pending,
 }: {
   id: string
   record?: Row
-  newHashes?: Set<string>
+  conversation?: ConversationNav
   pending?: boolean
 }) {
   const query = useTrace(id, !pending)
+  // The previous call shows what this call added to the conversation.
+  const previous = useTrace(conversation?.previous, !pending)
   const [tab, setTab] = useState<Tab>('overview')
   const d = query.data?.detail
   const runs = useMemo(() => (d ? toolRuns(d) : []), [d])
+  const added = useMemo(
+    () => (d && previous.data ? delta(d, previous.data.detail) : undefined),
+    [d, previous.data],
+  )
   return (
     <div className="trace-detail">
       {pending ? (
@@ -152,12 +170,22 @@ export function TraceDetail({
             aria-labelledby={`trace-tab-${tab}`}
           >
             {tab === 'overview' && (
-              <Overview d={d} record={record} trace={query.data!} runs={runs} />
+              <Overview
+                d={d}
+                record={record}
+                trace={query.data!}
+                runs={runs}
+                conversation={conversation}
+                added={added}
+                show={setTab}
+              />
             )}
             {tab === 'conversation' && (
-              <Conversation d={d} runs={runs} newHashes={newHashes} />
+              <Conversation d={d} runs={runs} added={added} />
             )}
-            {tab === 'tools' && <Tools d={d} runs={runs} />}
+            {tab === 'tools' && (
+              <Tools d={d} runs={runs} conversation={conversation} />
+            )}
             {tab === 'timeline' && (
               <Timeline d={d} total={record?.latency_ms} />
             )}
@@ -169,16 +197,88 @@ export function TraceDetail({
   )
 }
 
+function ConversationCard({
+  nav,
+  added,
+  d,
+  show,
+}: {
+  nav: ConversationNav
+  added?: Delta
+  d: Detail
+  show: (tab: Tab) => void
+}) {
+  const fresh = added ? [...added].filter(([, k]) => k === 'new') : []
+  const kinds = fresh.map(([i]) =>
+    d.input[i].blocks.some((b) => b.type === 'tool_result')
+      ? 'tool result'
+      : `${d.input[i].role} message`,
+  )
+  const counts = [...new Set(kinds)].map((k) =>
+    plural(kinds.filter((x) => x === k).length, k),
+  )
+  return (
+    <section className="trace-run-nav" aria-label="Conversation">
+      <Workflow size={15} />
+      <div>
+        <strong>
+          Call {nav.index} of {nav.total} in this conversation
+        </strong>
+        <span className="trace-secondary">
+          {nav.index === 1
+            ? 'First call of the run.'
+            : added
+              ? fresh.length
+                ? `Added since the previous call: ${counts.join(', ')}.`
+                : 'No new input since the previous call.'
+              : 'Comparing with the previous call…'}
+          {added && fresh.length > 0 && (
+            <button
+              type="button"
+              className="trace-link"
+              onClick={() => show('conversation')}
+            >
+              Show
+            </button>
+          )}
+        </span>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!nav.previous}
+        onClick={() => nav.previous && nav.open(nav.previous)}
+      >
+        Previous call
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!nav.next}
+        onClick={() => nav.next && nav.open(nav.next)}
+      >
+        Next call
+      </Button>
+    </section>
+  )
+}
+
 function Overview({
   d,
   record,
   trace,
   runs,
+  conversation,
+  added,
+  show,
 }: {
   d: Detail
   record?: Row
   trace: Trace
   runs: ToolRun[]
+  conversation?: ConversationNav
+  added?: Delta
+  show: (tab: Tab) => void
 }) {
   const usage = d.result?.usage ?? {}
   const s = d.summary
@@ -191,6 +291,9 @@ function Overview({
       : '—'
   return (
     <div className="trace-overview">
+      {conversation && conversation.total > 1 && (
+        <ConversationCard nav={conversation} added={added} d={d} show={show} />
+      )}
       {record && (
         <div className="trace-detail-metrics">
           <Metric
@@ -483,11 +586,11 @@ function toolNames(runs: ToolRun[]) {
 function Conversation({
   d,
   runs,
-  newHashes,
+  added,
 }: {
   d: Detail
   runs: ToolRun[]
-  newHashes?: Set<string>
+  added?: Delta
 }) {
   const [term, setTerm] = useState('')
   const [rendered, setRendered] = useState(true)
@@ -506,10 +609,10 @@ function Conversation({
         m.role === 'system' ||
         m.role === 'developer' ||
         i >= d.input.length - 4 ||
-        newHashes?.has(m.hash ?? ''),
+        added?.has(i),
     )
   const hidden = d.input.length - kept.length
-  const ctx = { term, rendered, byID, newHashes }
+  const ctx = { term, rendered, byID, added }
   return (
     <>
       <div className="trace-conversation-tools">
@@ -588,7 +691,7 @@ type Ctx = {
   term: string
   rendered: boolean
   byID: Map<string, ToolRun>
-  newHashes?: Set<string>
+  added?: Delta
 }
 
 function MessageCard({
@@ -598,16 +701,21 @@ function MessageCard({
   ...ctx
 }: Ctx & { m: Message; index: number; output?: boolean }) {
   const text = m.blocks.map((b) => b.text ?? b.arguments ?? '').join('\n')
-  const isNew = !output && m.hash && ctx.newHashes?.has(m.hash)
+  const kind = output ? undefined : ctx.added?.get(index)
   return (
     <article
-      className={`trace-message trace-role-${m.role} ${isNew ? 'trace-new' : ''}`}
+      className={`trace-message trace-role-${m.role} ${kind === 'new' ? 'trace-new' : ''}`}
       id={`${output ? 'out' : 'in'}-${index}`}
     >
       <div className="trace-role">
         <span>
           {m.role} <small>#{index + 1}</small>
-          {isNew && <span className="trace-badge-new">new in this call</span>}
+          {kind === 'new' && (
+            <span className="trace-badge-new">new in this call</span>
+          )}
+          {kind === 'echo' && (
+            <span className="trace-badge-echo">previous response</span>
+          )}
         </span>
         <span>
           <small>{n(text.length)} chars</small>
@@ -749,7 +857,15 @@ function Content({ block, term, rendered, byID }: Ctx & { block: Block }) {
   )
 }
 
-function Tools({ d, runs }: { d: Detail; runs: ToolRun[] }) {
+function Tools({
+  d,
+  runs,
+  conversation,
+}: {
+  d: Detail
+  runs: ToolRun[]
+  conversation?: ConversationNav
+}) {
   const declared = d.tools ?? []
   const calls = new Map<string, number>()
   runs.forEach((r) => calls.set(r.name, (calls.get(r.name) ?? 0) + 1))
@@ -768,7 +884,7 @@ function Tools({ d, runs }: { d: Detail; runs: ToolRun[] }) {
         <section>
           <h3>Requested by the model in this response</h3>
           {fresh.map((r) => (
-            <RunCard key={r.key} run={r} />
+            <RunCard key={r.key} run={r} conversation={conversation} />
           ))}
         </section>
       )}
@@ -776,7 +892,7 @@ function Tools({ d, runs }: { d: Detail; runs: ToolRun[] }) {
         <section>
           <h3>Earlier rounds in the input</h3>
           {history.map((r) => (
-            <RunCard key={r.key} run={r} />
+            <RunCard key={r.key} run={r} conversation={conversation} />
           ))}
         </section>
       )}
@@ -815,7 +931,13 @@ function Tools({ d, runs }: { d: Detail; runs: ToolRun[] }) {
   )
 }
 
-function RunCard({ run }: { run: ToolRun }) {
+function RunCard({
+  run,
+  conversation,
+}: {
+  run: ToolRun
+  conversation?: ConversationNav
+}) {
   const status =
     run.result !== undefined
       ? [
@@ -827,7 +949,9 @@ function RunCard({ run }: { run: ToolRun }) {
       : run.origin === 'output'
         ? [
             'waiting',
-            'Awaiting your client — the result comes in the next request',
+            conversation?.next
+              ? 'Your client answered in the next call'
+              : 'Awaiting your client — the result comes in the next request',
           ]
         : ['missing', 'No result submitted']
   return (
@@ -836,6 +960,17 @@ function RunCard({ run }: { run: ToolRun }) {
         <Wrench size={14} />
         <strong>{run.name}</strong>
         {!run.declared && <span className="trace-flag">not declared</span>}
+        {run.result === undefined &&
+          run.origin === 'output' &&
+          conversation?.next && (
+            <button
+              type="button"
+              className="trace-link"
+              onClick={() => conversation.open(conversation.next!)}
+            >
+              Open next call
+            </button>
+          )}
         {run.id && <code className="trace-secondary">{run.id}</code>}
         <span className="trace-run-status">{status[1]}</span>
       </header>

@@ -117,14 +117,15 @@ behavior. This is independent of the OpenTelemetry configuration above.
 *The embedded portal with synthetic data and mock backends. The failed call is an
 intentional unknown-model example. These timings are not benchmark results.*
 
-Select a request ID to inspect its conversation, then use **Stream events** to
-follow the observed reasoning, text and tool argument deltas after completion.
-**Details** includes the full request ID for correlation with JSON logs and the
-response's `X-Request-Id` header.
+With **Live** on, requests appear while they run. Agent runs are grouped with a bar
+per call over time. Select a request ID to open its trace: **Overview** (timing
+breakdown, routing attempts, router changes, the full request ID for correlation with
+JSON logs and `X-Request-Id`), **Conversation**, **Tools** (calls paired with
+results), **Timeline** and **Raw** (what was sent and forwarded).
 
-| Conversation | Stream events |
+| Overview | Agent run |
 |---|---|
-| [![Input and output messages with reasoning, tool calls and tool results](images/request-trace-conversation.png)](REQUEST_TRACING.md#inspect-a-conversation) | [![Relative stream event times and reasoning and tool call fragments](images/request-trace-events.png)](REQUEST_TRACING.md#replay-stream-events) |
+| [![Timing breakdown, routing attempt, router changes and request identifiers](images/request-trace-overview.png)](REQUEST_TRACING.md#inspect-a-call) | [![Second call of an agent run with what it added since the previous call](images/request-trace-run.png)](REQUEST_TRACING.md#follow-an-agent-run) |
 
 The [illustrated viewer guide](REQUEST_TRACING.md) also shows request parameters,
 expiry and deletion controls. See [screenshot provenance and reproduction](images/README.md)

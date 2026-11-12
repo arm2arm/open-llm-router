@@ -246,3 +246,108 @@ export function textOf(m: Message) {
     .map((b) => `${b.name ?? ''} ${b.arguments ?? ''} ${b.text ?? ''}`)
     .join(' ')
 }
+
+// Agent runs: the requests of one conversation (same client session, or the
+// same system prompt and first user message). A content-keyed conversation
+// is split where its input stops growing: an agent loop always appends, while
+// repeating one prompt (a benchmark, a retry script) starts over each time.
+// Rows stay newest first; a run with a single request stays a plain row.
+export type Item =
+  { kind: 'row'; row: Row } | { kind: 'group'; key: string; rows: Row[] }
+export function runKeys(rows: Row[]): Map<Row, string> {
+  const byKey = new Map<string, Row[]>()
+  for (const r of rows)
+    if (r.conversation) {
+      const list = byKey.get(r.conversation) ?? []
+      list.push(r)
+      byKey.set(r.conversation, list)
+    }
+  const keys = new Map<Row, string>()
+  for (const [key, list] of byKey) {
+    const ordered = [...list].sort(
+      (a, b) => Date.parse(a.time) - Date.parse(b.time),
+    )
+    let run = 0
+    let last = -1
+    for (const r of ordered) {
+      const size = r.trace_summary?.input_messages ?? 0
+      if (key.startsWith('c') && last >= 0 && size <= last) run++
+      last = size
+      keys.set(r, `${key}:${run}`)
+    }
+  }
+  return keys
+}
+export function groupRows(rows: Row[]): Item[] {
+  const keys = runKeys(rows)
+  const members = new Map<string, Row[]>()
+  for (const r of rows) {
+    const key = keys.get(r)
+    if (key) members.set(key, [...(members.get(key) ?? []), r])
+  }
+  const items: Item[] = []
+  const placed = new Set<string>()
+  for (const r of rows) {
+    const key = keys.get(r)
+    const list = key ? members.get(key)! : undefined
+    if (!list || list.length < 2) items.push({ kind: 'row', row: r })
+    else if (!placed.has(key!)) {
+      placed.add(key!)
+      items.push({ kind: 'group', key: key!, rows: list })
+    }
+  }
+  return items
+}
+
+export type RunStats = {
+  calls: number
+  start: number
+  end: number
+  busy: number // summed request latency; the rest is client time
+  input: number
+  output: number
+  toolCalls: number
+  failed: number
+  models: string[]
+}
+export function runStats(rows: Row[]): RunStats {
+  const start = Math.min(...rows.map((r) => Date.parse(r.time)))
+  const end = Math.max(...rows.map((r) => Date.parse(r.time) + r.latency_ms))
+  return {
+    calls: rows.length,
+    start,
+    end,
+    busy: rows.reduce((s, r) => s + r.latency_ms, 0),
+    input: rows.reduce((s, r) => s + r.input_tokens, 0),
+    output: rows.reduce((s, r) => s + r.output_tokens, 0),
+    toolCalls: rows.reduce((s, r) => s + (r.trace_summary?.tool_calls ?? 0), 0),
+    failed: rows.filter((r) => !ok(r.status)).length,
+    models: [...new Set(rows.map((r) => r.model).filter(Boolean))],
+  }
+}
+
+// Which input messages a call added since the previous call of its
+// conversation. Agent loops append: when the earlier input is an unchanged
+// prefix, everything after it is new (an assistant message there is the
+// previous response sent back). Otherwise fall back to hash membership.
+export type Delta = Map<number, 'new' | 'echo'>
+export function delta(current: Detail, previous: Detail): Delta {
+  const out: Delta = new Map()
+  const prefix = previous.input.every(
+    (m, i) => !m.hash || current.input[i]?.hash === m.hash,
+  )
+  if (prefix && previous.input.length <= current.input.length) {
+    current.input.forEach((m, i) => {
+      if (i >= previous.input.length)
+        out.set(i, m.role === 'assistant' ? 'echo' : 'new')
+    })
+    return out
+  }
+  const known = new Set(
+    [...previous.input, ...previous.output].map((m) => m.hash),
+  )
+  current.input.forEach((m, i) => {
+    if (m.hash && !known.has(m.hash)) out.set(i, 'new')
+  })
+  return out
+}
