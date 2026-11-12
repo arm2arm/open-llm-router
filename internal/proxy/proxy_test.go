@@ -439,6 +439,16 @@ func TestSlowReplicaReceivesLessAndCapsHold(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	// The client may read the final byte before the handler's deferred lease
+	// release runs. Check the cap after cleanup, rather than racing that defer.
+	eventually(t, func() bool {
+		for _, state := range h.Pools.Pools["chat-model"].Snapshot() {
+			if state.Inflight != 0 {
+				return false
+			}
+		}
+		return true
+	})
 	for _, m := range mocks {
 		if s := m.Stats(); s.PeakInflight > 3 || s.Inflight != 0 {
 			t.Fatal(s)

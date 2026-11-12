@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/apierr"
@@ -41,6 +42,7 @@ type Handler struct {
 	Limits    *limits.Manager   // installed before serving
 	Metrics   *metrics.Observer // installed before serving
 	active    sync.WaitGroup
+	routing   atomic.Pointer[routingSnapshot]
 }
 
 func New(cfg *config.Config) *Handler {
@@ -98,13 +100,14 @@ func (h *Handler) callerPolicy(r *http.Request) policy.Policy {
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
+	cfg, _ := h.Snapshot()
 	access := h.callerPolicy(r)
-	names := slices.AppendSeq(slices.Collect(maps.Keys(h.cfg.Models)), maps.Keys(h.cfg.Aliases))
+	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
 	data := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		target := name
-		if model, ok := h.cfg.Aliases[name]; ok {
+		if model, ok := cfg.Aliases[name]; ok {
 			target = model
 		}
 		if !access.AllowsModel(target) {
@@ -117,6 +120,7 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol string) {
+	cfg, pools := h.Snapshot()
 	h.active.Add(1)
 	defer h.active.Done()
 	account := h.account(w, r, protocol)
@@ -158,10 +162,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		return
 	}
 	name := meta.Model
-	if target, ok := h.cfg.Aliases[name]; ok {
+	if target, ok := cfg.Aliases[name]; ok {
 		name = target
 	}
-	model, ok := h.cfg.Models[name]
+	model, ok := cfg.Models[name]
 	if !ok {
 		apierr.Write(w, protocol, 404, "not_found_error", "model is unavailable for this protocol")
 		return
@@ -247,7 +251,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		if model.SessionAffinity {
 			request.Session = r.Header.Get("X-Session-Id")
 		}
-		lease := h.Pools.Pools[name].AcquireRequest(r.Context(), request)
+		lease := pools.Pools[name].AcquireRequest(r.Context(), request)
 		account.selection += time.Since(selectionStarted)
 		if lease == nil {
 			w.Header().Set("Retry-After", "1")

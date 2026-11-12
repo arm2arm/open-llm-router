@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/arm2arm/open-llm-router/internal/endpoints"
 	"github.com/arm2arm/open-llm-router/internal/home"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
@@ -113,6 +115,15 @@ func serve(args []string) error {
 		return err
 	}
 	defer database.Close()
+	fileConfig := cfg
+	destinations, err := backendpolicy.New(fileConfig, os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	cfg, err = endpoints.Load(ctx, database, fileConfig, destinations)
+	if err != nil {
+		return err
+	}
 	bootstrapCtx, cancelBootstrap := context.WithTimeout(ctx, 30*time.Second)
 	_, _, err = bootstrapAdministrator(bootstrapCtx, database, "", false)
 	cancelBootstrap()
@@ -146,12 +157,14 @@ func serve(args []string) error {
 		}
 	}()
 	forwarder := proxy.New(cfg)
+	forwarder.ConfigureDestinations(destinations)
 	forwarder.Usage = accounting
 	forwarder.Limits = limits.New(database, cfg.Limits.Location, time.Now)
 	observabilityOptions, err := metrics.Environment(os.Getenv)
 	if err != nil {
 		return err
 	}
+	observabilityOptions.PoolSource = forwarder.CurrentPools
 	observability, err := metrics.New(ctx, observabilityOptions, forwarder.Pools, accounting)
 	if err != nil {
 		return err
@@ -176,13 +189,13 @@ func serve(args []string) error {
 	// Health checks keep running during graceful shutdown until Run returns.
 	healthCtx, cancelHealth := context.WithCancel(context.Background())
 	healthDone := make(chan struct{})
-	go func() { defer close(healthDone); forwarder.Pools.Run(healthCtx) }()
+	go func() { defer close(healthDone); forwarder.RunHealth(healthCtx) }()
 	defer func() { cancelHealth(); <-healthDone }()
 	srv := server.New(log)
 	srv.Handle("/", home.New(true))
 	srv.SetAPIMiddleware(authenticator.Middleware)
 	srv.SetReadiness(func(ctx context.Context) bool {
-		return forwarder.Pools.Ready() && database.Ping(ctx) == nil
+		return forwarder.CurrentPools().Ready() && database.Ping(ctx) == nil
 	})
 	forwarder.Register(srv.Handle)
 	srv.Handle("GET /metrics", observability.Handler())
@@ -194,6 +207,7 @@ func serve(args []string) error {
 	}
 	defer portalHandler.Close()
 	portalHandler.Pools = forwarder.Pools
+	portalHandler.Endpoints = &endpoints.Service{DB: database, Base: fileConfig, Policy: destinations, Runtime: forwarder}
 	srv.Handle("/portal", portalHandler)
 	srv.Handle("/portal/", portalHandler)
 

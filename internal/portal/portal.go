@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/endpoints"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,7 +38,8 @@ type Handler struct {
 	passwordSlots chan struct{}
 	mux           *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
-	Pools *pool.Manager
+	Pools     *pool.Manager
+	Endpoints *endpoints.Service
 }
 
 func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *limits.Manager) (*Handler, error) {
@@ -78,6 +80,10 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/enabled", h.admin(h.setEnabled))
 	h.mux.HandleFunc("GET /portal/api/admin/groups", h.admin(h.adminGroups))
 	h.mux.HandleFunc("GET /portal/api/admin/replicas", h.admin(h.adminReplicas))
+	h.mux.HandleFunc("GET /portal/api/admin/endpoints", h.admin(h.endpointList))
+	h.mux.HandleFunc("PUT /portal/api/admin/endpoints", h.admin(h.endpointSave))
+	h.mux.HandleFunc("POST /portal/api/admin/endpoints/test", h.admin(h.endpointTest))
+	h.mux.HandleFunc("POST /portal/api/admin/endpoints/restore", h.admin(h.endpointRestore))
 	h.mux.HandleFunc("GET /portal/api/models", h.authenticated(h.models))
 	h.mux.HandleFunc("/portal/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/portal/api" || strings.HasPrefix(r.URL.Path, "/portal/api/") {

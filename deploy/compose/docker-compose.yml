@@ -34,6 +34,9 @@ services:
       OLR_TRACE_USER_ID: ${OLR_TRACE_USER_ID:-false}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:27b-mlx}
+      # Admin-added private backends; initial YAML destinations stay trusted.
+      OLR_BACKEND_ALLOWED_CIDRS: ${OLR_BACKEND_ALLOWED_CIDRS:-192.168.0.0/16}
+      OLR_BACKEND_TOKEN_ENVS: ${OLR_BACKEND_TOKEN_ENVS:-}
     depends_on:
       postgres:
         condition: service_healthy

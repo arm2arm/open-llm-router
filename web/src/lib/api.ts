@@ -235,3 +235,39 @@ export type Replica = {
   weight: number
   max_inflight: number
 }
+
+export type EndpointReplica = {
+  url: string
+  health_path: string
+  weight: number
+  max_inflight: number
+  bearer_token_env: string
+}
+export type EndpointModel = {
+  upstream_model: string
+  protocols: ('openai' | 'anthropic')[]
+  timeout_s: number
+  idle_timeout_s: number
+  queue_timeout_s: number
+  session_affinity: boolean
+  priority: { interactive: number; batch: number } | null
+  pool: EndpointReplica[]
+}
+export type EndpointEntry = {
+  model: string
+  revision: number
+  source: 'file' | 'database'
+  configuration: EndpointModel
+  file_configuration: EndpointModel
+  history: {
+    id: number
+    created_at: string
+    file: boolean
+    configuration: EndpointModel | null
+  }[]
+}
+export type EndpointSettings = {
+  models: EndpointEntry[]
+  credential_references: string[]
+  allowed_private_networks: string[]
+}

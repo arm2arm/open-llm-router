@@ -1,6 +1,6 @@
 # Administrator guide
 
-This guide describes the implementation including issues #72–#75 (12 November 2026). Start here
+This guide describes local administration and the endpoint editor (12 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
 The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
@@ -10,7 +10,8 @@ working functionality.
 
 | Task | Current interface | When it applies |
 |---|---|---|
-| Add/remove a model or backend endpoint; change credentials, weight or capacity | Private YAML and environment | Router restart/recreation |
+| Add/edit/remove replicas for an existing model; change upstream model, protocols, timeouts, affinity, credential reference, weight or capacity | **Admin → Endpoint configuration** or portal API | Live after validation and health checks; saved in PostgreSQL |
+| Add/remove logical model names or aliases | Private YAML | Router restart/recreation |
 | Grant a group access to models; set group default limits | Private YAML | Router restart/recreation |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
 | View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
@@ -20,7 +21,7 @@ working functionality.
 | Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
 | Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment | Router restart/recreation |
-| Configure Keycloak, endpoints or group policies from the Admin page | **Not implemented** | See the feature plan |
+| Configure Keycloak or group policies from the Admin page | **Not implemented** | See the feature plan |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
 
@@ -455,6 +456,87 @@ too to use `external-chat`: `admin: true` enables administration, while `models`
 controls inference access. The repository's development `admins` policy instead
 uses `models: ["*"]` and omits limits, intentionally granting unrestricted access.
 
+### Configure endpoints in Admin
+
+Sign in with a full local or Keycloak admin session and open **Admin → Endpoint
+configuration**. Select **Edit endpoints** for the public model your clients use.
+You can add or remove replicas, change each origin, health path, weight,
+`max_inflight` and credential reference, and edit the model's upstream name,
+native protocols, header/idle/queue timeouts and session affinity. Each model
+must retain at least one replica; at most 32 replicas are accepted.
+
+1. Set each **Backend origin** without `/v1`. All replicas in a pool must serve
+   the same upstream model and native protocols.
+2. Choose a server-provided **Credential reference**, or **None** for an
+   unauthenticated backend. Secret values cannot be entered or read in the UI.
+3. Click **Test connections**. This checks HTTP-200 health responses, not whether
+   the named model is installed or supports tools. No revision is saved.
+4. Click **Save and apply**. The server validates and checks again, commits a new
+   revision, then switches new requests to it. Existing streams finish with their
+   original configuration. User concurrency, quotas and usage accounting continue.
+5. Make a real completion with a permitted user's router key. Clients keep using
+   the public model name and the router's `/v1` URL.
+
+A failed validation/check keeps the active revision. If another admin saved first,
+your draft stays open with a conflict; discard/reload it before editing again.
+**Revision history and restore** previews older configurations and can restore
+one, or the **current YAML/environment configuration**, after another health check.
+Restore creates a new revision, so stale browser tabs cannot overwrite it.
+
+**Example: route `chat-model` to LAN Ollama.** Edit `chat-model`, replace its mock
+replicas with origin `http://192.168.178.81:11434`, and enter the exact installed
+Ollama model name, for example `qwen3.8:27b-mlx`. Enable **OpenAI** and disable
+**Anthropic** unless that backend supports it. Choose **Use Ollama health and
+capacity defaults** to set health path `/`, capacity `1`, header timeout `900`
+seconds and idle timeout `120` seconds. Use weight `1` and no credential for an
+unauthenticated Ollama. Test, save, then send an actual completion. Hermes should
+still use the router base URL `http://localhost:8080/v1` and model `chat-model`.
+
+#### Destination and credential setup
+
+File-defined host/port pairs are trusted operator destinations. New public
+HTTP(S) origins are allowed; new private destinations require an operator-set
+`OLR_BACKEND_ALLOWED_CIDRS`, for example `192.168.178.0/24`. Development Compose
+defaults to `192.168.0.0/16`, covering the Ollama example. Production defaults to
+no additional private networks. New loopback, link-local and cloud metadata
+destinations are refused even with a broad CIDR. DNS is checked again on each new
+connection for both health tests and inference; redirects are not followed.
+Backend connections use this policy directly, without environment HTTP proxies.
+Container `localhost` refers to the router container, not the host's Ollama.
+
+Token references already used by YAML replicas are available automatically. To
+add another, place the actual secret in the router process environment and list
+its name in `OLR_BACKEND_TOKEN_ENVS`. An unrelated environment variable cannot be
+selected as a backend credential. For development Compose, use a private override:
+
+```yaml
+services:
+  router:
+    environment:
+      OLR_BACKEND_ALLOWED_CIDRS: 192.168.178.0/24
+      OLR_BACKEND_TOKEN_ENVS: VLLM_API_KEY
+      VLLM_API_KEY: ${VLLM_API_KEY:?set through your secret manager}
+```
+
+Recreate the router to change these environment settings. Listing a name alone
+does not inject its value into a container. Tokens are resolved only at startup
+and never stored in endpoint revisions or returned to the browser.
+
+#### Persistence and configuration ownership
+
+A saved database revision overrides that model's YAML fields on restart. **Source**
+shows **Admin database** or **YAML/environment**. Editing the YAML does not replace
+an active database override; use restore-from-file to return ownership. A file
+restore follows the current startup YAML/environment on subsequent restarts.
+The file must remain valid, contain every managed logical model, and define
+aliases, group grants/default limits and all other application settings. Restore
+a model to file ownership before removing its logical name from YAML. Back up
+PostgreSQL as well as configuration and external secrets.
+
+Activation currently supports **one router process**. Other processes do not
+receive live revision notifications. Logical model creation/deletion, alias and
+group-policy editors, provider adapters and Keycloak settings remain planned work.
+
 ### Connection rules and current external-provider limits
 
 - `url` is an HTTP(S) **origin**, such as `https://inference.example.org`, without
@@ -482,7 +564,7 @@ uses `models: ["*"]` and omits limits, intentionally granting unrestricted acces
   of the existing protocol, path, authentication and health requirements; named
   cloud-provider support is a planned extension, not a current promise.
 
-### Apply an endpoint or group-policy change
+### Apply a file-managed model or group-policy change
 
 1. Save a private copy of the last working YAML/environment and the image digest.
 2. Edit the endpoint, model, alias and `groups.<name>.models` together. Group model
@@ -500,7 +582,7 @@ docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" up -
 5. If acceptance fails, restore the saved configuration/environment and recreate
    the router. Schema upgrades require the separate backup/restore procedure.
 
-Configuration has no hot reload. Replacement interrupts streams that exceed the
+File and environment changes require recreation. Replacement interrupts streams that exceed the
 30-second application shutdown grace. Environment changes require recreation;
 a restart alone retains the old environment. The development Compose file does
 not pass arbitrary new backend secret variables automatically; add an explicit

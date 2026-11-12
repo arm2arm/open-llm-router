@@ -13,8 +13,10 @@ administrator, dual login, Admin-managed Keycloak connections, endpoints and gro
 policies is tracked separately in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md);
 These extend the first release. Protected credentials (#72) and independent local
 session APIs (#73), browser sign-in/password flows (#74) and local user/key
-administration (#75) are implemented. Protected-admin recovery and configuration
-editors remain in the linked delivery plan.
+administration (#75) are implemented. Admin can also edit endpoint pools and model
+parameters for existing logical models, with persisted revisions and live activation.
+Protected-admin recovery, Keycloak settings, logical model/alias creation and group
+policy editors remain in the linked delivery plan.
 
 ## 0. Changes
 

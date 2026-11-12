@@ -98,17 +98,18 @@ type model struct {
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
+	cfg := h.routingConfig()
 	access := h.access(u)
-	names := slices.AppendSeq(slices.Collect(maps.Keys(h.cfg.Models)), maps.Keys(h.cfg.Aliases))
+	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
 	models := make([]model, 0, len(names))
 	for _, name := range names {
 		target := name
-		if canonical, ok := h.cfg.Aliases[name]; ok {
+		if canonical, ok := cfg.Aliases[name]; ok {
 			target = canonical
 		}
 		if access.AllowsModel(target) {
-			models = append(models, model{ID: name, Canonical: target, Protocols: h.cfg.Models[target].Protocols})
+			models = append(models, model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols})
 		}
 	}
 	respond(w, 200, map[string]any{"router_url": h.cfg.Portal.BaseURL, "base_url": h.cfg.Portal.BaseURL + "/v1", "models": models})

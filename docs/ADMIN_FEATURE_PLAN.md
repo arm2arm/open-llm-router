@@ -1,6 +1,6 @@
 # Admin capability audit and implementation plan
 
-Audit baseline: commit `6cedb62`, updated for the implementation of issues #72–#75,
+Audit baseline: commit `6cedb62`, updated for issues #72–#75 and the endpoint editor,
 12 November 2026. The remaining delivery stages below are proposals.
 Current setup and operation are documented in [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
 
@@ -19,7 +19,10 @@ no due dates or assignees have been set.
 
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
 browser sign-in/password flows and #75 local user/key administration are implemented
-in this checkout. Continue with #76 for protected-administrator recovery.
+in this checkout. Endpoint editing for existing logical models now implements part
+of #81/#82: persisted revisions, validation/checks, live activation and restore.
+Those issues remain open for logical model/alias creation and the remaining
+acceptance work. #76 still tracks protected-administrator recovery.
 Explicit cloud-provider adapters in delivery stage 4 below remain
 a future extension; these milestones cover existing compatible backends.
 Stage 5's authorization/audit/acceptance work is included in M8 and M9. The
@@ -52,8 +55,9 @@ additional evidence that the production pilot in #21 has been completed.
 | Protected permanent local administrator | Yes (#72) | Migration 0004, transactional bootstrap, Argon2id, required first change, database guards |
 | Local password authentication and independent startup | Yes, JSON API (#73) | Migration 0005, restricted first-change sessions, rotation/revocation, throttling and OIDC retry; Keycloak absence/outage does not block local Admin |
 | Local sign-in/password forms and dual-login UI | Yes (#74) | Keycloak primary action, direct local route, outage state, required first change, Account password rotation and identity-source labels |
-| Endpoint pools, credentials, weights and capacity | Yes, YAML plus restart | `config.Model`, `config.Replica`, `internal/pool` |
-| Endpoint/model creation and editing in Admin | No | `/admin/replicas` is GET-only; UI displays health/capacity |
+| Endpoint pools, credential references, weights and capacity | Yes, Admin/API or YAML | Live revision activation for existing logical models; server-defined secret references and destination policy |
+| Endpoint creation/editing/removal in Admin | Yes for existing logical models | `/admin/endpoints`, connection tests, revision conflict checks, persistence and restore |
+| Logical model and alias creation/deletion in Admin | No | Model names/aliases remain YAML-owned; #81/#82 remain open |
 | Group model grants and default limits | Yes, YAML plus restart | `config.Group`, `policy.Resolve` |
 | Group-policy editor in Admin | No | `/admin/groups` returns usage totals; no policy mutation routes |
 | Group membership management | Keycloak externally; local memberships in Admin/API (#75) | Assign existing configured groups; sessions end and keys receive updated access; effective models/limits shown |
@@ -64,7 +68,7 @@ additional evidence that the production pilot in #21 has been completed.
 | Remote compatible backend | Conditional on current native-protocol contract | Origin-only URL, Bearer token, HTTP-200 health probe; not a cloud-provider integration |
 | Provider adapters and provider registry | No | No custom auth headers, base paths, signing, provider model discovery or shared provider capacity |
 | Group/provider-specific or money budgets | No | Current limits are per user across models; group totals are reporting |
-| Configuration reload and revision history | No | Startup-owned config pointer, no reload; overrides store latest state only |
+| Configuration reload and revision history | Endpoint models only | Migration 0006, append-only endpoint revisions, immutable runtime snapshots; no cross-router activation or general settings/history service |
 | Standalone config validation command | No | Parser exists; no CLI exposure; Compose validation does not parse router YAML |
 | Multiple router instances with shared limits | No | RPM, TPM, concurrency, queues and affinity are process-local |
 
@@ -179,6 +183,14 @@ Primary work: revision/secret storage, configuration service, OIDC lifecycle and
 sync management, admin settings API/UI, compose configuration, integration tests.
 
 ### 3. Admin-managed endpoints, logical models and group policies
+
+Implemented subset: Admin replica add/edit/remove, upstream model/protocol/timeout/
+affinity editing, server-side credential references and network guards, health
+checks, optimistic revisions, persistence and restore. Runtime activation keeps
+existing streams, per-origin capacity reservations and user admission/accounting.
+Unit, PostgreSQL integration and browser tests cover these paths. Remaining work
+below includes logical model/alias creation, group policies, broader administration
+history and CLI validation; this subset does not complete M8 or M9.
 
 - Reuse the revision/activation service for endpoint origin, credential reference,
   health path, weight, capacity; logical model upstream name/protocol/timeouts;

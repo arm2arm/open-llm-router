@@ -134,13 +134,14 @@ func (h *Handler) adminUser(w http.ResponseWriter, r *http.Request, _ user) {
 		target.Groups = []string{}
 	}
 	access := h.access(target)
+	cfg := h.routingConfig()
 	models := []string{}
-	for name := range h.cfg.Models {
+	for name := range cfg.Models {
 		if access.AllowsModel(name) {
 			models = append(models, name)
 		}
 	}
-	for alias, model := range h.cfg.Aliases {
+	for alias, model := range cfg.Aliases {
 		if access.AllowsModel(model) {
 			models = append(models, alias)
 		}
@@ -283,9 +284,13 @@ type modelReplicas struct {
 // and capacity. Backend credentials are never part of the state.
 func (h *Handler) adminReplicas(w http.ResponseWriter, _ *http.Request, _ user) {
 	models := make([]modelReplicas, 0)
-	if h.Pools != nil {
-		for _, name := range slices.Sorted(maps.Keys(h.Pools.Pools)) {
-			models = append(models, modelReplicas{Model: name, Replicas: h.Pools.Pools[name].Snapshot()})
+	pools := h.Pools
+	if h.Endpoints != nil {
+		_, pools = h.Endpoints.Runtime.Snapshot()
+	}
+	if pools != nil {
+		for _, name := range slices.Sorted(maps.Keys(pools.Pools)) {
+			models = append(models, modelReplicas{Model: name, Replicas: pools.Pools[name].Snapshot()})
 		}
 	}
 	respond(w, 200, map[string]any{"models": models})

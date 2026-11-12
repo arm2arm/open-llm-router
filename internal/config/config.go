@@ -136,37 +136,37 @@ type Portal struct {
 
 // Model is one model name served to clients and the replicas behind it.
 type Model struct {
-	Protocols     []string `yaml:"protocols"`
-	UpstreamModel string   `yaml:"upstream_model"`
-	TimeoutS      int      `yaml:"timeout_s"`
-	IdleTimeoutS  int      `yaml:"idle_timeout_s"` // default 30; between response chunks
+	Protocols     []string `yaml:"protocols" json:"protocols"`
+	UpstreamModel string   `yaml:"upstream_model" json:"upstream_model"`
+	TimeoutS      int      `yaml:"timeout_s" json:"timeout_s"`
+	IdleTimeoutS  int      `yaml:"idle_timeout_s" json:"idle_timeout_s"` // default 30; between response chunks
 	// QueueTimeoutS lets a call wait this long for a free replica when
 	// every replica is at max_inflight; 0 answers 503 at once.
-	QueueTimeoutS int `yaml:"queue_timeout_s"`
+	QueueTimeoutS int `yaml:"queue_timeout_s" json:"queue_timeout_s"`
 	// SessionAffinity sends calls with the same X-Session-Id to the same
 	// replica while it is healthy and has capacity (prefix-cache reuse).
-	SessionAffinity bool `yaml:"session_affinity"`
+	SessionAffinity bool `yaml:"session_affinity" json:"session_affinity"`
 	// Priority, if set, is sent to the backend as the request field
 	// "priority" (vLLM with --scheduling-policy priority; lower is sooner).
-	Priority *Priorities `yaml:"priority"`
-	Pool     []Replica   `yaml:"pool"`
+	Priority *Priorities `yaml:"priority" json:"priority"`
+	Pool     []Replica   `yaml:"pool" json:"pool"`
 }
 
 // Priorities maps key classes to backend priorities; a group's priority is
 // added to them.
 type Priorities struct {
-	Interactive int `yaml:"interactive"`
-	Batch       int `yaml:"batch"`
+	Interactive int `yaml:"interactive" json:"interactive"`
+	Batch       int `yaml:"batch" json:"batch"`
 }
 
 // Replica is one backend server of a model.
 type Replica struct {
-	URL            string  `yaml:"url"`
-	HealthPath     string  `yaml:"health_path"` // default /health; Ollama uses /
-	Weight         float64 `yaml:"weight"`      // relative throughput
-	MaxInflight    int     `yaml:"max_inflight"`
-	BearerTokenEnv string  `yaml:"bearer_token_env"`
-	BearerToken    string  `yaml:"-"` // resolved from BearerTokenEnv, never written to YAML
+	URL            string  `yaml:"url" json:"url"`
+	HealthPath     string  `yaml:"health_path" json:"health_path"` // default /health; Ollama uses /
+	Weight         float64 `yaml:"weight" json:"weight"`           // relative throughput
+	MaxInflight    int     `yaml:"max_inflight" json:"max_inflight"`
+	BearerTokenEnv string  `yaml:"bearer_token_env" json:"bearer_token_env"`
+	BearerToken    string  `yaml:"-" json:"-"` // resolved from BearerTokenEnv, never written to YAML
 }
 
 // Group is the policy for the members of one identity-provider group. A limit

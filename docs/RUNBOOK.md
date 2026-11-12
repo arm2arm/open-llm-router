@@ -107,6 +107,8 @@ no limit.
 | `OLR_METRICS_TOKEN` | bearer token for `/metrics` — **secret**; empty refuses scrapes |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | OTLP/HTTP traces |
 | `OLR_TRACE_USER_ID` | add the user ID to spans (default false) |
+| `OLR_BACKEND_ALLOWED_CIDRS` | comma-separated private GPU networks allowed for new Admin endpoints; empty by default (dev Compose: `192.168.0.0/16`) |
+| `OLR_BACKEND_TOKEN_ENVS` | comma-separated additional backend-token environment names selectable by Admin; supply values in the process environment too |
 | any name in `bearer_token_env` | a backend's API key — **secret** |
 
 ### Kubernetes
@@ -140,6 +142,22 @@ evidence, the rate-limit checks, a 75-second stream with 3-second gaps, and firs
 second (no buffering). Portal login is not part of it: the overlay runs without OIDC.
 
 ## Everyday operations
+
+### Manage endpoint revisions
+
+Use [Admin → Endpoint configuration](ADMIN_GUIDE.md#configure-endpoints-in-admin)
+for live edits to replicas and model parameters of existing logical models. The
+active PostgreSQL revision overrides YAML for that model and survives restart.
+Restore an older revision or current file configuration from the UI. Health and
+metrics use the active pools; old streams drain without resetting user limits.
+Keep one router process: there is no cross-process activation broadcast. Back up
+`endpoint_revisions` and `endpoint_active` with the rest of the database.
+
+Network allowlists and secret references are operator-owned. Recreate the process
+after changing allowed CIDRs, adding a token reference or rotating its environment
+value. File-defined destinations and token references remain trusted. Never use
+unrelated database/OIDC secrets as backend credentials. Model names, aliases,
+group policies, OIDC and other file settings still require recreation.
 
 ### Bootstrap or rotate the protected local administrator
 
@@ -273,7 +291,9 @@ database is unreachable. Users see their own limits and use in the portal and at
 
 - One router instance: concurrency, RPM and TPM counters, the queue and session affinity are in
   memory. More than one replica needs shared counters (Redis or Postgres), see PLAN §4.
-- Configuration changes need a restart; there is no reload.
+- Endpoint/model parameters for existing logical models can be activated live through
+  Admin. YAML/environment, logical model names, aliases and group policies require
+  recreation. Endpoint activation does not synchronize multiple router processes.
 - Quotas count tokens as the backend reports them; a stream that ends without usage is counted
   by its content events, a lower bound. Without `strict_quota`, calls already admitted can
   overshoot a quota.
