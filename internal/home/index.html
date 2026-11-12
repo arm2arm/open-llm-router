@@ -12,7 +12,9 @@
     <header class="site-header container">
       <a class="brand" href="/" aria-label="Open LLM Router home"><span class="brand-mark" aria-hidden="true">↗</span><span>Open LLM <strong>Router</strong></span></a>
       <nav aria-label="Main navigation">
+        <a href="#documentation">Docs</a>
         <a class="nav-about" href="#about">About</a>
+        <a href="#acknowledgments">Credits</a>
         <a class="nav-source" href="https://github.com/arm2arm/open-llm-router">GitHub <span aria-hidden="true">↗</span></a>
         {{if .PortalEnabled}}<a class="button button-small" href="/portal/sign-in">Sign in <span aria-hidden="true">↗</span></a>{{end}}
       </nav>
@@ -25,8 +27,8 @@
           <h1 id="hero-title">Your models.<br><span>One front door.</span></h1>
           <p class="hero-description">A shared gateway for your locally hosted language models. Connect the tools you already use, manage access, and keep track of usage in one place.</p>
           <div class="hero-actions">
-            {{if .PortalEnabled}}<a class="button" href="/portal/sign-in">Sign in to portal <span aria-hidden="true">→</span></a>{{else}}<a class="button" href="https://github.com/arm2arm/open-llm-router#development">Get started <span aria-hidden="true">→</span></a>{{end}}
-            <a class="text-link" href="https://github.com/arm2arm/open-llm-router#readme">Read the docs <span aria-hidden="true">↗</span></a>
+            {{if .PortalEnabled}}<a class="button" href="/portal/sign-in">Sign in to portal <span aria-hidden="true">→</span></a>{{else}}<a class="button" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/INSTALL.md">Get started <span aria-hidden="true">↗</span></a>{{end}}
+            <a class="text-link" href="#documentation">Read the docs <span aria-hidden="true">↓</span></a>
           </div>
           {{if .PortalEnabled}}<p class="hero-note">Use your organization’s account to create API keys and view usage.</p>{{else}}<p class="hero-note">This deployment uses API keys. Ask your administrator for access.</p>{{end}}
         </div>
@@ -42,9 +44,9 @@
         </div>
       </section>
 
-      <section class="about-section" id="about" aria-labelledby="about-title">
+      <section class="about-section" id="features" aria-labelledby="features-title">
         <div class="container">
-          <div class="section-heading"><p class="eyebrow">WHY OPEN LLM ROUTER</p><h2 id="about-title">Local models. Shared with confidence.</h2><p>Give your team a consistent way to use your models, with the controls to manage a shared service.</p></div>
+          <div class="section-heading"><p class="eyebrow">WHY OPEN LLM ROUTER</p><h2 id="features-title">Local models. Shared with confidence.</h2><p>Give your team a consistent way to use your models, with the controls to manage a shared service.</p></div>
           <div class="feature-grid">
             <article class="feature"><span class="feature-icon" aria-hidden="true">⤴</span><h3>Bring your existing tools</h3><p>OpenAI- and Anthropic-compatible endpoints support familiar clients, model discovery and streaming responses.</p></article>
             <article class="feature"><span class="feature-icon" aria-hidden="true">⌘</span><h3>Access that fits your team</h3><p>Single sign-on through Keycloak, personal API keys, and group policies that determine which models each user can access.</p></article>
@@ -61,10 +63,54 @@
           <li><span class="step-number" aria-hidden="true">02</span><h3>Create an API key</h3><p>Name your key, set an expiry, and copy it once. You can revoke it from the portal at any time.</p></li>
           <li><span class="step-number" aria-hidden="true">03</span><h3>Connect your client</h3><p>Choose an available model and use the portal’s connection examples to send your first request.</p></li>
         </ol>{{end}}
-        {{if .PortalEnabled}}<div class="start-banner"><div><h3>Your workspace starts here.</h3><p>API keys, usage and connection examples in one portal.</p></div><a class="button" href="/portal/sign-in">Sign in to portal <span aria-hidden="true">→</span></a></div>{{else}}<div class="start-banner"><div><h3>Using an API-only deployment?</h3><p>Your administrator can issue an API key or enable the self-service portal.</p></div><a class="button" href="https://github.com/arm2arm/open-llm-router#keycloak-and-portal-login">Portal setup <span aria-hidden="true">↗</span></a></div>{{end}}
+        {{if .PortalEnabled}}<div class="start-banner"><div><h3>Your workspace starts here.</h3><p>API keys, usage and connection examples in one portal.</p></div><a class="button" href="/portal/sign-in">Sign in to portal <span aria-hidden="true">→</span></a></div>{{else}}<div class="start-banner"><div><h3>Using an API-only deployment?</h3><p>Your administrator can issue an API key or enable the self-service portal.</p></div><a class="button" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/INSTALL.md">Portal setup <span aria-hidden="true">↗</span></a></div>{{end}}
+      </section>
+
+      <section class="docs-section" id="documentation" aria-labelledby="docs-title">
+        <div class="container">
+          <div class="section-heading section-heading-row">
+            <div><p class="eyebrow">DOCUMENTATION</p><h2 id="docs-title">From first install to everyday operation.</h2><p>Practical guides for running the router, connecting your tools and understanding each request.</p></div>
+            <a class="text-link" href="https://github.com/arm2arm/open-llm-router/tree/main/docs">All documentation <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="docs-grid">
+            <a class="doc-card" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/INSTALL.md"><span class="eyebrow">INSTALLATION</span><h3>Install and upgrade <span aria-hidden="true">↗</span></h3><p>Start locally with Docker Compose or deploy to Kubernetes with Helm.</p></a>
+            <a class="doc-card" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/ADMIN_GUIDE.md"><span class="eyebrow">ADMINISTRATION</span><h3>Manage your deployment <span aria-hidden="true">↗</span></h3><p>Configure model endpoints, accounts, group access and user limits.</p></a>
+            <a class="doc-card" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/CLIENTS.md"><span class="eyebrow">CLIENTS</span><h3>Connect your tools <span aria-hidden="true">↗</span></h3><p>Use OpenAI and Anthropic SDKs, coding agents and real model backends.</p></a>
+            <a class="doc-card" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/REQUEST_TRACING.md"><span class="eyebrow">REQUEST TRACING</span><h3>Inspect a conversation <span aria-hidden="true">↗</span></h3><p>Follow messages, reasoning, tool calls and stream events. Choose your capture and retention settings.</p></a>
+            <a class="doc-card" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/OBSERVABILITY.md"><span class="eyebrow">OBSERVABILITY</span><h3>Monitor the service <span aria-hidden="true">↗</span></h3><p>Explore Prometheus metrics, Grafana dashboards, request logs and OpenTelemetry traces.</p></a>
+            <a class="doc-card" href="https://github.com/arm2arm/open-llm-router/blob/main/docs/REFERENCE.md"><span class="eyebrow">REFERENCE</span><h3>Explore the APIs <span aria-hidden="true">↗</span></h3><p>Understand authentication, routing, accounting and the limits applied to each call.</p></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="project-section container" id="about" aria-labelledby="about-title">
+        <div class="project-copy section-heading">
+          <p class="eyebrow">ABOUT THE PROJECT</p>
+          <h2 id="about-title">Open infrastructure, built at AIP.</h2>
+          <p>Open LLM Router is developed by <a href="https://github.com/arm2arm">Arman Khalatyan</a> at the <a href="https://www.aip.de/">Leibniz Institute for Astrophysics Potsdam (AIP)</a>, with development assistance from the Hermes agent.</p>
+          <p>Released under the <a href="https://github.com/arm2arm/open-llm-router/blob/main/LICENSE">MIT license</a>, the project brings shared access, routing and usage controls to locally hosted language models.</p>
+          <a class="text-link" href="https://github.com/arm2arm/open-llm-router">Explore the source <span aria-hidden="true">↗</span></a>
+        </div>
+        <aside class="citation-card" aria-labelledby="citation-title">
+          <p class="eyebrow">FOR YOUR RESEARCH</p>
+          <h3 id="citation-title">Cite Open LLM Router</h3>
+          <blockquote>Khalatyan, Arman. <cite>open-llm-router</cite> [Computer software]. Leibniz Institute for Astrophysics Potsdam (AIP).</blockquote>
+          <p>Include the version or commit you used. GitHub’s “Cite this repository” menu provides BibTeX and APA exports.</p>
+          <a class="text-link" href="https://github.com/arm2arm/open-llm-router/blob/main/CITATION.cff">Citation metadata <span aria-hidden="true">↗</span></a>
+        </aside>
+      </section>
+
+      <section class="acknowledgments-section container" id="acknowledgments" aria-labelledby="acknowledgments-title">
+        <div class="funding-card">
+          <div class="section-heading"><p class="eyebrow">RESEARCH AND SUPPORT</p><h2 id="acknowledgments-title">Acknowledgments</h2></div>
+          <div class="funding-copy">
+            <p>Development of this project at AIP was funded by the <strong>German Federal Ministry of Research, Technology and Space (BMFTR)</strong> through the <strong>ErUM-Data</strong> programme as part of <a href="https://physics-llm.erumdatahub.de/">Physics-LLM</a>.</p>
+            <div class="funding-links"><a class="text-link" href="https://physics-llm.erumdatahub.de/">Physics-LLM project <span aria-hidden="true">↗</span></a><a class="text-link" href="https://wiki.erumdatahub.de/bin/view/DIG-UM/ErUM-Data%20Projects/">ErUM-Data-Hub <span aria-hidden="true">↗</span></a></div>
+          </div>
+        </div>
       </section>
     </main>
 
-    <footer class="site-footer container"><div><a class="footer-brand" href="/">Open LLM Router</a><p>Open-source infrastructure for locally hosted models.</p></div><div class="footer-links"><span class="development-badge">In development</span><a href="https://github.com/arm2arm/open-llm-router">Source code <span aria-hidden="true">↗</span></a><a href="https://github.com/arm2arm/open-llm-router/issues">Report an issue <span aria-hidden="true">↗</span></a></div></footer>
+    <footer class="site-footer container"><div><a class="footer-brand" href="/">Open LLM Router</a><p>Open-source infrastructure for locally hosted models.</p></div><div class="footer-links"><a href="#documentation">Documentation</a><a href="#about">About</a><a href="#acknowledgments">Acknowledgments</a><a href="https://github.com/arm2arm/open-llm-router/issues">Report an issue <span aria-hidden="true">↗</span></a><span class="development-badge">In development</span></div></footer>
   </body>
 </html>
