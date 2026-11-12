@@ -17,6 +17,8 @@ networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
 YAML
+"$helm_bin" template olr charts/open-llm-router -n olr > "$work/helm.yaml"
+kubectl kustomize deploy/k8s/test > "$work/kustomize.yaml"
 "$kind_bin" create cluster --name "$cluster" --config "$work/kind.yaml"
 # Calico's official versioned manifest supplies actual policy enforcement.
 curl -fsSL https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/calico.yaml -o "$work/calico.yaml"
@@ -26,11 +28,7 @@ kubectl wait --for=condition=Ready nodes --all --timeout=180s
 for ns in olr ingress-nginx; do kubectl create namespace "$ns"; done
 probe_image=postgres:17
 for format in helm kustomize; do
-  if [ "$format" = helm ]; then
-    "$helm_bin" template olr charts/open-llm-router -n olr > "$work/rendered.yaml"
-  else
-    kubectl kustomize deploy/k8s/test > "$work/rendered.yaml"
-  fi
+  cp "$work/$format.yaml" "$work/rendered.yaml"
   "$python_bin" - "$work/rendered.yaml" "$work/policy.yaml" <<'PY'
 import sys,yaml
 items=[x for x in yaml.safe_load_all(open(sys.argv[1])) if x and x['kind']=='NetworkPolicy']
