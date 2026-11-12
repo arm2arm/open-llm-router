@@ -167,6 +167,7 @@ let endpointAdministration: string
 let tracing: string
 let authentication: string
 let activation: string
+let routing: string
 test.beforeAll(async () => {
   test.setTimeout(60_000)
   local = await startFixture(false)
@@ -176,6 +177,7 @@ test.beforeAll(async () => {
   tracing = await startFixture(false, 'tracing')
   authentication = await startFixture(false, 'authentication')
   activation = await startFixture(false, 'activation')
+  routing = await startFixture(false, 'routing')
 })
 test.afterAll(() => {
   for (const fixture of fixtures.reverse()) {
@@ -1366,5 +1368,136 @@ test('administrator applies and rolls back authentication settings without a res
     .click()
   await expect(status).toContainText('revision 1 · local sign-in only')
   expect((await methods()).configured).toBe(false)
+  expect(errors).toEqual([])
+})
+
+test('administrator adds a model, alias and endpoint as a routing revision, activates and rolls back', async ({
+  page,
+  context,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const fixture = fixtures.find((fixture) => fixture.base === routing)!
+  const olr = (...args: string[]) =>
+    docker(['exec', fixture.container, '/usr/local/bin/olr', 'admin', ...args])
+  const owner = olr(
+    'user',
+    'add',
+    '-username',
+    'routing-client',
+    '-groups',
+    'admins',
+  )
+  const key = olr(
+    'key',
+    'create',
+    '-user',
+    owner,
+    '-label',
+    'routing-browser-test',
+  )
+  const complete = async (model: string) =>
+    context.request.post(`${routing}/v1/chat/completions`, {
+      headers: { Authorization: `Bearer ${key}` },
+      data: {
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 8,
+      },
+    })
+  await page.goto(`${routing}/portal/login/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  const panel = page.getByRole('region', {
+    name: 'Routing settings',
+    exact: true,
+  })
+  const models = panel.getByRole('table', { name: 'Routed models' })
+  await expect(models.getByRole('row', { name: /^test/ })).toContainText(
+    'staff',
+  )
+  await panel.getByRole('button', { name: 'Import current routing' }).click()
+  await expect(panel).toContainText('Database — active routing revision 1')
+  await panel
+    .getByRole('button', { name: 'Apply active routing to this router' })
+    .click()
+  await expect(panel.getByTestId('routing-runtime')).toHaveText(
+    'routing revision 1',
+  )
+
+  // A model granted by a group policy cannot be removed here.
+  const draft = panel.getByRole('form', { name: 'Edit routing draft' })
+  await expect(
+    draft.getByRole('button', { name: 'Remove model test', exact: true }),
+  ).toBeDisabled()
+  // Add a model on the second compatible backend, plus an alias.
+  await draft.getByLabel('New logical model name').fill('added-model')
+  await draft.getByRole('button', { name: 'Add model', exact: true }).click()
+  const added = draft.getByRole('article', { name: 'Model added-model' })
+  await added.getByLabel('added-model upstream model').fill('chat-model')
+  await added
+    .getByLabel('added-model replica 1 origin')
+    .fill('http://mock-llm-b:8000')
+  await draft.getByLabel('New alias', { exact: true }).fill('quick')
+  await draft.getByLabel('New alias target').selectOption('added-model')
+  await draft.getByRole('button', { name: 'Add alias', exact: true }).click()
+  // A duplicate origin in one pool is an actionable validation problem.
+  await added
+    .getByRole('button', { name: 'Add replica to added-model' })
+    .click()
+  await added
+    .getByLabel('added-model replica 2 origin')
+    .fill('http://mock-llm-b:8000')
+  await draft
+    .getByRole('button', { name: 'Save routing draft', exact: true })
+    .click()
+  const status = panel.locator('[aria-label="Routing draft status"]')
+  await expect(status).toContainText('is listed twice in this pool')
+  await expect(
+    panel.getByRole('button', { name: 'Activate routing draft' }),
+  ).toBeDisabled()
+  await draft
+    .getByRole('article', { name: 'Model added-model' })
+    .getByRole('button', { name: 'Remove added-model replica 2' })
+    .click()
+  await draft
+    .getByRole('button', { name: 'Save routing draft', exact: true })
+    .click()
+  await expect(status).toContainText('is valid')
+  await panel.getByRole('button', { name: 'Test changed endpoints' }).click()
+  await expect(
+    panel.getByRole('list', { name: 'Endpoint check results' }),
+  ).toContainText('models.added-model.pool[0]')
+  await expect(
+    panel.getByRole('list', { name: 'Endpoint check results' }),
+  ).toContainText('passed')
+  expect((await complete('quick')).status()).toBe(404)
+  await panel.getByRole('button', { name: 'Activate routing draft' }).click()
+  // Wait for this activation, not the previous runtime revision.
+  await expect(status).toHaveCount(0)
+  await expect(panel.getByTestId('routing-runtime')).not.toHaveText(
+    'routing revision 1',
+  )
+  const routed = await complete('quick')
+  expect(routed.status()).toBe(200)
+  expect((await routed.json()).model).toBe('chat-model')
+  await expect(models.getByRole('row', { name: /^added-model/ })).toContainText(
+    'quick',
+  )
+
+  // Roll back to the imported routing: the alias and model are gone.
+  await panel
+    .getByRole('button', {
+      name: 'Roll back routing to revision 1',
+      exact: true,
+    })
+    .click()
+  await expect(panel.getByTestId('routing-runtime')).toHaveText(
+    'routing revision 1',
+  )
+  expect((await complete('quick')).status()).toBe(404)
+  expect((await complete('test')).status()).toBe(200)
   expect(errors).toEqual([])
 })

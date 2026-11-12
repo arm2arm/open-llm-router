@@ -21,7 +21,8 @@ The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
 browser sign-in/password flows, #75 local user/key administration, #76
 protected-administrator recovery, the #77 managed-settings foundation, the #78
 Admin → Authentication page, #79 live activation/rollback, #80 authorization
-freshness and the #81 routing revision API are implemented in this checkout. Endpoint editing for existing logical models now implements part
+freshness, the #81 routing revision API and the #82 Admin → Routing page are
+implemented in this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
 acceptance work.
@@ -196,6 +197,13 @@ proxy snapshot after health checks while unchanged replicas keep in-flight lease
 and accounting; rollback/apply work while endpoints are down. Per-model endpoint
 editing closes once routing is managed. `olr config check` validates files
 without database or network access.
+
+Completed for #82: **Admin → Routing** shows group → model → endpoint mapping with
+health and in-flight counts, imports routing, edits models, replicas and aliases
+as drafts with dependency-aware removal, lists validation problems, tests changed
+endpoints, activates, discards, rolls back and applies. A browser journey adds a
+model and alias on a second compatible backend, verifies a routed completion and
+rolls back.
 
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required

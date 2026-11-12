@@ -410,7 +410,8 @@ checks; drafts accept up to 256 KiB.
   `active`/`draft` revisions with `document` `{models, aliases}`, `validation` and
   `checks`, informational file `conflicts` and `history`), `runtime.revision` (the
   revision this process runs; `0` for file and per-model endpoint revisions),
-  `credential_references` and `allowed_private_networks`.
+  `credential_references`, `allowed_private_networks` and `group_grants`
+  (group → granted models, `*` for all; file-owned).
 - `POST …/import` with `{}`; afterwards `PUT /portal/api/admin/endpoints` returns 409.
 - `PUT …/draft` with `{"version":N,"document":{"models":{…},"aliases":{…}}}`. Model
   objects use the YAML field names (`protocols`, `upstream_model`, `timeout_s`, `pool`
