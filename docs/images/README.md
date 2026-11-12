@@ -3,7 +3,7 @@
 These are captures of the real embedded portal, using the implementation from
 PRs [#92](https://github.com/arm2arm/open-llm-router/pull/92),
 [#96](https://github.com/arm2arm/open-llm-router/pull/96) and the observability
-series #99–#102 (November 2026).
+series #99, #100, #101 and #103 (November 2026).
 Accounts, email addresses, usage totals and message content are synthetic
 demonstration data. Request traces come from real calls through the disposable
 router to the development stack's mock backends. Timings are illustrative, not
