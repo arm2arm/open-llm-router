@@ -186,7 +186,7 @@ public development value.
 
 | Service | Host endpoint | Purpose |
 |---|---|---|
-| `router` | `http://localhost:8080` | public home page with portal sign-in, APIs, `/portal/`, protected `/metrics`, health probes |
+| `router` | `http://localhost:8080` | public home page with documentation, project credits and portal sign-in; APIs, `/portal/`, protected `/metrics`, health probes |
 | `postgres` | `localhost:5432` | database `olr`, user `olr`, public dev password `olr-dev-only` |
 | `mock-llm-a` | `http://localhost:8001` | `chat-model`, 20 ms per token |
 | `mock-llm-b` | `http://localhost:8002` | `chat-model`, 40 ms per token |
