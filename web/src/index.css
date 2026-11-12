@@ -237,6 +237,7 @@ h1 {
   font-size: 15px;
 }
 .table-wrap {
+  position: relative;
   overflow-x: auto;
 }
 table {

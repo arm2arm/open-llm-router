@@ -72,7 +72,19 @@ func (a Admin) DisableUser(ctx context.Context, userID string) error {
 // SetEnabled disables or re-enables a user. Disabled users have no API or
 // portal access; their sessions end at once.
 func (a Admin) SetEnabled(ctx context.Context, userID string, enabled bool) error {
-	return a.change(ctx, `UPDATE users SET enabled = $2 WHERE id = $1`, userID, enabled)
+	return a.changeWith(ctx, func(tx pgx.Tx) error {
+		result, err := tx.Exec(ctx, `UPDATE users SET enabled=$2 WHERE id=$1`, userID, enabled)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		if !enabled {
+			_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, userID)
+		}
+		return err
+	})
 }
 
 // KeyInfo contains displayable metadata only. Hashes are deliberately excluded.
@@ -84,6 +96,7 @@ type KeyInfo struct {
 	LastUsed *time.Time `json:"last_used"`
 	Expires  *time.Time `json:"expires"`
 	Revoked  bool       `json:"revoked"`
+	Expired  bool       `json:"expired"`
 	Class    string     `json:"class"`
 	// TrustedForwarder keys may name the end user of a call.
 	TrustedForwarder bool `json:"trusted_forwarder"`
@@ -120,21 +133,31 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		return "", err
 	}
 	hash := sha256.Sum256([]byte(key))
-	result, err := a.Pool.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
+	err = pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
+		var id string
+		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND enabled FOR SHARE`, userID).Scan(&id); err != nil {
+			return err
+		}
+		result, err := tx.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
 		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
 		FROM users WHERE id = $1 AND enabled AND NOT EXISTS
 		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return errors.New("user not found, disabled, or password change required")
+		}
+		return nil
+	})
 	if err != nil {
-		return "", errors.New("create API key failed")
-	}
-	if result.RowsAffected() == 0 {
-		return "", errors.New("user not found, disabled, or password change required")
+		return "", errors.New("user not found, disabled, password change required, or create API key failed")
 	}
 	return key, nil
 }
 
 func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class, trusted_forwarder
+	rows, err := a.Pool.Query(ctx, `SELECT id, prefix, label, created, last_used, expires, revoked, class, trusted_forwarder,COALESCE(expires<=clock_timestamp(),false)
 		FROM api_keys WHERE user_id = $1 ORDER BY created, id`, userID)
 	if err != nil {
 		return nil, errors.New("list API keys failed")
@@ -143,7 +166,7 @@ func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 	keys := []KeyInfo{}
 	for rows.Next() {
 		var k KeyInfo
-		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class, &k.TrustedForwarder); err != nil {
+		if err := rows.Scan(&k.ID, &k.Prefix, &k.Label, &k.Created, &k.LastUsed, &k.Expires, &k.Revoked, &k.Class, &k.TrustedForwarder, &k.Expired); err != nil {
 			return nil, errors.New("read API key metadata failed")
 		}
 		keys = append(keys, k)

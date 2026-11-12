@@ -4,6 +4,11 @@ import { Activity, RefreshCw, Server, ShieldCheck, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
+  AdminUserKeys,
+  CreateLocalUser,
+  LocalUserControls,
+} from '@/local-users'
+import {
   api,
   type AdminUser,
   type AdminUserDetail,
@@ -277,7 +282,15 @@ const limitLabels: Record<string, string> = {
   strict_quota: 'Strict quota (1 on, 0 off)',
 }
 
-function UserDetail({ id, self }: { id: string; self: string }) {
+function UserDetail({
+  id,
+  self,
+  groups,
+}: {
+  id: string
+  self: string
+  groups: GroupTotals[] | undefined
+}) {
   const cache = useQueryClient()
   const query = useQuery({
     queryKey: ['admin-user', id],
@@ -289,6 +302,7 @@ function UserDetail({ id, self }: { id: string; self: string }) {
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: ['admin-user', id] })
     await cache.invalidateQueries({ queryKey: ['admin-users'] })
+    await cache.invalidateQueries({ queryKey: ['admin-groups'] })
   }
   const save = useMutation({
     mutationFn: () =>
@@ -319,14 +333,15 @@ function UserDetail({ id, self }: { id: string; self: string }) {
   }
   if (!data) return <Failure error={query.error} />
   return (
-    <div className="p-6 grid gap-4 border-t">
+    <div className="p-6 grid grid-cols-1 gap-4 border-t whitespace-normal">
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <div className="font-semibold">{data.user.username}</div>
           <div className="text-xs text-muted-foreground">
             {data.user.email || 'no email'} ·{' '}
             {data.user.groups.join(', ') || 'no groups'} ·{' '}
-            {data.keys.filter((k) => !k.revoked).length} keys
+            {data.keys.filter((k) => !k.revoked && !k.expired).length} active
+            keys
           </div>
         </div>
         {data.user.protected_admin && (
@@ -346,6 +361,31 @@ function UserDetail({ id, self }: { id: string; self: string }) {
         )}
       </div>
       <Failure error={enable.error ?? clear.error} />
+      <p className="subtitle">
+        Identity source: {data.user.issuer === 'local' ? 'Local' : 'Keycloak'} ·{' '}
+        {data.user.has_local_password
+          ? data.user.must_change_password
+            ? 'Password change required'
+            : 'Password login enabled'
+          : data.user.issuer === 'local'
+            ? 'API-key-only account'
+            : 'Provider-managed password'}
+      </p>
+      <LocalUserControls
+        id={id}
+        data={data}
+        groups={groups}
+        onSaved={refresh}
+      />
+      <div
+        className="rounded-md bg-muted p-3 text-sm"
+        aria-label="Effective access"
+      >
+        <strong>Configured model access:</strong>{' '}
+        {data.models.join(', ') || 'No models'}
+        <br />
+        <strong>Admin access:</strong> {data.admin ? 'Yes' : 'No'}
+      </div>
       <div className="table-wrap">
         <table>
           <caption className="sr-only">Effective limits</caption>
@@ -439,11 +479,13 @@ function UserDetail({ id, self }: { id: string; self: string }) {
         </Button>
       </form>
       <Failure error={save.error} />
+      <AdminUserKeys id={id} keys={data.keys} onSaved={refresh} />
     </div>
   )
 }
 
 export function AdminPage({ self }: { self: string }) {
+  const cache = useQueryClient()
   const [match, setMatch] = useState('')
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState<string | null>(null)
@@ -476,6 +518,17 @@ export function AdminPage({ self }: { self: string }) {
             Users, per-user limits, group totals and replica health.
           </p>
         </div>
+        <CreateLocalUser
+          groups={groups.data?.groups ?? []}
+          ready={!!groups.data}
+          onCreated={async (id) => {
+            setMatch('')
+            setSearch('')
+            setOpen(id)
+            await cache.invalidateQueries({ queryKey: ['admin-users'] })
+            await cache.invalidateQueries({ queryKey: ['admin-groups'] })
+          }}
+        />
       </div>
       <section className="panel" aria-label="Replica health">
         <div className="panel-head">
@@ -612,6 +665,15 @@ export function AdminPage({ self }: { self: string }) {
                         {u.email}
                         {!u.enabled && ' · disabled'}
                       </div>
+                      <div className="text-xs text-muted-foreground">
+                        {u.protected_admin
+                          ? 'Protected local administrator'
+                          : u.issuer === 'local'
+                            ? 'Local'
+                            : 'Keycloak'}
+                        {u.must_change_password &&
+                          ' · password change required'}
+                      </div>
                     </td>
                     <td>{u.groups.join(', ')}</td>
                     <td>{u.active_keys}</td>
@@ -632,7 +694,11 @@ export function AdminPage({ self }: { self: string }) {
                   {open === u.id && (
                     <tr>
                       <td colSpan={7} className="p-0">
-                        <UserDetail id={u.id} self={self} />
+                        <UserDetail
+                          id={u.id}
+                          self={self}
+                          groups={groups.data?.groups}
+                        />
                       </td>
                     </tr>
                   )}

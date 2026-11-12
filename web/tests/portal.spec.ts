@@ -248,6 +248,32 @@ test('development realm admin is identified as a Keycloak account', async ({
   await expect(
     page.getByText('Protected local administrator', { exact: true }),
   ).toHaveCount(0)
+  await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  await page.getByLabel('Find users').fill('admin')
+  await page.getByRole('button', { name: 'Find', exact: true }).click()
+  const self = (await (await context.request.get('/portal/api/me')).json()).user
+    .id
+  const users = (
+    await (
+      await context.request.get('/portal/api/admin/users?match=admin')
+    ).json()
+  ).users as { id: string }[]
+  const rows = page.getByTestId('users-table').locator('tbody > tr')
+  await expect(rows).toHaveCount(users.length)
+  await rows
+    .nth(users.findIndex((user) => user.id === self))
+    .getByRole('button', { name: 'Manage', exact: true })
+    .click()
+  await expect(
+    page.getByText(/Keycloak controls this user's password and memberships/),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('form', { name: 'Local group memberships' }),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Reset local password', exact: true }),
+  ).toHaveCount(0)
+  await expect(page.getByLabel('Effective access')).toContainText('chat-model')
   await page.goto('/portal/login/local')
   await expect(
     page.getByRole('heading', {

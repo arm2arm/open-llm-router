@@ -98,6 +98,9 @@ see [setup and password rotation](docs/ADMIN_GUIDE.md#bootstrap-the-protected-lo
 The portal offers Keycloak and local sign-in, with a direct local route at
 `/portal/login/local` that works without Keycloak. First login requires replacing
 the initial password; later changes are available under **Account**.
+**Admin** can create additional local users, assign existing groups, reset their
+passwords, disable accounts and revoke user keys. See
+[local user administration](docs/ADMIN_GUIDE.md#manage-local-users-in-admin) for access and revocation behavior.
 
 ## Development
 

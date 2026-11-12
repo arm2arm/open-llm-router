@@ -104,6 +104,10 @@ func (h *Handler) establish(r *http.Request, id string) (string, error) {
 	session := randomToken()
 	hash := sha256.Sum256([]byte(session))
 	err := pgx.BeginFunc(r.Context(), h.pool, func(tx pgx.Tx) error {
+		var locked string
+		if err := tx.QueryRow(r.Context(), `SELECT id FROM users WHERE id=$1 AND enabled FOR SHARE`, id).Scan(&locked); err != nil {
+			return err
+		}
 		if old, ok := cookieHash(r, sessionCookie); ok {
 			if _, err := tx.Exec(r.Context(), `DELETE FROM sessions WHERE id_hash=$1`, old[:]); err != nil {
 				return err
@@ -131,6 +135,10 @@ func (h *Handler) establishLocal(r *http.Request, account auth.LocalAccount) (st
 		lifetime, scope = 10*time.Minute, "password_change"
 	}
 	err := pgx.BeginFunc(r.Context(), h.pool, func(tx pgx.Tx) error {
+		var locked string
+		if err := tx.QueryRow(r.Context(), `SELECT id FROM users WHERE id=$1 AND enabled FOR SHARE`, account.ID).Scan(&locked); err != nil {
+			return err
+		}
 		if old, ok := cookieHash(r, loginCookie); ok {
 			if _, err := tx.Exec(r.Context(), `DELETE FROM portal_login_attempts WHERE id_hash=$1`, old[:]); err != nil {
 				return err
