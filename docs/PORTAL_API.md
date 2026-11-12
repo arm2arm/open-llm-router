@@ -96,8 +96,9 @@ is an empty JSON array and grants no models unless a matching configured group e
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
 - `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7,"class":"batch"}` (label: 1–100 bytes after trimming).
   `class` is `interactive` (default) or `batch`; the list returns it for every key.
-  `expires_in_days` is optional, an integer from 1 to 36500. Omission uses
+  `expires_in_days` is optional, an integer from 1 to `auth.max_key_lifetime_days` (default 90). Omission uses
   `auth.default_key_lifetime_days`. Returns 201 `{"key":"olr-..."}` exactly once.
+  The site active-key cap returns 409; an over-limit lifetime returns 400.
   Refresh the key list for metadata after creating a key. Unknown fields are rejected.
 - `DELETE /portal/api/keys/{uuid}` with `{}`: revokes an owned active key, returning 204 with
   no body. On a key that is already revoked or expired it removes the key for good (also 204);

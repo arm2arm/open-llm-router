@@ -520,3 +520,16 @@ func TestBodyLimits(t *testing.T) {
 		t.Fatalf("upload overrides: %+v", cfg.Limits)
 	}
 }
+
+func TestKeyPolicyValidation(t *testing.T) {
+	for _, input := range []string{
+		"auth: {max_key_lifetime_days: 0}",
+		"auth: {max_key_lifetime_days: 30, default_key_lifetime_days: 31}",
+		"auth: {max_active_keys_per_user: 0}",
+		"auth: {max_active_keys_per_user: 1001}",
+	} {
+		if _, err := Parse([]byte(input+"\n"+valid), lookupIn(validEnv)); err == nil {
+			t.Errorf("accepted %s", input)
+		}
+	}
+}

@@ -3,6 +3,8 @@
 # OLLAMA_BASE_URL and OLLAMA_MODEL are passed to the router by Compose.
 auth:
   default_key_lifetime_days: 90
+  max_key_lifetime_days: 90
+  max_active_keys_per_user: 10
 
 limits:
   timezone: UTC

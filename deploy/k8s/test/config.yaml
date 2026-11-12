@@ -11,6 +11,8 @@
 # Every /v1/* route requires an API key. Admin-created keys expire by default.
 auth:
   default_key_lifetime_days: 90
+  max_key_lifetime_days: 90
+  max_active_keys_per_user: 10
 
 # IANA timezone for both daily accounting and day/month quota resets.
 limits:

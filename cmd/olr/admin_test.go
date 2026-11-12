@@ -47,6 +47,7 @@ func TestAdminValidation(t *testing.T) {
 		{"key", "create", "-user", "bad-id"},
 		{"key", "create", "-user", "00000000-0000-0000-0000-000000000001", "-lifetime", "0"},
 		{"key", "create", "-user", "00000000-0000-0000-0000-000000000001", "-lifetime", "-1h"},
+		{"key", "create", "-user", "00000000-0000-0000-0000-000000000001", "-lifetime", "2161h"},
 		{"key", "list"},
 		{"key", "revoke"},
 		{"key", "revoke", "-id", "plaintext-is-not-an-id"},

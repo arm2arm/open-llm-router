@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -46,6 +47,7 @@ func (s postgresStore) touch(ctx context.Context, keyID string) error {
 type Admin struct {
 	Pool      *pgxpool.Pool
 	KeyCipher *KeyCipher
+	KeyPolicy config.Auth
 }
 
 func (a Admin) AddUser(ctx context.Context, username, email string, groups []string) (string, error) {
@@ -106,6 +108,9 @@ type KeyInfo struct {
 	TrustedForwarder bool `json:"trusted_forwarder"`
 }
 
+var ErrKeyLifetime = errors.New("key lifetime exceeds site maximum")
+var ErrKeyLimit = errors.New("active API key limit reached; revoke an existing key first")
+
 // CreateKey returns a plaintext key. Admin copy can recover encrypted keys. A positive
 // lifetime is mandatory; indefinite bootstrap keys cannot be created.
 func (a Admin) CreateKey(ctx context.Context, userID, label string, lifetime time.Duration) (string, error) {
@@ -126,7 +131,21 @@ func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string
 }
 
 func (a Admin) createKey(ctx context.Context, userID, label, class string, lifetime time.Duration, trusted bool) (string, error) {
-	if lifetime <= 0 {
+	maximum := a.KeyPolicy.MaxKeyLifetimeDays
+	if maximum == 0 {
+		maximum = config.DefaultMaxKeyLifetimeDays
+	}
+	cap := a.KeyPolicy.MaxActiveKeysPerUser
+	if cap == 0 {
+		cap = config.DefaultMaxActiveKeysPerUser
+	}
+	if maximum < 1 || maximum > 36500 || cap < 1 || cap > 1000 {
+		return "", errors.New("invalid key issuance policy")
+	}
+	if lifetime > time.Duration(maximum)*24*time.Hour {
+		return "", ErrKeyLifetime
+	}
+	if lifetime < time.Microsecond {
 		return "", errors.New("key lifetime must be positive")
 	}
 	if class != "interactive" && class != "batch" {
@@ -139,8 +158,15 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 	hash := sha256.Sum256([]byte(key))
 	err = pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
 		var id string
-		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND enabled FOR SHARE`, userID).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND enabled FOR UPDATE`, userID).Scan(&id); err != nil {
 			return err
+		}
+		var active int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM api_keys WHERE user_id=$1 AND NOT revoked AND (expires IS NULL OR expires>clock_timestamp())`, userID).Scan(&active); err != nil {
+			return err
+		}
+		if active >= cap {
+			return ErrKeyLimit
 		}
 		var sealed []byte
 		var encryptionID *string
@@ -163,6 +189,9 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		}
 		return nil
 	})
+	if errors.Is(err, ErrKeyLimit) {
+		return "", ErrKeyLimit
+	}
 	if err != nil {
 		return "", errors.New("user not found, disabled, password change required, or create API key failed")
 	}

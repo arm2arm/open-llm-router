@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,7 +27,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request, u user) {
 }
 
 func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
-	keys, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher}).ListKeys(r.Context(), u.ID)
+	keys, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher, KeyPolicy: h.cfg.Auth}).ListKeys(r.Context(), u.ID)
 	if err != nil {
 		unavailable(w)
 		return
@@ -47,11 +48,15 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 		fail(w, 400, "invalid_request_error", "label must contain 1 to 100 bytes")
 		return
 	}
+	maximum := h.cfg.Auth.MaxKeyLifetimeDays
+	if maximum == 0 {
+		maximum = config.DefaultMaxKeyLifetimeDays
+	}
 	days := h.cfg.Auth.DefaultKeyLifetimeDays
 	if body.ExpiresInDays != nil {
 		days = *body.ExpiresInDays
-		if days < 1 || days > 36500 {
-			fail(w, 400, "invalid_request_error", "expires_in_days must be between 1 and 36500")
+		if days < 1 || days > maximum {
+			fail(w, 400, "invalid_request_error", "expires_in_days exceeds site policy or is less than one")
 			return
 		}
 	}
@@ -62,7 +67,15 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 		fail(w, 400, "invalid_request_error", "class must be interactive or batch")
 		return
 	}
-	key, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher}).CreateKeyOfClass(r.Context(), u.ID, body.Label, body.Class, time.Duration(days)*24*time.Hour)
+	key, err := (auth.Admin{Pool: h.pool, KeyCipher: h.keyCipher, KeyPolicy: h.cfg.Auth}).CreateKeyOfClass(r.Context(), u.ID, body.Label, body.Class, time.Duration(days)*24*time.Hour)
+	if errors.Is(err, auth.ErrKeyLimit) {
+		fail(w, http.StatusConflict, "key_limit_error", err.Error())
+		return
+	}
+	if errors.Is(err, auth.ErrKeyLifetime) {
+		fail(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
 	if err != nil {
 		unavailable(w)
 		return

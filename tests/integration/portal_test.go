@@ -304,7 +304,7 @@ func TestPortalUserIsolationRevocationAndLogout(t *testing.T) {
 	if alice == bob || alice == f.owner || bob == f.owner {
 		t.Fatal("users linked by email instead of issuer and subject")
 	}
-	for _, expiry := range []string{"0", "-1", "36501", "1.5", `"7"`} {
+	for _, expiry := range []string{"0", "-1", "91", "36501", "1.5", `"7"`} {
 		resp, _ := a.call(t, "POST", "/portal/api/keys", `{"label":"invalid expiry","expires_in_days":`+expiry+`}`, f.cfg.Portal.BaseURL)
 		if resp.StatusCode != 400 {
 			t.Fatal("invalid expiry accepted")

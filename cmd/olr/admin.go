@@ -173,6 +173,7 @@ func admin(args []string, out, errout io.Writer) error {
 			return errors.New("-id must be a record UUID")
 		}
 	}
+	keyPolicy := config.Auth{MaxKeyLifetimeDays: config.DefaultMaxKeyLifetimeDays, MaxActiveKeysPerUser: config.DefaultMaxActiveKeysPerUser}
 	if command == "key create" {
 		if class != "interactive" && class != "batch" {
 			return errors.New("-class must be interactive or batch")
@@ -184,11 +185,15 @@ func admin(args []string, out, errout io.Writer) error {
 				return err
 			}
 			days = cfg.Auth.DefaultKeyLifetimeDays
+			keyPolicy = cfg.Auth
 		}
 		explicit := false
 		fs.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "lifetime" })
 		if !explicit {
 			lifetime = time.Duration(days) * 24 * time.Hour
+		}
+		if lifetime > time.Duration(keyPolicy.MaxKeyLifetimeDays)*24*time.Hour {
+			return auth.ErrKeyLifetime
 		}
 		if lifetime < time.Microsecond {
 			return errors.New("-lifetime must be at least 1us")
@@ -227,7 +232,7 @@ func admin(args []string, out, errout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	manager := auth.Admin{Pool: pool, KeyCipher: keyCipher}
+	manager := auth.Admin{Pool: pool, KeyCipher: keyCipher, KeyPolicy: keyPolicy}
 	switch command {
 	case "password change":
 		current, err := readPasswordFile(currentPasswordFile)
