@@ -53,6 +53,7 @@ import {
 } from '@/lib/api'
 import { clients, snippet, type Client } from '@/lib/snippets'
 import { AdminPage, DailyChart, RequestsPage } from '@/pages'
+import { AdminKeyCopyButton, useAdminKeyCopy } from '@/key-copy'
 import {
   AccountPage,
   AuthFrame,
@@ -348,7 +349,7 @@ function Workspace({
           ) : (
             me.data && (
               <Routes>
-                <Route path="/keys" element={<Keys />} />
+                <Route path="/keys" element={<Keys me={me.data} />} />
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/connect" element={<Connect />} />
                 <Route path="/requests" element={<RequestsPage />} />
@@ -376,7 +377,8 @@ function Workspace({
   )
 }
 
-function Keys() {
+function Keys({ me }: { me: Me }) {
+  const keyCopy = useAdminKeyCopy(me.user.id)
   const query = useQuery({
     queryKey: ['keys'],
     queryFn: () => api<{ keys: Key[] }>('keys'),
@@ -453,6 +455,12 @@ function Keys() {
           void query.refetch()
         }}
       />
+      <ErrorMessage error={keyCopy.error} />
+      {keyCopy.copied && (
+        <p role="status" className="subtitle mb-3">
+          API key copied to clipboard.
+        </p>
+      )}
       <section className="panel" aria-label="Your API keys">
         <div className="panel-head">
           <div>
@@ -528,6 +536,9 @@ function Keys() {
                           )}
                           {status}
                         </span>
+                        {me.admin && status === 'Active' && (
+                          <AdminKeyCopyButton keyInfo={key} copy={keyCopy} />
+                        )}
                       </td>
                       <td>
                         <Button

@@ -74,6 +74,7 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   expect(await page.locator('main img').count()).toBe(0)
   await page.reload()
   await expect(page.getByText(label, { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Copy key/ })).toHaveCount(0)
   expect((await page.locator('body').innerText()).includes(key)).toBe(false)
   expect(
     await page.evaluate(

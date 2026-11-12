@@ -515,6 +515,8 @@ model; for example use `agent.reasoning_effort: low` if that level is supported.
 ### Copy user API keys as Admin
 
 In **Admin → Manage user → API keys**, **Copy key** appears beside **Active**.
+Administrators also see the same control beside **Active** for their own keys on
+**API keys** (`/portal/keys`). Regular users do not see this table control.
 Only a full admin session can request the plaintext, and only for an active key
 belonging to an enabled user who has completed any required password change.
 Copy requires HTTPS or localhost and browser clipboard permission. The key is
