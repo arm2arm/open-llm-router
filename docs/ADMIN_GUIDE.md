@@ -27,8 +27,8 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Grant a group access to models; set group default limits | Private YAML | Router restart/recreation |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
 | View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
-| Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next API-key request; cached OIDC access-token principals can take up to one minute |
-| Disable/re-enable a router user | Portal **Admin** or portal API; CLI can disable | Portal/API-key access observes the change; OIDC token cache can take up to one minute |
+| Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next request, for API keys, sessions and OIDC access tokens alike |
+| Disable/re-enable a router user | Portal **Admin** or portal API; CLI can disable | Next request on every authentication path |
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
 | Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
@@ -532,9 +532,11 @@ In the site's Keycloak administration console:
    `https://llm.example.org/portal/callback` and post-logout redirect
    `https://llm.example.org/`. Record its client secret.
 4. Add a group-membership mapper with claim name `groups`, included in ID tokens
-   and, where used, access tokens. Set **Full group path off** for this setup.
-   The router matches group strings exactly; its Keycloak sync currently reads
-   group names rather than full paths. Avoid nested groups with duplicate leaf names.
+   and, where used, access tokens. With the default `oidc.group_names: leaf`,
+   set **Full group path off** (full paths are also accepted and reduced to leaf
+   names). For realms whose nested groups share leaf names, use
+   `group_names: path` with **Full group path on** and name policies by path,
+   for example `/org/staff`. See [group names](#group-names-and-authorization-freshness).
 5. For service access tokens, create audience client `olr-api`. Give each actual
    service client an audience mapper adding `olr-api` to access tokens and the
    required group memberships/claim. The audience client itself is not a login.
@@ -941,8 +943,43 @@ reserve input size and token-count requests do not reserve generation output.
 
 Overrides record the actor, reason and time. They store the latest setting per
 field, not a full append-only change history. Existing API-key requests already
-running are not terminated when limits change. Verified OIDC access tokens cache
-their principal, including overrides, for up to one minute.
+running are not terminated when limits change. Cached OIDC access-token
+principals observe the change on their next request.
+
+### Group names and authorization freshness
+
+Portal login, API access tokens and group sync turn group claims into router
+group names with one rule, set by `oidc.group_names` (or the Admin page):
+
+| `group_names` | Claim or Keycloak group | Router group | Use with |
+|---|---|---|---|
+| `leaf` (default) | `staff`, `/staff`, `/org/staff` | `staff` | Mapper **Full group path off** |
+| `path` | `staff`, `/staff` / `/org/staff` | `/staff` / `/org/staff` | Mapper **Full group path on**; policies named by path |
+
+Group sync reads each membership's Keycloak path. In `leaf` format a leaf name
+reached through two different paths (`/a/staff` and `/b/staff`) is ambiguous
+and **refused**, so no policy is granted through the wrong group; switch such
+realms to `path`. Upgrading from releases that used full-path claims as-is: set
+`group_names: path` to keep those group names.
+
+What the next request observes after an admin change:
+
+| Change | API key | Portal session | OIDC access token |
+|---|---|---|---|
+| Disable user | Refused | Ended | Refused |
+| Limit override set/cleared | Applied | Applied | Applied |
+| Membership change (Admin, login, sync) | Applied | Applied | Removals applied; additions need a new token |
+| Authentication settings activated | — | Other issuers' sessions end | Verifier replaced; other issuers refused |
+| Group policy (YAML) | Applied after the configuration change | Applied | Applied |
+
+An access token carries the groups it was issued with. When the stored
+memberships were updated after the token was issued (by a portal login, group
+sync, an Admin edit or a newer token), the token can only **narrow** them: a
+removed group is never restored by an older token, and a newly added group
+needs a new token (at most the token lifetime). A token issued after the
+latest update is the newest information and updates the stored memberships.
+Cached principals are tied to the same invalidation as API keys; while the
+invalidation listener is reconnecting, nothing is served from caches.
 
 ### Use the operator CLI
 
@@ -1021,8 +1058,8 @@ issued OIDC access tokens retain their embedded group claims until replaced.
 can enable login for an API-key-only local user and has the same revocation effects.
 Admin creation/reset share local-password rate limits and the two-worker hashing cap;
 429 responses include `Retry-After`. Changes invalidate API-key caches across routers.
-Already running inference requests continue; cached OIDC access-token principals can
-take up to one minute to observe disablement or limit changes.
+Already running inference requests continue; every authentication path, including
+cached OIDC access tokens, observes disablement or limit changes on the next request.
 
 Keycloak account details show the authoritative issuer. Their memberships and
 passwords are managed by the IdP; the local editing/reset APIs reject these accounts.

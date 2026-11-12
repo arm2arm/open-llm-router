@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/idpcheck"
 	"github.com/arm2arm/open-llm-router/internal/settings"
@@ -362,6 +363,7 @@ func (h *Handler) verifyTestSignIn(r *http.Request, revision int64, nonce, verif
 	if !hasRequiredClaim(claims, cfg.OIDC.RequiredClaim) {
 		return failed(fmt.Sprintf("this user lacks the required %s claim value; the router would refuse the sign-in", cfg.OIDC.RequiredClaim.Name))
 	}
+	groups = auth.GroupNames(groups, cfg.OIDC.GroupNames)
 	known := 0
 	for _, group := range groups {
 		if _, ok := h.cfg.Groups[group]; ok {

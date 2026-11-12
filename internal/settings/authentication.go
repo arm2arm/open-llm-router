@@ -25,6 +25,7 @@ type Authentication struct {
 	PortalClientSecret SecretRef      `json:"portal_client_secret"`
 	Audience           string         `json:"audience"`
 	GroupsClaim        string         `json:"groups_claim"`
+	GroupNames         string         `json:"group_names"` // leaf (default) or path
 	UsernameClaim      string         `json:"username_claim"`
 	RequiredClaim      *RequiredClaim `json:"required_claim"`
 	SyncClientID       string         `json:"sync_client_id"`
@@ -104,6 +105,9 @@ func decodeAuthentication(data []byte) (Authentication, error) {
 	if doc.DefaultSignIn == "" {
 		doc.DefaultSignIn = "keycloak"
 	}
+	if doc.GroupNames == "" {
+		doc.GroupNames = "leaf"
+	}
 	return doc, nil
 }
 
@@ -132,6 +136,9 @@ func (a Authentication) problems() []string {
 	}
 	if a.DefaultSignIn != "keycloak" && a.DefaultSignIn != "local" {
 		add("default_sign_in: must be keycloak or local")
+	}
+	if a.GroupNames != "leaf" && a.GroupNames != "path" {
+		add("group_names: must be leaf or path")
 	}
 	if a.SyncIntervalS < 60 || a.SyncIntervalS > 86400 {
 		add("sync_interval_s: must be between 60 and 86400")
@@ -182,11 +189,14 @@ func validUUID(value string) bool {
 // and environment configuration. Client secrets set in the environment become
 // references to those variables, so importing changes no behavior.
 func authenticationFromFile(file *config.Config) Authentication {
-	doc := Authentication{DefaultSignIn: "keycloak", GroupsClaim: "groups", UsernameClaim: "preferred_username", SyncClientID: "olr-sync", SyncIntervalS: 900}
+	doc := Authentication{DefaultSignIn: "keycloak", GroupNames: "leaf", GroupsClaim: "groups", UsernameClaim: "preferred_username", SyncClientID: "olr-sync", SyncIntervalS: 900}
 	if o := file.OIDC; o != nil {
 		doc.Enabled = true
 		if o.DefaultSignIn != "" {
 			doc.DefaultSignIn = o.DefaultSignIn
+		}
+		if o.GroupNames != "" {
+			doc.GroupNames = o.GroupNames
 		}
 		doc.Issuer, doc.BackchannelURL, doc.PortalClientID, doc.Audience = o.Issuer, o.BackchannelURL, o.PortalClientID, o.Audience
 		doc.GroupsClaim, doc.UsernameClaim, doc.SyncClientID, doc.SyncIntervalS = o.GroupsClaim, o.UsernameClaim, o.SyncClientID, o.SyncIntervalS
@@ -211,7 +221,7 @@ func (a Authentication) values() map[string]string {
 	}
 	return map[string]string{
 		"enabled": fmt.Sprint(a.Enabled), "default_sign_in": a.DefaultSignIn, "issuer": a.Issuer, "backchannel_url": a.BackchannelURL,
-		"portal_client_id": a.PortalClientID, "audience": a.Audience, "groups_claim": a.GroupsClaim,
+		"portal_client_id": a.PortalClientID, "audience": a.Audience, "groups_claim": a.GroupsClaim, "group_names": a.GroupNames,
 		"username_claim": a.UsernameClaim, "required_claim": claim, "sync_client_id": a.SyncClientID,
 		"sync_interval_s": fmt.Sprint(a.SyncIntervalS),
 	}
@@ -225,7 +235,7 @@ func (a Authentication) apply(base *config.Config, secrets resolved) (*config.Co
 	var oidc *config.OIDC
 	if a.Enabled {
 		oidc = &config.OIDC{Issuer: a.Issuer, BackchannelURL: a.BackchannelURL, PortalClientID: a.PortalClientID, DefaultSignIn: a.DefaultSignIn,
-			Audience: a.Audience, GroupsClaim: a.GroupsClaim, UsernameClaim: a.UsernameClaim,
+			Audience: a.Audience, GroupsClaim: a.GroupsClaim, GroupNames: a.GroupNames, UsernameClaim: a.UsernameClaim,
 			SyncClientID: a.SyncClientID, SyncIntervalS: a.SyncIntervalS}
 		if a.RequiredClaim != nil {
 			oidc.RequiredClaim = &config.RequiredClaim{Name: a.RequiredClaim.Name, Value: a.RequiredClaim.Value}

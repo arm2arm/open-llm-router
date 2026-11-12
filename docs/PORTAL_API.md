@@ -254,12 +254,11 @@ authorization remains enforced on the server regardless of browser navigation.
 - `PUT /portal/api/admin/users/{id}/overrides/{field}` with `{"value":N,"reason":"…"}` (`null` for
   unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`;
   `DELETE …/overrides/{field}` with `{}` clears it. Both return 204 and take effect at the user's
-  next API-key request on every router. Cached OIDC access-token principals can
-  take up to one minute to refresh.
+  next request on every router, including cached OIDC access-token principals.
 - `PUT /portal/api/admin/users/{id}/enabled` with `{"enabled":false}` disables a user (sessions
   are deleted and API-key access stops working at once) or re-enables them; re-enabling
   requires a fresh browser login and restores only unrevoked, unexpired keys. Cached OIDC access-token
-  principals can remain valid for up to one minute. Admins cannot disable themselves.
+  principals are refused on their next request. Admins cannot disable themselves.
   Disabling the protected local administrator returns 403, including for another admin.
 - `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
   and tokens this month. A user in several groups counts in each.

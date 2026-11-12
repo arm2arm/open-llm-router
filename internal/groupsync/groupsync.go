@@ -163,16 +163,20 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 		}
 		var memberships []struct {
 			Name string `json:"name"`
+			Path string `json:"path"`
 		}
 		if err := s.get(ctx, "/users/"+url.PathEscape(u.sub)+"/groups?briefRepresentation=true&max=1000", &memberships); err != nil {
 			return result, err
 		}
-		groups := make([]string, 0, len(memberships))
+		// Full paths let the shared naming rule find ambiguous leaf names.
+		paths := make([]string, 0, len(memberships))
 		for _, m := range memberships {
-			groups = append(groups, m.Name)
+			if m.Path == "" {
+				m.Path = "/" + m.Name
+			}
+			paths = append(paths, m.Path)
 		}
-		slices.Sort(groups)
-		groups = slices.Compact(groups)
+		groups := auth.GroupNames(paths, s.cfg.GroupNames)
 		current := slices.Clone(u.groups)
 		slices.Sort(current)
 		if !slices.Equal(groups, current) {

@@ -172,11 +172,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	if username == "" {
 		username = id.Subject
 	}
-	if groups == nil {
-		groups = []string{}
-	}
-	slices.Sort(groups)
-	groups = slices.Compact(groups)
+	groups = auth.GroupNames(groups, settings.GroupNames)
 	userID, err := (&auth.Admin{Pool: h.pool}).SyncIdentity(r.Context(), id.Issuer, id.Subject, username, email, groups)
 	if errors.Is(err, auth.ErrNotFound) {
 		fail(w, 403, "permission_error", "user is disabled")

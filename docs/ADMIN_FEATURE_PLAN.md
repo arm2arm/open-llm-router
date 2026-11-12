@@ -20,8 +20,8 @@ no due dates or assignees have been set.
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
 browser sign-in/password flows, #75 local user/key administration, #76
 protected-administrator recovery, the #77 managed-settings foundation, the #78
-Admin → Authentication page and #79 live activation/rollback are implemented in
-this checkout. Endpoint editing for existing logical models now implements part
+Admin → Authentication page, #79 live activation/rollback and #80 authorization
+freshness are implemented in this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
 acceptance work.
@@ -179,6 +179,13 @@ old ones. Rollback and **Apply** work while a provider is down. Sessions are
 checked against the current issuer; an issuer change discards pending SSO logins,
 keeps accounts separated and reports previous issuers' accounts. Tests cover
 switching between isolated realms, failed activation, rollback and SSO off.
+
+Completed for #80: cached OIDC access-token principals carry the authenticator's
+invalidation generation, so disablement, overrides and membership changes reach
+the next request on every path. Tokens issued before the latest membership update
+can only narrow the stored groups and never rewrite them. Login, API tokens and
+group sync share one group-name rule (`group_names: leaf|path`); sync reads
+Keycloak paths and refuses ambiguous duplicate leaf names.
 
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required

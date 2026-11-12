@@ -286,6 +286,36 @@ func (a Admin) EnsureIdentity(ctx context.Context, issuer, sub, username, email 
 	return a.SyncIdentity(ctx, issuer, sub, username, email, groups)
 }
 
+// TokenIdentity maps an API access token to its router user. Group claims are
+// as old as the token: when the stored memberships were updated after the
+// token was issued (by a portal login, group sync or a newer token), the token
+// can only narrow them, so a removed grant is never restored by an old token
+// and an added group needs a new token. A token newer than the stored state
+// updates it like a login. A token without iat counts as old.
+func (a Admin) TokenIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, issued time.Time) (string, []string, error) {
+	var id, oldName, oldEmail string
+	var oldGroups []string
+	var enabled bool
+	var synced time.Time
+	err := a.Pool.QueryRow(ctx, `SELECT id,username,email,groups,enabled,synced_at FROM users WHERE issuer=$1 AND sub=$2`, issuer, sub).
+		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &synced)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		id, err := a.SyncIdentity(ctx, issuer, sub, username, email, groups)
+		return id, groups, err
+	case err != nil:
+		return "", nil, errors.New("user lookup failed")
+	case !enabled:
+		return "", nil, ErrNotFound
+	case issued.IsZero() || !issued.After(synced):
+		return id, slices.DeleteFunc(slices.Clone(groups), func(g string) bool { return !slices.Contains(oldGroups, g) }), nil
+	case oldName == username && oldEmail == email && slices.Equal(oldGroups, groups):
+		return id, groups, nil
+	}
+	id, err = a.SyncIdentity(ctx, issuer, sub, username, email, groups)
+	return id, groups, err
+}
+
 // SetGroups replaces a user's groups; API-key caches observe it before this
 // returns.
 func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) error {
