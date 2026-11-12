@@ -36,6 +36,7 @@ const adminUsage = `usage:
   olr admin override set -user USER_UUID -field FIELD -value N|unlimited [-reason TEXT] [-by NAME]
   olr admin override clear -user USER_UUID -field FIELD
   olr admin override list -user USER_UUID
+  olr admin settings show|import|draft|discard|activate|rollback ...
 
 OLR_DATABASE_URL is required. User add prints the new UUID. Key create prints
 the plaintext key once; save it securely. Key and user list print JSON.
@@ -59,6 +60,8 @@ login must replace it, and all of the account's sessions and API keys are
 revoked. It never reads the bootstrap sources. -password-stdin takes redirected
 or piped input only (e.g. docker compose exec -T router olr admin recover
 -password-stdin < FILE). An audit event is written to stderr.
+Settings manage configuration revisions in the database; run
+"olr admin settings -h" for details.
 `
 
 func admin(args []string, out, errout io.Writer) error {
@@ -71,6 +74,9 @@ func admin(args []string, out, errout io.Writer) error {
 	}
 	if args[0] == "recover" {
 		return recoverCommand(args[1:], os.Stdin, out, errout)
+	}
+	if args[0] == "settings" {
+		return settingsCommand(args[1:], out, errout)
 	}
 	if len(args) < 2 {
 		fmt.Fprint(errout, adminUsage)

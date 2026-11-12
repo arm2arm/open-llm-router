@@ -56,6 +56,11 @@ type Config struct {
 	DatabaseURL      string `yaml:"-"`
 	OIDCClientSecret string `yaml:"-"`
 	OIDCSyncSecret   string `yaml:"-"` // client secret of oidc.sync_client_id
+
+	// AuthSources records where each authentication setting came from:
+	// SourceFile, SourceEnvironment or SourceDefault, keyed by the names in
+	// AuthSettings. Managed settings use it to import and to detect conflicts.
+	AuthSources map[string]string `yaml:"-"`
 }
 
 // Forwarders lets a key flagged trusted_forwarder (such as Open WebUI's) name
@@ -315,6 +320,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if len(problems) > 0 {
 		return nil, problems
 	}
+	cfg.AuthSources = authSources(&doc, lookup, cfg.OIDC != nil)
 	// Header names match without regard to case; X-OLR-End-User always works
 	// and names a username unless the map says otherwise.
 	headers := map[string]string{http.CanonicalHeaderKey(EndUserHeader): "username"}

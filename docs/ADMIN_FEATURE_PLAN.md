@@ -18,8 +18,9 @@ no due dates or assignees have been set.
 | 3 | [M9 · Admin-managed endpoints and policies](https://github.com/arm2arm/open-llm-router/milestone/11) | [#81](https://github.com/arm2arm/open-llm-router/issues/81) routing API/runtime; [#82](https://github.com/arm2arm/open-llm-router/issues/82) endpoint/model UI; [#83](https://github.com/arm2arm/open-llm-router/issues/83) group-policy editor; [#84](https://github.com/arm2arm/open-llm-router/issues/84) administration history; [#85](https://github.com/arm2arm/open-llm-router/issues/85) integrated acceptance/docs |
 
 The #72 credential/bootstrap foundation, #73 local authentication APIs, #74
-browser sign-in/password flows, #75 local user/key administration and #76
-protected-administrator recovery are implemented in this checkout. Endpoint editing for existing logical models now implements part
+browser sign-in/password flows, #75 local user/key administration, #76
+protected-administrator recovery and the #77 managed-settings foundation are
+implemented in this checkout. Endpoint editing for existing logical models now implements part
 of #81/#82: persisted revisions, validation/checks, live activation and restore.
 Those issues remain open for logical model/alias creation and the remaining
 acceptance work.
@@ -148,6 +149,16 @@ Primary work: migrations, `internal/auth`, new local-auth handlers,
 `cmd/olr/admin.go`, React sign-in and admin user pages, Compose bootstrap secrets.
 
 ### 2. Admin-managed Keycloak connection and safe configuration activation
+
+Completed for #77: migration 0010 adds immutable settings revisions, a per-domain
+active/draft state with optimistic versions, activation history, AES-256-GCM
+stored secrets under `OLR_SETTINGS_ENCRYPTION_KEY` and an append-only
+`audit_events` table. `olr admin settings` imports the authentication domain from
+YAML/environment without behavior change, saves strictly validated drafts,
+activates/rolls back after rechecking, refuses file/environment conflicts and
+reports effective sources. Startup applies the active revision; an unappliable
+revision turns SSO off without falling back to file values, keeping local login.
+The Admin page, connection tests and live client swap remain #78/#79.
 
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required

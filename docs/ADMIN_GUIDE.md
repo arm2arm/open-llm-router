@@ -32,7 +32,7 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
 | Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
-| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment | Router restart/recreation |
+| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database) with `olr admin settings` | Router restart/recreation |
 | Configure Keycloak or group policies from the Admin page | **Not implemented** | See the feature plan |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
@@ -174,6 +174,92 @@ administrator's credential to the state in that backup: the password valid at
 backup time works again, and sessions or keys created later are gone. If that
 password is unknown, run recovery after the restore. Backups contain password
 hashes; protect them as secrets.
+
+### Manage authentication settings in the database
+
+The SSO connection (issuer, back-channel URL, portal client ID and secret, API
+audience, claim names, required claim, sync client ID/secret and interval) can
+move from YAML/environment into PostgreSQL revisions with `olr admin settings`.
+This is the storage and revision layer for the planned Admin → Authentication
+page ([#78](https://github.com/arm2arm/open-llm-router/issues/78)); live switching
+without a restart is [#79](https://github.com/arm2arm/open-llm-router/issues/79).
+`OLR_DATABASE_URL`, bootstrap and encryption keys, the listener, `PORTAL_BASE_URL`,
+cookie settings, models and groups are never managed here.
+
+The domain stays **file-managed** until an explicit import. Import copies the
+current effective values exactly, so behavior does not change; a client secret
+set in the environment becomes a reference to that same variable. From then on
+the active database revision is the **only** authority for these settings.
+
+```sh
+olr admin settings show            # effective values, their source, and "version"
+olr admin settings import          # make the database the authority (once)
+olr admin settings show > current.json   # copy .active.document into draft.json and edit it
+olr admin settings draft -expect-version 1 -document draft.json \
+  -secret sync_client_secret=/private/secrets/olr-sync
+olr admin settings activate -expect-version 2 -revision 2
+# Later, with the version and revision IDs from the latest show:
+olr admin settings rollback -expect-version VERSION -revision PREVIOUSLY_ACTIVE_ID
+olr admin settings discard -expect-version VERSION   # drop a pending draft
+```
+
+In Compose, run them as `docker compose exec -T router olr admin settings ...`;
+the commands read `OLR_CONFIG`, `OLR_DATABASE_URL` and the router's environment.
+Each prints the view as JSON:
+
+| Field | Meaning |
+|---|---|
+| `managed`, `version` | Whether the database is the authority; pass `version` as `-expect-version` to the next change |
+| `effective` | Every setting with its value and source: `database`, `file`, `environment` or `default`. Secrets show `configured`, `reference` (`environment` or `stored`), id/time and `available`, never the value |
+| `active`, `draft` | The active revision and the pending draft, with their documents (secret references only) and the latest check |
+| `conflicts` | File/environment values that differ from the active revision, by setting and location (`oidc.issuer`, `OIDC_ISSUER`), never values |
+| `history` | Recent revisions: `active`, `draft`, `previously_active` or `superseded` |
+
+**Drafts and activation.** A draft is based on the active revision. Documents
+are read strictly: unknown fields, wrong types, invalid URLs or claim settings,
+and secret references to any variable other than the setting's own
+(`OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET`) refuse the save. A
+saved draft is checked against this process: secrets must resolve, the result
+must be a valid configuration, and no file/environment value may contradict
+it. A failing check is stored on the draft and blocks only its activation; the
+active revision is unchanged. Activation and rollback check again. Rollback
+accepts only previously active revisions and keeps a pending draft. Every
+change requires the current version: a concurrent edit fails with `settings
+changed since you loaded them` instead of overwriting. **Routers apply the
+active revision when they start**, so recreate them after activation.
+
+**Single authority.** To change a setting that YAML or the environment still
+sets, remove it there first (for example `OIDC_ISSUER` from Compose or Helm
+values) and recreate the router; otherwise activation is refused with the
+location to remove. At startup a conflicting file/environment value is
+ignored and logged as an error; the active revision still applies.
+
+**Secrets.** `-secret NAME=FILE` reads a private file (same rules as password
+files) and stores the value encrypted with AES-256-GCM under
+`OLR_SETTINGS_ENCRYPTION_KEY`, a base64-encoded 32-byte key supplied outside the
+database (`openssl rand -base64 32`). Each stored value is a new immutable row
+bound to its id and setting name; the draft references it, so activation is the
+rotation and rollback restores the earlier secret. Plaintext is never returned
+by the CLI, written to revisions, logs, validation messages or audit events.
+Without the key, environment references keep working but stored secrets can be
+neither saved nor opened. Keep the key stable and back it up separately from
+PostgreSQL: a database backup alone cannot reveal stored secrets.
+
+**Failure and local administration.** If the active revision cannot be applied
+at startup (for example, the key is missing or different, or a referenced
+variable is unset), the router starts with SSO off and logs `SSO is off and local
+login remains available`. It never falls back to file values. Local login,
+recovery and API keys keep working; restore the key or activate/roll back to a
+revision that applies, then recreate the router.
+
+**History.** Imports, draft saves, discards, activations and rollbacks,
+including refused attempts, are recorded in the append-only `audit_events`
+table with actor, revision, result and changed setting names. Database triggers
+refuse `UPDATE`, `DELETE` and `TRUNCATE` on revisions (except their check
+result), activations, stored secrets and audit events. Database superusers,
+schema changes and intentional database destruction are outside this
+guarantee, as for the protected administrator. A searchable history view is
+[#84](https://github.com/arm2arm/open-llm-router/issues/84).
 
 ### Use local authentication without Keycloak
 

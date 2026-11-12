@@ -110,6 +110,7 @@ The referenced Secret must provide:
 | `OLR_DATABASE_URL` | Every install; for bundled PostgreSQL, point it at `<release>-open-llm-router-postgresql:5432` with matching credentials |
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | First local admin creation; omitted after initialization if desired |
 | `OLR_API_KEY_ENCRYPTION_KEY` | API-key recovery; use a stable base64-encoded 32-byte key |
+| `OLR_SETTINGS_ENCRYPTION_KEY` | Optional: secrets stored with `olr admin settings`; a separate stable base64-encoded 32-byte key. The chart does not generate it |
 | `POSTGRES_PASSWORD` | Bundled PostgreSQL; match the password in `OLR_DATABASE_URL` |
 | `KC_BOOTSTRAP_ADMIN_PASSWORD` | Bundled Keycloak console administrator |
 | `OLR_DEMO_USER_PASSWORD` | Bundled Keycloak's `staff` user |
