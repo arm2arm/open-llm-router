@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net"
@@ -200,6 +201,13 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			priority = access.Priority + model.Priority.Batch
 		}
 	}
+	account.capture.Route(meta.Model, name, upstreamName)
+	if upstreamName != meta.Model {
+		account.capture.Change("model", "replaced", meta.Model, upstreamName)
+	}
+	if model.Priority != nil {
+		account.capture.Change("priority", "set", nil, priority)
+	}
 	if upstreamName != meta.Model || model.Priority != nil {
 		// RawMessage retains unknown values, including large integers, while
 		// replacing only the model and the priority, which callers cannot
@@ -221,6 +229,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			return
 		}
 		hideUsage = !asked
+		if !asked {
+			account.capture.Change("stream_options.include_usage", "set", nil, true)
+		}
 	}
 	if h.Limits != nil {
 		principal, _ := auth.FromContext(r.Context())
@@ -234,7 +245,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			}
 			admission.Reserve = meta.MaxTokens + int64(len(body))
 		}
+		admitted := time.Now()
 		account.lease, err = h.Limits.AcquireFor(r.Context(), admission, access)
+		account.capture.Admission(time.Since(admitted))
 		if err != nil {
 			var rejected *limits.Rejection
 			if h.Metrics != nil && errors.As(err, &rejected) {
@@ -255,14 +268,18 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			request.Session = r.Header.Get("X-Session-Id")
 		}
 		lease := pools.Pools[name].AcquireRequest(r.Context(), request)
-		account.selection += time.Since(selectionStarted)
+		queued := time.Since(selectionStarted)
+		account.selection += queued
 		if lease == nil {
+			account.capture.Attempt(requesttrace.Attempt{QueueMS: queued.Milliseconds(), Error: "no healthy replica with available capacity"})
 			w.Header().Set("Retry-After", "1")
 			apierr.Write(w, protocol, 503, "overloaded_error", "no healthy replica with available capacity")
 			return
 		}
 		account.record.Replica = lease.Replica.URL
+		exchanged := time.Now()
 		committed, err := h.attempt(w, r, body, model, lease, account, hideUsage)
+		account.capture.Attempt(requesttrace.Attempt{Replica: replicaLabel(model, lease.Replica.URL), QueueMS: queued.Milliseconds(), MS: time.Since(exchanged).Milliseconds(), Status: account.writer.status, Error: attemptError(r, err, committed)})
 		if err == nil || committed || r.Context().Err() != nil {
 			return
 		}
@@ -282,6 +299,12 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	}()
 	ctx, cancel := context.WithCancelCause(r.Context())
 	defer cancel(nil)
+	defer func() {
+		// Keep the timer's cause for the trace's attempt classification.
+		if cause := context.Cause(ctx); err != nil && (cause == errHeaderTimeout || cause == errIdleTimeout) {
+			err = fmt.Errorf("%w: %v", cause, err)
+		}
+	}()
 	u, _ := url.Parse(lease.Replica.URL)
 	u.Path, u.RawPath, u.RawQuery = r.URL.Path, r.URL.RawPath, r.URL.RawQuery
 	u.ForceQuery = r.URL.ForceQuery
@@ -305,12 +328,14 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	// NewRequest supplies a new body for the one deliberate retry. RoundTrip
 	// does not follow redirects; avoid transport retries of this POST too.
 	req.GetBody = nil
+	account.capture.Headers(req.Header)
 	headerTimer := time.AfterFunc(time.Duration(model.TimeoutS)*time.Second, func() { cancel(errHeaderTimeout) })
 	resp, err := h.transport.RoundTrip(req)
 	headerTimer.Stop()
 	if err != nil {
 		return false, err
 	}
+	account.capture.Upstream(resp.StatusCode, resp.Header.Get("Content-Type"))
 	defer resp.Body.Close()
 	idleTimer := time.AfterFunc(time.Duration(model.IdleTimeoutS)*time.Second, func() { cancel(errIdleTimeout) })
 	defer idleTimer.Stop()
@@ -385,6 +410,36 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		// Also bound a blocked downstream write so slow/disconnected clients
 		// cannot retain a backend slot indefinitely.
 		n, readErr = resp.Body.Read(buf)
+	}
+}
+
+// replicaLabel names a replica by pool position: traces belong to end users,
+// who must not learn backend addresses.
+func replicaLabel(model config.Model, url string) string {
+	for i, replica := range model.Pool {
+		if replica.URL == url {
+			return fmt.Sprintf("replica %d of %d", i+1, len(model.Pool))
+		}
+	}
+	return "replica"
+}
+
+// attemptError classifies an attempt failure without exposing dial errors,
+// which contain backend addresses.
+func attemptError(r *http.Request, err error, committed bool) string {
+	switch {
+	case err == nil:
+		return ""
+	case r.Context().Err() != nil:
+		return "client disconnected"
+	case errors.Is(err, errHeaderTimeout):
+		return "upstream response headers timed out"
+	case errors.Is(err, errIdleTimeout):
+		return "upstream response stalled"
+	case committed:
+		return "upstream stream failed after the response started"
+	default:
+		return "backend connection failed before the response started"
 	}
 }
 

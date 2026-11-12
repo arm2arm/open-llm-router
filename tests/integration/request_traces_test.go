@@ -134,6 +134,18 @@ func TestPersonalRequestTraces(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(data), "trace-private-input") || !strings.Contains(string(data), `"events":[{`) || strings.Contains(string(data), key) || strings.Contains(string(data), "secret-header-never-stored") {
 		t.Fatalf("trace: %d %s", resp.StatusCode, data)
 	}
+	// Version 2: raw request, routing by pool position, header names only.
+	for _, want := range []string{`"v":2`, `"request":{`, `"replica 1 of 1"`, `"X-Private-Header"`, `"upstream_status":200`, `"frames":[{`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("trace lacks %s: %s", want, data)
+		}
+	}
+	if strings.Contains(string(data), "127.0.0.1") {
+		t.Fatal("trace exposed a backend address")
+	}
+	if resp, list := a.call(t, "GET", "/portal/api/requests", "", ""); resp.StatusCode != 200 || !strings.Contains(string(list), `"input_messages":1`) || !strings.Contains(string(list), `"conversation":"c`) {
+		t.Fatalf("list summary: %s", list)
+	}
 	var result struct {
 		Expires time.Time `json:"expires_at"`
 	}

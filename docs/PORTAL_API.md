@@ -146,7 +146,10 @@ untouched. See [PRIVACY.md](PRIVACY.md).
 - `GET /portal/api/requests`: `{"limit":200,"requests":[{"time":"RFC3339","model":"chat-model",
   "protocol":"openai","status":"200","input_tokens":3,"output_tokens":7,"latency_ms":400,
   "ttfb_ms":50,"stream":true,"key_prefix":"olr-…","forwarded":false,
-  "request_id":"32-hex-characters","operation":"chat/completions","trace_available":true}]}`, newest first, the
+  "request_id":"32-hex-characters","operation":"chat/completions","trace_available":true,
+  "trace_summary":{"input_messages":3,"output_messages":1,"tool_calls":1,"tool_results":1,
+  "tools":2,"finish_reason":"tool_calls","cached_tokens":0,"reasoning_tokens":0,
+  "truncated":false},"conversation":"c…"}]}`, newest first, the
   user's last 200 records (metadata only). `key_prefix` is null once the key is removed, and
   for calls a trusted forwarder made for the user (`forwarded: true`).
 - `GET /portal/api/usage/daily`: `{"timezone":"UTC","days":[{"day":"2026-10-13","requests":0,
@@ -168,6 +171,13 @@ content type. All access is scoped to the session user; admin status adds no con
   `tool_call`, `tool_result`, `refusal` and attachment markers. Events contain
   `{ms,type,text?}` with relative arrival time. Missing, expired and another user's IDs
   all return 404. Older metadata rows have `request_id:null`.
+  Version 2 detail (`"v":2`) adds `tools` (`{name,description?,schema?}`), `request` and
+  `response` (sanitized raw JSON), `frames` (`{ms,data}` raw stream payloads), `routing`
+  (`requested_model`, `model`, `upstream_model`, `changes:[{field,action,from?,to?}]`,
+  `attempts:[{replica,queue_ms,ms,status?,error?}]`, `admission_ms`, `headers` (names),
+  `upstream_status`, `content_type`), `result` (`id`, `model`, `system_fingerprint`,
+  `finish_reasons`, numeric `usage` flattened with dots) and `summary`. Messages carry a
+  `hash`. Traces without `v` were stored by older routers.
 - `DELETE /portal/api/request-traces` with `{}`: 204, permanently clears only the caller's
   content and invalidates pending writes. `DELETE /portal/api/usage` also clears content;
   daily quota totals remain.

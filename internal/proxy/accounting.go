@@ -47,6 +47,7 @@ func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol strin
 		a.record.UserID, a.record.KeyID, a.record.ForwardedBy = p.UserID, p.KeyID, p.ForwardedBy
 		a.capture = h.Traces.Begin(p.UserID, strings.TrimPrefix(r.URL.Path, "/v1/"), a.began)
 		a.writer.capture = a.capture
+		a.capture.Session(r.Header.Get("X-Session-Id"))
 	}
 	return a
 }
