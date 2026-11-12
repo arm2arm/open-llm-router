@@ -30,6 +30,8 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${OTEL_EXPORTER_OTLP_TRACES_HEADERS:-}
       OLR_TRACE_USER_ID: ${OLR_TRACE_USER_ID:-false}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:27b-mlx}
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,7 +42,7 @@ services:
       mock-llm-b:
         condition: service_started
     volumes:
-      - ../../config.example.yaml:/etc/olr/config.yaml:ro
+      - ${OLR_CONFIG_FILE:-../../config.example.yaml}:/etc/olr/config.yaml:ro
     # A little longer than the router's own shutdown grace of 30 s.
     stop_grace_period: 35s
 

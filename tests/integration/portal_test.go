@@ -73,6 +73,13 @@ func (b *portalBrowser) call(t *testing.T, method, path, body, origin string) (*
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Reach the test listener while presenting the configured public host,
+	// as a reverse proxy preserving Host would do in a real deployment.
+	base, err := url.Parse(b.f.cfg.Portal.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = base.Host
 	if method != "GET" {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", origin)
@@ -152,6 +159,36 @@ func (b *portalBrowser) login(t *testing.T, subject string, groups []string) str
 		t.Fatal("invalid me response", resp.StatusCode)
 	}
 	return me.User.ID
+}
+
+func TestPortalLoginCanonicalHost(t *testing.T) {
+	f := startPortal(t)
+	b := f.browser(t)
+	for _, host := range []string{"127.0.0.1:8080", "localhost:8080", "untrusted.example"} {
+		req, err := http.NewRequestWithContext(t.Context(), "GET", f.router.URL+"/portal/login?return_to=https://untrusted.example", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		req.Header.Set("X-Forwarded-Host", host)
+		resp, err := b.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != f.cfg.Portal.BaseURL+"/portal/login" {
+			t.Fatal("login did not redirect to the configured host", resp.StatusCode, resp.Header.Get("Location"))
+		}
+		if len(resp.Cookies()) != 0 {
+			t.Fatal("login cookie issued on an alternate host")
+		}
+	}
+	var pending int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM portal_login_attempts`).Scan(&pending); err != nil || pending != 0 {
+		t.Fatal("alternate host created login attempts", pending, err)
+	}
+	// The canonical host still completes the full state, PKCE and session flow.
+	b.login(t, "alice", []string{"staff"})
 }
 
 func TestPortalOIDCStateReplayAndTokenValidation(t *testing.T) {
