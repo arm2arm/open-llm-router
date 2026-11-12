@@ -77,10 +77,24 @@ tool names, streaming flag and maximum output tokens.
   provider error messages. It may contain sensitive information. There is no
   automatic secret detector inside user text. Disable capture before sending
   content you do not want retained.
-- HTTP headers, credentials, cookies, provider signatures, arbitrary metadata,
-  image/file/audio payloads, attachment URLs and embedding vectors are omitted.
-  Images, documents and audio appear as markers. Supported text/reasoning/tool
-  fields are normalized; unknown provider-specific content fields are omitted.
+- HTTP header values, credentials, cookies, provider signatures and encrypted
+  reasoning, `metadata` fields, image/file/audio payloads, attachment URLs, data URIs,
+  base64 blobs and embedding vectors are omitted. Images, documents and audio appear
+  as markers such as `«image payload omitted»`. Supported text/reasoning/tool fields
+  are normalized; unknown provider-specific content fields are omitted.
+- Besides the conversation, a trace stores what is needed to understand a call: a
+  sanitized preview of the raw request JSON (strings over 2 KiB shortened; full text is
+  in the conversation), every non-content parameter, tool names, descriptions and
+  schemas (8 KiB each), the router's changes to the forwarded body (upstream model
+  name, priority, `stream_options.include_usage`), the names (never values) of headers
+  forwarded upstream, admission and queue waits, attempts identified by pool position
+  ("replica 1 of 2", never a backend address) with classified errors, upstream status
+  and media type, response IDs/model/finish reasons/numeric usage, a sanitized raw
+  response preview and up to 200 raw stream frames.
+- Requests are grouped into conversations by a keyed hash, per user, of the client's
+  `X-Session-Id` header, or otherwise of the system prompt and first user message.
+  Message hashes mark which input is new between calls of an agent loop. Hashes never
+  leave the user's own traces.
 - Disabling capture stops new content collection on that router immediately and
   invalidates pending/in-flight captures. Existing traces remain until their
   original expiry or explicit deletion. On another router, preference snapshots
@@ -108,12 +122,14 @@ and write it to `request_traces`, independently of the usage/accounting queue.
 Streaming responses still flush incrementally. Tracing neither retries nor delays
 an inference call when its storage queue is full or Postgres fails.
 
-Bounds per request are **128 KiB input**, **256 KiB output**, **2,048 observed writes**
-and **1,000 displayed stream events**. At most **32 captures** can be active or queued
-per process. Input over the cap is omitted as a whole; output keeps only its captured
-prefix and complete events. The viewer explains truncation; forwarding is unaffected.
-Large binary-containing requests may therefore have no input detail even though their
-output is captured. Parsing/serialization has additional bounded worker memory/CPU
+Bounds per request are **1 MiB copied input**, **384 KiB stored input text**,
+**128 KiB per raw preview**, **256 KiB output**, **2,048 observed writes**, **1,000
+displayed stream events** and **200 raw stream frames (64 KiB)**. At most **32
+captures** can be active or queued per process. Input over 1 MiB is omitted as a whole,
+because partial JSON is never decoded; binary payloads are removed before the text
+budget applies, so a request with images keeps its text. Output keeps only its
+captured prefix and complete events. The viewer explains truncation; forwarding is
+unaffected. Parsing/serialization has additional bounded worker memory/CPU
 cost. No external telemetry SDK or service is required for personal tracing.
 
 Capacity pressure skips new traces rather than blocking inference. The table shows

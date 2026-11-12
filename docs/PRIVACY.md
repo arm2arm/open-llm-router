@@ -19,7 +19,7 @@ When you use the LLM router at `<https://router.example.org>`, it stores:
 | API keys | label, first 12 characters, a one-way hash, optional encrypted copy for administrator recovery, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
 | Sessions | a hash of the session cookie, creation and expiry | 8 hours, or until you sign out | sign out |
 | Per-request records | time, model, replica, protocol, status, input and output token counts, latency, time to first token, the key used, and the end user if a trusted application made the call for you | `<90>` days | **Usage → Delete my activity**, at any time |
-| Detailed request traces | message text, reasoning, tool calls/results, provider errors, selected parameters and stream event timings; enabled by default, user can disable | 7 days by default; user chooses 1–30 days | **My requests → Delete traces** or **Usage → Delete my activity** |
+| Detailed request traces | message text, reasoning, tool definitions, calls and results, provider errors, request parameters, sanitized raw request/response previews, routing steps (pool position, waits, forwarded header names) and stream event timings; enabled by default, user can disable | 7 days by default; user chooses 1–30 days | **My requests → Delete traces** or **Usage → Delete my activity** |
 | Daily totals | per day and model: number of requests and tokens | `<400>` days | not deletable by you: needed to enforce today's and this month's quotas and for accounting; the operator deletes them with your account |
 
 **Content capture:** detailed tracing is enabled by default, including existing accounts.
@@ -28,8 +28,9 @@ there is no automatic secret detector in that text. Disabling stops new capture 
 invalidates pending captures; existing detail remains until expiry or deletion. Shorter
 retention applies to existing detail; longer retention applies only to new captures.
 
-**Omitted from traces:** HTTP headers, credentials, cookies, provider signatures, arbitrary
-metadata, image/document/audio payloads, attachment URLs and embedding vectors. Content
+**Omitted from traces:** HTTP header values, credentials, cookies, provider signatures,
+`metadata` fields, image/document/audio payloads, data URIs, attachment URLs, backend
+addresses and embedding vectors. Content
 traces are accessible only to the attributed user, including when an application forwards
 a call. Portal admins have no override. Database and backup operators can access content.
 See [REQUEST_TRACING.md](REQUEST_TRACING.md) for capture limits and supported formats.

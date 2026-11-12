@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,10 +18,16 @@ import (
 )
 
 const (
-	MaxInput  = 128 << 10
-	MaxOutput = 256 << 10
-	MaxChunks = 2048
-	MaxEvents = 1000
+	// MaxInput bounds the bytes copied from the request. Binary payloads are
+	// removed in the worker; MaxInputText then bounds the normalized text.
+	MaxInput     = 1 << 20
+	MaxInputText = 384 << 10
+	MaxRaw       = 128 << 10
+	MaxFrames    = 200
+	MaxFrameRaw  = 64 << 10
+	MaxOutput    = 256 << 10
+	MaxChunks    = 2048
+	MaxEvents    = 1000
 	// Slots cover active captures AND the background queue, not just queued work.
 	Slots = 32
 )
@@ -189,6 +196,8 @@ type Capture struct {
 	service       *Service
 	generation    int64
 	operation     string
+	session       string
+	routing       Routing
 	input, output []byte
 	chunks        []chunk
 	truncated     bool
@@ -235,6 +244,65 @@ func (c *Capture) Input(p []byte) {
 	}
 	c.input = append([]byte(nil), p...)
 }
+
+// Session records a client-provided X-Session-Id for conversation grouping.
+// Only its keyed hash is stored.
+func (c *Capture) Session(id string) {
+	if c != nil {
+		c.session, _ = cut(id, 256)
+	}
+}
+
+// Route records how the router resolved the requested model.
+func (c *Capture) Route(requested, canonical, upstream string) {
+	if c != nil {
+		c.routing.RequestedModel, c.routing.Model, c.routing.UpstreamModel = requested, canonical, upstream
+	}
+}
+
+// Change records one router modification of the body forwarded upstream.
+func (c *Capture) Change(field, action string, from, to any) {
+	if c != nil {
+		c.routing.Changes = append(c.routing.Changes, Change{Field: field, Action: action, From: from, To: to})
+	}
+}
+
+// Admission records time spent waiting for quota/concurrency admission.
+func (c *Capture) Admission(d time.Duration) {
+	if c != nil {
+		c.routing.AdmissionMS = d.Milliseconds()
+	}
+}
+
+// Attempt records one replica selection and upstream exchange. Replica is a
+// pool position, never a URL: backend addresses stay operator-only.
+func (c *Capture) Attempt(a Attempt) {
+	if c != nil && len(c.routing.Attempts) < 4 {
+		c.routing.Attempts = append(c.routing.Attempts, a)
+	}
+}
+
+// Headers records the names, never values, of headers forwarded upstream.
+func (c *Capture) Headers(h map[string][]string) {
+	if c == nil || c.routing.Headers != nil {
+		return
+	}
+	names := make([]string, 0, len(h))
+	for name := range h {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	c.routing.Headers = names
+}
+
+// Upstream records the provider's response status and media type.
+func (c *Capture) Upstream(status int, contentType string) {
+	if c != nil {
+		c.routing.UpstreamStatus = status
+		c.routing.ContentType, _ = cut(contentType, 128)
+	}
+}
+
 func (c *Capture) ResponseJSON(yes bool) {
 	if c != nil {
 		c.jsonResponse = yes
@@ -278,14 +346,22 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 	if err != nil {
 		return err
 	}
+	summary, err := json.Marshal(detail.Summary)
+	if err != nil {
+		return err
+	}
+	var conversation *string
+	if key := c.conversationKey(detail); key != "" {
+		conversation = &key
+	}
 	// FOR SHARE serializes against settings changes, erasure and user deletion.
 	// Generation prevents late writes from resurrecting cleared content.
 	_, err = s.pool.Exec(ctx, `WITH owner AS (
 		SELECT id,trace_retention_days FROM users WHERE id=$2 AND trace_enabled AND trace_generation=$5 FOR SHARE
-	) INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail)
-	SELECT $1,id,$3,$3::timestamptz+make_interval(days=>trace_retention_days),$4::jsonb FROM owner
+	) INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail,summary,conversation_key)
+	SELECT $1,id,$3,$3::timestamptz+make_interval(days=>trace_retention_days),$4::jsonb,$6::jsonb,$7 FROM owner
 	WHERE $3::timestamptz+make_interval(days=>trace_retention_days)>now()
-	ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, c.generation)
+	ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, c.generation, summary, conversation)
 	return err
 }
 
