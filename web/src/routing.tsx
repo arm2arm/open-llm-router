@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Network, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { GroupPolicies, AccessPreview } from '@/policies'
 import {
   api,
   type CheckResult,
@@ -360,11 +361,14 @@ function DraftEditor({
   const [error, setError] = useState<Error | null>(null)
   const blockers = (name: string) => {
     const reasons: string[] = []
-    const groups = Object.entries(view.group_grants)
+    const groups = Object.entries(document.groups)
+      .map(([name, policy]) => [name, policy.models] as const)
       .filter(([, models]) => models.includes(name))
       .map(([group]) => group)
     if (groups.length)
-      reasons.push(`group ${groups.join(', ')} grants it (edit the YAML)`)
+      reasons.push(
+        `group ${groups.join(', ')} grants it (remove its grant first)`,
+      )
     const aliases = Object.entries(document.aliases)
       .filter(([, target]) => target === name)
       .map(([alias]) => alias)
@@ -504,6 +508,8 @@ function DraftEditor({
             }
           />
         </fieldset>
+        <GroupPolicies document={document} onChange={setDocument} />
+        <AccessPreview document={document} />
         <div>
           <Button type="submit">
             {pending ? 'Saving…' : 'Save routing draft'}
@@ -584,6 +590,8 @@ export function RoutingSettingsPanel() {
     await cache.invalidateQueries({ queryKey })
     await cache.invalidateQueries({ queryKey: ['admin-replicas'] })
     await cache.invalidateQueries({ queryKey: ['admin-endpoints'] })
+    await cache.invalidateQueries({ queryKey: ['admin-groups'] })
+    await cache.invalidateQueries({ queryKey: ['me'] })
   }
   async function act(path: string, body: object) {
     setPending(true)
@@ -776,6 +784,21 @@ export function RoutingSettingsPanel() {
                       </ul>
                     </div>
                   )}
+                  {data.impact_available && (
+                    <div aria-label="Draft affected users">
+                      <p>
+                        Affected users: {data.affected_users.length}. The
+                        protected local administrator retains access.
+                      </p>
+                      <ul>
+                        {data.affected_users.map((user) => (
+                          <li key={user.id}>
+                            {user.username} ({user.id})
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="outline"
@@ -785,7 +808,11 @@ export function RoutingSettingsPanel() {
                       Test changed endpoints
                     </Button>
                     <Button
-                      disabled={pending || !draft.validation?.valid}
+                      disabled={
+                        pending ||
+                        !draft.validation?.valid ||
+                        !data.impact_available
+                      }
                       onClick={() =>
                         void act('activate', {
                           version: settings.version,

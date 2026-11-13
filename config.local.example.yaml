@@ -1,0 +1,18 @@
+# Local-only development: no identity provider, no default administrator password.
+# Use deploy/compose/local-only.yml and provide one private bootstrap source.
+auth:
+  default_key_lifetime_days: 90
+  max_key_lifetime_days: 90
+  max_active_keys_per_user: 10
+models:
+  chat-model:
+    protocols: [openai, anthropic]
+    timeout_s: 120
+    queue_timeout_s: 10
+    pool:
+      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 16}
+      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 16}
+groups:
+  staff: {models: [chat-model], rpm: 60, max_concurrent: 4}
+  students: {models: [chat-model], rpm: 20, max_concurrent: 2}
+  admins: {models: ['*'], admin: true}

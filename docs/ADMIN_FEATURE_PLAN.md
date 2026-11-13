@@ -205,6 +205,23 @@ endpoints, activates, discards, rolls back and applies. A browser journey adds a
 model and alias on a second compatible backend, verifies a routed completion and
 rolls back.
 
+Completed for #83: routing revisions include group grants/default limits with an
+Admin editor, stored-user preview with actual overrides, affected-user display,
+protected administrator independence, atomic model/policy validation and rollback.
+Local memberships follow the active policy; SSO memberships remain IdP-owned.
+
+Completed for #84: append-only account, credential, key and configuration events
+are searchable through Admin/API/CLI. Successful mutations and events commit
+together; failure injection verifies rollback. Retention/privacy and full backup
+requirements are documented.
+
+Implemented for #85: [local administration acceptance](ADMIN_GUIDE.md#local-administration-acceptance)
+covers clean no-IdP install, bundled and isolated external Keycloak, outages,
+upgrade, full restore, recovery and bootstrap retirement. CI runs the scenarios;
+the [scoped automated security review](SECURITY_REVIEW.md#local-administration-follow-up-83-85)
+records the fixed empty-issuer startup failure. Independent review/merge remains
+a repository gate. This does not close #21's production acceptance.
+
 - Add **Admin → Authentication** for SSO enabled/default state, issuer, portal
   client ID/secret, API audience, group/username claim names, optional required
   claim, sync client ID/secret and interval. Derive callback/logout URLs from the

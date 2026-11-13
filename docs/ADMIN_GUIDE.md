@@ -3,7 +3,7 @@
 For a fresh installation, follow [Docker Compose or Kubernetes/Helm setup](INSTALL.md)
 before continuing with administration below.
 
-This guide describes local administration and the endpoint editor (12 November 2026). Start here
+This guide describes local administration and the endpoint editor (13 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
 The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
@@ -23,8 +23,8 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Task | Current interface | When it applies |
 |---|---|---|
 | Add/edit/remove replicas for an existing model; change upstream model, protocols, timeouts, affinity, credential reference, weight or capacity | **Admin → Endpoint configuration** or portal API | Live after validation and health checks; saved in PostgreSQL |
-| Add/remove logical model names or aliases | Private YAML | Router restart/recreation |
-| Grant a group access to models; set group default limits | Private YAML | Router restart/recreation |
+| Add/remove logical model names or aliases | **Admin → Routing**, settings API/CLI, or private YAML | Live on activation; file changes need restart |
+| Grant a group access to models; set group default limits | **Admin → Routing** group policies, settings API/CLI, or private YAML | Next request after activation; file changes need restart |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
 | View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
 | Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next request, for API keys, sessions and OIDC access tokens alike |
@@ -34,7 +34,8 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
 | Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database): **Admin → Authentication** or `olr admin settings` | At once on the router where Admin activates it; other routers on restart or **Apply** |
 | Test a Keycloak connection and sign-in before using it | **Admin → Authentication** connection checks and test sign-in | Immediately; nothing changes until activation |
-| Configure group policies from the Admin page | **Not implemented** | See the feature plan |
+| Preview effective access with stored overrides; inspect affected users | **Admin → Routing** | Before activation; preview changes no state |
+| Search account, credential and configuration history | **Admin → History**, API or `olr admin history` | Append-only events; no usage-retention purge |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
 | Recover a lost protected administrator password | `olr admin recover` on the host or in the router container | No restart; works without Keycloak |
@@ -432,8 +433,8 @@ flowchart TD
     Limits --> DB
 ```
 
-Keycloak establishes identity and group memberships. Router YAML defines what each
-group can use. A **logical model** is the public name used by clients; its **pool**
+Keycloak establishes SSO identity and memberships; Admin assigns local memberships.
+The active routing revision (or unmanaged YAML) defines what each group can use. A **logical model** is the public name used by clients; its **pool**
 contains one or more backend origins serving the configured `upstream_model`.
 Aliases map additional client names to the logical model and inherit its access rules.
 
@@ -601,8 +602,9 @@ docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" logs
 ```
 
 `config --quiet` checks Compose, **not the router YAML or external connectivity**.
-There is currently no standalone `olr config check` command. Startup parses YAML
-strictly, opens/migrates the database and configures OIDC. Poll `/healthz` and
+`olr config check -config FILE` validates the router YAML and credential references
+without a database or network; it does not probe backends or the identity provider.
+Startup opens/migrates the database and configures OIDC. Poll `/healthz` and
 `/readyz` through the HTTPS origin with a bounded retry period; both must return
 200. Readiness requires the database and a healthy replica for **every** configured
 model. Then complete the production checks in [PILOT.md](PILOT.md#acceptance-before-onboarding).
@@ -822,8 +824,8 @@ a model to file ownership before removing its logical name from YAML. Back up
 PostgreSQL as well as configuration and external secrets.
 
 Activation currently supports **one router process**. Other processes do not
-receive live revision notifications. To create or delete logical models and
-aliases, manage routing as revisions (below); group-policy editors and provider
+receive live revision notifications. To create or delete logical models,
+aliases or group policies, manage routing as revisions (below); provider
 adapters remain planned work.
 
 ### Manage models, endpoints and aliases as routing revisions
@@ -833,7 +835,7 @@ name, native protocols, timeouts, affinity, priority and endpoint pools) and the
 aliases clients may use, as one revision. Like authentication settings it is
 file-managed until imported, then versioned with drafts, activation and rollback
 in **Admin → Routing** (or `/portal/api/admin/settings/routing`, or
-`olr admin settings -domain routing`). Group policies stay in the YAML file.
+`olr admin settings -domain routing`). Group grants and per-user policy defaults are included in the same revision.
 
 **Admin → Routing** shows how a request is routed: the groups that grant each
 model (`*` grants all), its aliases, native protocols, upstream name and each
@@ -1008,7 +1010,7 @@ What the next request observes after an admin change:
 | Limit override set/cleared | Applied | Applied | Applied |
 | Membership change (Admin, login, sync) | Applied | Applied | Removals applied; additions need a new token |
 | Authentication settings activated | — | Other issuers' sessions end | Verifier replaced; other issuers refused |
-| Group policy (YAML) | Applied after the configuration change | Applied | Applied |
+| Group policy (active routing revision or file) | Next request after activation or restart | Applied | Applied |
 
 An access token carries the groups it was issued with. When the stored
 memberships were updated after the token was issued (by a portal login, group
@@ -1082,7 +1084,7 @@ issued OIDC access tokens retain their embedded group claims until replaced.
    grants no models. A matching Keycloak username or email remains a separate identity.
 4. Find the user and select **Manage**. Review identity source, password status,
    effective model access, limits and existing quota overrides. Save local group
-   memberships here; edit the groups' model grants/default limits in YAML.
+   memberships here; edit the groups' model grants/default limits in Admin → Routing.
 
 | Action | Browser sessions | API keys and access |
 |---|---|---|
@@ -1132,3 +1134,134 @@ browser forms and local user/key administration are implemented. Admin-managed e
 [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
 local tests and this documentation do not replace deployed acceptance and two
 weeks of real user activity.
+
+
+### Edit group policies and preview effective access
+
+After importing Routing, edit **Group policies** in the routing draft. Grant
+canonical models or `*`, set each per-user quota/rate/concurrency default,
+strict quota, priority and administrator access. Endpoints/providers are reached
+through the granted model's pool; these are not shared group/provider budgets.
+Saving does not change access. Activation and rollback replace models, aliases
+and policies together; requests already admitted retain their snapshot and
+accounting. Existing per-user overrides remain authoritative.
+
+Use **Preview access and affected users** with chosen memberships and an optional
+stored user. The preview applies that user's stored overrides, includes aliases,
+and labels `null` numeric limits **Unlimited**. Matching groups combine model
+and admin grants; numeric limits use the largest value, and any omitted/unlimited
+field makes that field unlimited. Omitted batch concurrency inherits interactive
+concurrency in each group before merging. Strict quota requires every matched
+group; the lowest priority wins. Unknown memberships grant nothing. A preview
+without matched groups grants no models. Saved drafts automatically list all
+affected user IDs before activation. Protected local `admin` access is independent
+of policies and overrides, and override mutations targeting that account fail.
+
+A referenced model cannot be removed until its aliases and group grants are
+updated in that same draft. A group with stored members cannot be removed:
+reassign local memberships in Users, or change SSO memberships at the identity
+provider and synchronize them first. SSO memberships are never editable here.
+Legacy routing revisions created before policy management use deployment-file
+groups; new drafts explicitly snapshot all policies. Retain the original
+baseline file when rolling back those legacy revisions.
+
+
+### Administration history
+
+**Admin → Administration history** shows append-only events for account creation,
+enablement, local/SSO group updates, deletion, password rotation/reset/recovery,
+key issuance/revocation/deletion, overrides and authentication/routing/policy
+revisions. Filter by exact action, actor UUID, target UUID/domain, result or
+RFC3339 timestamps; use Older/Newer events for cursor pagination. The operator
+CLI reads the same service: `olr admin history -target USER_UUID -limit 100`.
+Ordinary users cannot read this API and there are no event-edit/delete endpoints.
+
+Successful mutations and their events commit in the same database transaction.
+An unavailable event store fails the mutation and rolls it back. Pre-validation
+refusals are recorded separately where the database is reachable. An unavailable
+database cannot record its own outage; CLI recovery also emits redacted stderr
+attribution. A cache-invalidation acknowledgement failure can occur after commit:
+history retains the successful committed event and a subsequent failed-attempt
+event. Retry the original operation as directed; do not infer rollback from the
+client error alone. Applying authentication/routing runtime settings records the
+apply event before publishing the prepared runtime; failure leaves it unchanged.
+
+Events contain stable IDs, action, database timestamp, revision, result, fixed
+reason and selected field names/counts. Passwords, hashes, API keys, client
+secrets, key labels, arbitrary override reasons and request content are excluded.
+Override events say whether a reason was provided; the current reason remains
+in the separately managed override record. Portal attribution uses authenticated
+UUIDs rather than usernames; CLI attribution identifies the operator OS account
+and host, and IdP-driven updates use an identity-provider actor. Application
+changes cannot update, delete or truncate historical events or configuration
+revisions. A database owner/superuser with schema-changing authority is outside
+this application privilege model; use separate operational access and backups.
+
+Retention is explicit: usage/trace retention never prunes audit events. History
+is retained indefinitely by default, until a site adopts a documented archive and
+retention period. No application API/CLI purges history. Account erasure removes
+the identity, credentials and usage but preserves UUID-only administration
+history; with the directory linkage removed, new portal events are pseudonymous.
+Legacy events/revision labels or operator account/host attribution can still be
+personal data. A site requiring further erasure must use authorized, offline DBA
+maintenance and an approved pseudonym mapping/archive policy, covering logs,
+exports and backups as well; application admin access cannot bypass immutability.
+Keep any mapping separately with restricted access. Do not claim that deleting
+an account automatically erases historical attribution from existing backups.
+
+
+## Install the local-only development stack
+
+Use Docker Compose 2.24.4+ for the `!override` merge tag. This uses mock inference
+and development database credentials; production still needs the TLS/secrets and
+network controls in the [installation guide](INSTALL.md). Populate exactly one
+private bootstrap source through your secret manager; the file source must be
+mounted separately as described under [bootstrap](#bootstrap-the-protected-local-administrator).
+For a secret manager that exports `OLR_BOOTSTRAP_ADMIN_PASSWORD` into your shell:
+
+```sh
+# Start from the repository root, after the secret manager sets the variable.
+export OLR_BOOTSTRAP_ADMIN_PASSWORD
+docker compose -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/local-only.yml up --build --detach --wait
+```
+
+Open `/portal/sign-in/local`, sign in as `admin`, replace the temporary password,
+and sign in again. Retire the secret in the secret manager, unset the bootstrap
+variable, then recreate the router with the same Compose files to remove it from
+the container environment. The protected UUID and changed password survive.
+There is no default local password. Omitting bootstrap entirely is also valid:
+start the router, then bootstrap with the operator CLI and a privately mounted file.
+
+The override omits the `oidc` YAML section, removes development OIDC environment bindings and
+removes Keycloak from the router's dependencies. Keycloak remains part of the
+standard development stack. An empty `OIDC_ISSUER` with no `oidc` section leaves
+SSO off; a configured section with an empty issuer remains invalid and fails
+validation. To use another no-IdP config, set `OLR_LOCAL_CONFIG_FILE` to its absolute
+path. Its model destinations must be reachable from the container.
+
+## Local administration acceptance
+
+These are synthetic, single-router checks. They do not satisfy the real GPU,
+independent review or two-week production evidence required by [#21](https://github.com/arm2arm/open-llm-router/issues/21).
+CI runs all three installation modes; browser traces, videos and screenshots are
+disabled because they could retain passwords or newly issued keys.
+
+| Scenario | Reproduce | Evidence in the repository |
+|---|---|---|
+| Clean no-IdP install | `make acceptance-local` (Docker, Python 3, installed `web` dependencies and Playwright Chromium) | [isolated install script](../tests/acceptance/local-admin.sh); six local administration journeys in [local-auth.spec.ts](../web/tests/local-auth.spec.ts) |
+| Bundled development Keycloak | `make up`, then `cd web && npm run test:e2e`; `make portal-check brokered-check` | Real dual login, authentication drafts/activation, endpoints → models/aliases → group policies, user/key/reset/403/history journeys |
+| Separate external test realm | The full browser command above, or `npx playwright test tests/local-auth.spec.ts -g 'isolated external Keycloak'` from `web` | Own Keycloak container/realm and credentials: wrong portal/sync credentials, failed discovery, issuer mismatch, checked test sign-in, local and SSO login, provider outage, router restart and rollback |
+| Upgrade and protected identity | `OLR_TEST_DATABASE_URL=… make test` against a test role with CREATEDB | [legacy startup/CLI upgrade](../tests/integration/local_admin_cli_test.go), [existing credential/policy/history upgrade](../tests/integration/admin_acceptance_test.go), [database/store guards](../tests/integration/local_admin_test.go) |
+| Backup, restore and lost password | Full browser suite, or `npx playwright test tests/local-auth.spec.ts -g 'backup restore'` from `web` | Stops its disposable router, dumps/restores only its database, compares UUID/hash/revisions/history/accounting, starts with bootstrap sources removed, runs operator recovery, verifies old key rejection and required rotation |
+| Policy activation and rollback | Go test suite plus routing/group browser journeys | [policy preview/enforcement](../tests/integration/policysettings_test.go), [routing streams/accounting](../tests/integration/routingsettings_test.go); existing streams keep their snapshot and new requests use the active policy |
+
+The browser fixture suite requires the standard Compose database, mock backends
+and network; external tests create and remove only their own IdP. `acceptance-local`
+creates a separate project with free ports and tears it down, including its test
+volume. Restore dumps stay in process memory and are never uploaded as artifacts.
+CI's [images job](../.github/workflows/ci.yml) runs the browser suite, local-only
+install, bundled/brokered logins and SDK/accounting tests. Go tests use isolated
+databases. The [security review follow-up](SECURITY_REVIEW.md#local-administration-follow-up-83-85)
+records the authorization review and resolved install finding. Multi-router live
+configuration/shared admission and dedicated cloud adapters remain deferred.

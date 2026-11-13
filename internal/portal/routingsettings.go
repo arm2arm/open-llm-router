@@ -3,6 +3,7 @@ package portal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -39,8 +40,10 @@ type routingView struct {
 	CredentialReferences   []string `json:"credential_references"`
 	AllowedPrivateNetworks []string `json:"allowed_private_networks"`
 	// GroupGrants maps each group policy to the models it grants ("*": all).
-	// Group policies are file-owned; a granted model cannot be removed.
-	GroupGrants map[string][]string `json:"group_grants"`
+	// Policies and routing are changed together; references must remain valid.
+	GroupGrants     map[string][]string `json:"group_grants"`
+	AffectedUsers   []policyImpact      `json:"affected_users"`
+	ImpactAvailable bool                `json:"impact_available"`
 }
 
 func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user) {
@@ -58,6 +61,22 @@ func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user
 	}
 	if h.Endpoints != nil && h.Endpoints.Policy != nil {
 		out.CredentialReferences, out.AllowedPrivateNetworks = h.Endpoints.Policy.References(), h.Endpoints.Policy.Networks()
+	}
+	if view.Draft != nil {
+		candidate, _, err := h.Routing.Candidate(r.Context(), settings.DomainRouting, view.Draft.ID)
+		var invalid *settings.ValidationError
+		if err != nil && !errors.As(err, &invalid) {
+			settingsError(w, err)
+			return
+		}
+		if err == nil {
+			out.AffectedUsers, err = h.policyImpact(r, candidate)
+			if err != nil {
+				unavailable(w)
+				return
+			}
+			out.ImpactAvailable = true
+		}
 	}
 	respond(w, 200, out)
 }

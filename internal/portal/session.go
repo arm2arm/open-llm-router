@@ -3,6 +3,7 @@ package portal
 import (
 	"crypto/sha256"
 	"errors"
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"net/http"
 	"net/url"
 	"time"
@@ -67,7 +68,7 @@ func (h *Handler) withSession(allowPasswordChange bool, next func(http.ResponseW
 		if u.Overrides == nil {
 			u.Overrides = map[string]*int64{}
 		}
-		next(w, r, u)
+		next(w, r.WithContext(audit.WithActor(r.Context(), portalActor(u))), u)
 	}
 }
 

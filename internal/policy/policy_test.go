@@ -130,3 +130,11 @@ func TestOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestProtectedAdministratorIgnoresEditablePolicies(t *testing.T) {
+	one := int64(1)
+	p := ForUser(map[string]config.Group{"restricted": {Models: []string{"only"}}}, []string{"restricted"}, map[string]*int64{FieldRPM: &one, FieldStrictQuota: &one}, true)
+	if !p.Admin || !p.AllowsModel("anything") || p.RPM != nil || p.StrictQuota || p.Priority != 0 {
+		t.Fatal("protected admin restricted", p)
+	}
+}
