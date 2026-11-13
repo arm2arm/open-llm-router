@@ -176,6 +176,10 @@ func (r *runner) openAccounting(ctx context.Context) error {
 		return errors.New("create load-test database connection")
 	}
 	a := &accounting{pool: pool}
+	// Router API keys contain 32 cryptographically random bytes (auth.Generate),
+	// not user-chosen passwords. Match auth.Admin.CreateKey and Authenticate's
+	// SHA-256 lookup format; a password KDF here cannot find their stored hashes.
+	// User passwords are separately salted and hashed with Argon2id in auth.
 	hash := sha256.Sum256([]byte(r.o.APIKey))
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM api_keys WHERE hash=$1`, hash[:]).Scan(&a.keyID); err != nil {
 		pool.Close()

@@ -86,6 +86,17 @@ non-provider patterns and validity checks disabled; Gitleaks supplies the generi
 alternative. Its only allowlist matches a specific public variable name consumed after
 an empty example secret; it does not exempt a file or actual credential value.
 
+Code-scanning alert [#1](https://github.com/arm2arm/open-llm-router/security/code-scanning/1)
+classifies the load-test API key as a password. This is a false positive: `auth.Generate`
+creates keys from 32 cryptographically random bytes, and issuance, authentication and
+load-test accounting use the same SHA-256 lookup digest. Human passwords instead use
+individually salted Argon2id (`internal/auth/password.go`). Applying PBKDF2 only to the
+accounting lookup would make existing keys unfindable. `TestAccountingFindsIssuedAPIKey`
+checks the lookup against a key issued and authenticated through the real store in an
+isolated, migrated database. This triage applies only to that alert; the CodeQL rule
+and both language scans remain enabled. The [CodeQL query guidance](https://codeql.github.com/codeql-query-help/go/go-weak-sensitive-data-hashing/)
+distinguishes password KDFs from SHA-2/SHA-3 for other inputs.
+
 Recheck the actual settings through the API (requires repository administration access):
 
 ```sh
