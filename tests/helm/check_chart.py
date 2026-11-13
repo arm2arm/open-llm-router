@@ -116,6 +116,16 @@ class HelmChart(unittest.TestCase):
         }}}}
         config = yaml.safe_load(self.render(custom)["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
         self.assertEqual(list(config["models"]), ["real-model"])
+        # Values copied from chart 0.2 retain the old default pool explicitly.
+        legacy = {"demoBackend": {"enabled": False}, "config": {"models": {"chat-model": {
+            "pool": [{"url": "${OLR_DEMO_BACKEND_URL}", "weight": 2, "max_inflight": 3}],
+        }}}}
+        config = yaml.safe_load(self.render(legacy)["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(config["models"], {})
+        legacy["demoBackend"]["enabled"] = True
+        config = yaml.safe_load(self.render(legacy)["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        replica = config["models"]["chat-model"]["pool"][0]
+        self.assertEqual(replica, {"url": f"http://{NAME}-demo:8000", "weight": 2, "max_inflight": 3})
 
     def test_traefik_keycloak_ingress_and_controller_peers(self):
         values = yaml.safe_load((CHART / "examples/traefik.values.yaml").read_text())

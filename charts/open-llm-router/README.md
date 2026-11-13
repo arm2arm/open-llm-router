@@ -92,7 +92,8 @@ The router validates the full configuration at startup.
 
 Set `demoBackend.enabled: false` to omit the default demo model and workload. No
 `OLR_DEMO_BACKEND_URL` is needed. With no configured pool, the portal starts with
-an empty catalog for initial setup. For a real model, replace
+an empty catalog for initial setup. Legacy chart values containing the original demo
+environment placeholder are handled the same way. For a real model, replace
 `config.models.chat-model.upstream_model` and its full `pool` list, or add a named
 model with its protocols and timeouts. The existing `chat-model` metadata defaults
 remain available for overrides. Tokens belong
