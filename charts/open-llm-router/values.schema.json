@@ -114,6 +114,45 @@
               "type": "boolean"
             }
           }
+        },
+        "admin_api": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "trusted_proxy_cidrs": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "default_lifetime_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            },
+            "max_lifetime_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            },
+            "max_active_keys": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "requests_per_minute": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_concurrent": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         }
       }
     },

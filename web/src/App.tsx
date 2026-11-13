@@ -52,6 +52,7 @@ import {
   type Session,
 } from '@/lib/api'
 import { clients, snippet, type Client } from '@/lib/snippets'
+import { AgentAccessPage } from '@/agent-access'
 import { AdminPage, DailyChart, RequestsPage } from '@/pages'
 import {
   AccountPage,
@@ -278,9 +279,15 @@ function Workspace({
             Account
           </NavLink>
           {me.data?.admin && (
-            <NavLink to="/admin" className="nav-link">
+            <NavLink to="/admin" end className="nav-link">
               <ShieldCheck size={18} />
               Admin
+            </NavLink>
+          )}
+          {me.data?.admin && (
+            <NavLink to="/admin/agents" className="nav-link">
+              <KeyRound size={18} />
+              Agent access
             </NavLink>
           )}
         </nav>
@@ -365,6 +372,9 @@ function Workspace({
                     path="/admin"
                     element={<AdminPage self={me.data.user.id} />}
                   />
+                )}
+                {me.data.admin && (
+                  <Route path="/admin/agents" element={<AgentAccessPage />} />
                 )}
                 <Route path="*" element={<Navigate to="/keys" replace />} />
               </Routes>

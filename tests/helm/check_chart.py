@@ -20,6 +20,21 @@ NAME = "trial-open-llm-router"
 
 
 class HelmChart(unittest.TestCase):
+    def test_agent_administration_opt_in_and_proxy_configuration(self):
+        baseline = self.render()
+        config = yaml.safe_load(baseline["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertFalse(config["admin_api"]["enabled"])
+        self.assertEqual(config["admin_api"]["trusted_proxy_cidrs"], [])
+        policy = {"enabled": True, "trusted_proxy_cidrs": ["10.0.0.0/24", "2001:db8::/64"],
+                  "default_lifetime_days": 3, "max_lifetime_days": 30,
+                  "max_active_keys": 5, "requests_per_minute": 20, "max_concurrent": 2}
+        rendered = self.render({"config": {"admin_api": policy}})
+        config = yaml.safe_load(rendered["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(config["admin_api"], policy)
+        def checksum(resources):
+            return resources["Deployment", NAME]["spec"]["template"]["metadata"]["annotations"]["checksum/config"]
+        self.assertNotEqual(checksum(baseline), checksum(rendered))
+
     def invoke(self, *args):
         return subprocess.run(
             [HELM, *map(str, args)], text=True, capture_output=True, check=False,
@@ -328,7 +343,11 @@ class HelmChart(unittest.TestCase):
             self.assertEqual(policy["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"], "open-llm-router")
 
     def test_invalid_values_fail_before_install(self):
-        invalid = [{"replicaCount": 2}, {"postgresql": {"enabled": False}},
+        invalid = [{"config": {"admin_api": {"enabled": "yes"}}},
+                   {"config": {"admin_api": {"max_lifetime_days": 366}}},
+                   {"config": {"admin_api": {"max_concurrent": -1}}},
+                   {"config": {"admin_api": {"trust_all_proxies": True}}},
+                   {"replicaCount": 2}, {"postgresql": {"enabled": False}},
                    {"env": {"PORTAL_BASE_URL": "https://wrong.invalid"}},
                    {"env": {"OLR_TRACE_USER_ID": True}}, {"env": {"OIDC_ISSUER": "https://wrong.invalid"}},
                    {"env": {"OLR_DATABASE_URL": "postgres://wrong.invalid/olr"}},

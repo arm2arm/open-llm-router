@@ -60,6 +60,6 @@ PYPROBE
   cd web
   # These fixtures own disposable databases and routers inside this project's
   # network; none can reset the developer's or operator's existing administrator.
-  npx playwright test tests/local-auth.spec.ts -g 'local-only first|regular local user|unreachable Keycloak|creates a local user|group defaults|administration history'
+  npx playwright test tests/local-auth.spec.ts -g 'local-only first|regular local user|unreachable Keycloak|creates a local user|group defaults|administration history|agent administration key lifecycle'
 )
 echo 'PASS: local administration acceptance (synthetic local evidence; not issue #21 pilot evidence)'

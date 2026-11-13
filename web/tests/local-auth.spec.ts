@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { checkAgentAccess } from './agent-access'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -94,7 +95,7 @@ async function startFixture(
   const config = join(fixture.directory, 'config.yaml')
   writeFileSync(
     config,
-    `${suffix === 'tracing' ? 'content_tracing: {enabled: true}\n' : ''}${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
+    `${suffix === 'agents' ? 'admin_api: {enabled: true}\n' : ''}${suffix === 'tracing' ? 'content_tracing: {enabled: true}\n' : ''}${oidc}models:\n  test:\n    upstream_model: chat-model\n    protocols: ${suffix === 'tracing' ? '[openai, anthropic]' : '[openai]'}\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-a:8000, weight: 1, max_inflight: 4}\n  limited:\n    upstream_model: chat-model\n    protocols: [openai]\n    timeout_s: 5\n    pool:\n      - {url: http://mock-llm-b:8000, weight: 1, max_inflight: 4}\ngroups:\n  staff: {models: [test], rpm: 7, max_concurrent: 2}\n  students: {models: [limited], rpm: 3}\n  admins: {models: ['*'], admin: true}\n`,
   )
   // Test a new image without restarting the developer's running router.
   const image =
@@ -2109,4 +2110,26 @@ test('backup restore preserves protected credentials, revisions, audit and accou
   for (const secret of [key, rootKey, initial, changed, recovery, final])
     expect(JSON.stringify(history)).not.toContain(secret)
   await visitor.close()
+})
+
+test('agent administration key lifecycle', async ({ page, context }) => {
+  const base = await startFixture(false, 'agents')
+  const headers = { Origin: base }
+  expect(
+    (
+      await context.request.post(`${base}/portal/login/local`, {
+        headers,
+        data: { username: 'admin', password: initial },
+      })
+    ).status(),
+  ).toBe(200)
+  expect(
+    (
+      await context.request.post(`${base}/portal/password`, {
+        headers,
+        data: { current_password: initial, new_password: changed },
+      })
+    ).status(),
+  ).toBe(200)
+  await checkAgentAccess(page, context.request, base, changed)
 })

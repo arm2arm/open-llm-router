@@ -95,6 +95,9 @@ env: {}
 # A demo model is added only when demoBackend.enabled=true. Disable it for an
 # empty initial catalog or supply real models here; no demo environment is needed.
 config:
+  admin_api:
+    enabled: false
+    trusted_proxy_cidrs: []
   security:
     require_tls: false
   content_tracing:

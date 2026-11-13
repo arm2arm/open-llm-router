@@ -77,6 +77,7 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 			opt.portal(h, cfg, pool, forwarder)
 		}
 		t.Cleanup(h.Close)
+		s.Handle("/api/admin/v1/", h)
 		s.Handle("/portal", h)
 		s.Handle("/portal/", h)
 		f.cfg = cfg

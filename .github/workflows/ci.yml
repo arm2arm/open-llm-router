@@ -14,7 +14,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17
@@ -41,8 +41,20 @@ jobs:
         run: make lint
       - name: Vulnerability check
         run: make vuln
+      - name: Install the administration MCP interoperability client
+        run: |
+          python3 -m venv /tmp/olr-mcp
+          /tmp/olr-mcp/bin/pip install 'mcp==1.30.0'
+          python3 -m venv /tmp/olr-mcp2
+          /tmp/olr-mcp2/bin/pip install 'mcp==2.0.0'
       - name: Unit and integration tests (race detector)
+        env:
+          OLR_TEST_MCP_PYTHON: /tmp/olr-mcp2/bin/python
         run: make test
+      - name: MCP 1.x compatibility
+        env:
+          OLR_TEST_MCP_PYTHON: /tmp/olr-mcp/bin/python
+        run: go test -count=1 ./tests/integration -run '^TestAgentAdministrationLifecycle$'
       - name: SSE splitter fuzz test
         run: go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=10s -parallel=2
       - name: Client verification helpers

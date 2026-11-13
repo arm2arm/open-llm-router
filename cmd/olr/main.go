@@ -268,6 +268,8 @@ func serve(args []string) error {
 	portalHandler.SetRoutingRuntime(routed)
 	portalHandler.SetSettingsRuntime(managed)
 	portalHandler.AuthServices = ssoServices
+	srv.Handle("/api/admin/v1", portalHandler)
+	srv.Handle("/api/admin/v1/", portalHandler)
 	srv.Handle("/portal", portalHandler)
 	srv.Handle("/portal/", portalHandler)
 

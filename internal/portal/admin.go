@@ -21,6 +21,10 @@ import (
 // the group in the identity provider takes effect at their next login.
 func (h *Handler) admin(next func(http.ResponseWriter, *http.Request, user)) http.HandlerFunc {
 	return h.authenticated(func(w http.ResponseWriter, r *http.Request, u user) {
+		if r.Method != http.MethodGet {
+			h.agentMu.Lock()
+			defer h.agentMu.Unlock()
+		}
 		if !h.access(u).Admin {
 			fail(w, 403, "permission_error", "admin access is required")
 			return
