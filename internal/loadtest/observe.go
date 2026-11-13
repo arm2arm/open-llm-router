@@ -2,7 +2,7 @@ package loadtest
 
 import (
 	"context"
-	"crypto/sha512"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
-	"golang.org/x/crypto/pbkdf2"
 )
 
 type RuntimeSnapshot struct {
@@ -177,8 +176,12 @@ func (r *runner) openAccounting(ctx context.Context) error {
 		return errors.New("create load-test database connection")
 	}
 	a := &accounting{pool: pool}
-	hash := pbkdf2.Key([]byte(r.o.APIKey), []byte("api_keys"), 600000, 32, sha512.New)
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM api_keys WHERE hash=$1`, hash).Scan(&a.keyID); err != nil {
+	// Router API keys contain 32 cryptographically random bytes (auth.Generate),
+	// not user-chosen passwords. Match auth.Admin.CreateKey and Authenticate's
+	// SHA-256 lookup format; a password KDF here cannot find their stored hashes.
+	// User passwords are separately salted and hashed with Argon2id in auth.
+	hash := sha256.Sum256([]byte(r.o.APIKey))
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM api_keys WHERE hash=$1`, hash[:]).Scan(&a.keyID); err != nil {
 		pool.Close()
 		return errors.New("cannot find the load-test API key in the database")
 	}
