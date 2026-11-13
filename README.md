@@ -79,16 +79,15 @@ and the [pilot checklist](docs/PILOT.md).
 | Area | Available today |
 |---|---|
 | Routing | OpenAI and Anthropic native APIs; SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
-| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; routing revisions for models, endpoints and aliases in Admin; local user management; expiring hash-only per-user keys with site lifetime/count limits |
+| Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; routing revisions for models, endpoints, aliases and group policies in Admin; searchable administration history; local user management; expiring hash-only per-user keys with site lifetime/count limits |
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |
 | Usage and operations | Usage history and timing; personal text, reasoning, tool and stream traces with user-controlled capture and 7-day default retention; user-driven deletion; Open WebUI trusted forwarding; Keycloak group sync; Prometheus metrics, Grafana dashboard and OTLP traces |
 | Deployment | Local Compose demo, real-backend examples, production pilot Compose, [Helm chart](charts/open-llm-router) and [Kubernetes manifests](deploy/k8s) |
 
-**Still planned:** editing group policies in Admin;
-and shared limits/live configuration across multiple router processes. Group
-defaults use YAML; logical models, aliases and Keycloak settings can move from
-YAML/environment into database revisions. See the [capability audit and milestones](docs/ADMIN_FEATURE_PLAN.md)
+**Still planned:** shared limits/live configuration across multiple router processes
+and dedicated cloud-provider adapters. Models, aliases, group policies and Keycloak
+settings can move from YAML/environment into database revisions. See the [capability audit and milestones](docs/ADMIN_FEATURE_PLAN.md)
 and [security review](docs/SECURITY_REVIEW.md) for scope and limitations.
 
 ## Quickstart (5 minutes)
@@ -154,6 +153,12 @@ Run `docker compose up -d --wait router` to apply them. The portal, login and ac
 policies stay available; `chat-model` and the selected Ollama model name both route to
 that real model. Config paths are relative to `deploy/compose`; absolute paths also work.
 
+For a local install without Keycloak, use the [local-only Compose override](deploy/compose/local-only.yml)
+and [protected administrator bootstrap instructions](docs/ADMIN_GUIDE.md#install-the-local-only-development-stack).
+There is no default local administrator password. `make acceptance-local` builds a fresh,
+isolated no-IdP installation and verifies its administration workflow, then removes its
+test containers and database volume. See the [acceptance matrix](docs/ADMIN_GUIDE.md#local-administration-acceptance).
+
 ## Documentation
 
 | Document | Content |
@@ -197,6 +202,7 @@ public development value.
 | `make vuln` | govulncheck |
 | `make web-check` | portal lockfile install, lint, type check, build, `npm audit` |
 | `make build` | portal assets, then `bin/olr`, `bin/mock-llm`, `bin/olr-loadtest` |
+| `make acceptance-local` | isolated clean local-only install and six administration browser journeys; no existing administrator is reset |
 | `make smoke` | readiness, model listing and backend probes against the stack |
 | `make sdk`, `make sdk-limits` | official OpenAI and Anthropic SDKs through the router (needs `uv`) |
 | `make portal-check`, `make brokered-check` | real Keycloak logins, portal API, SSO logout; federated login and required claim |

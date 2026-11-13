@@ -13,11 +13,12 @@ Missing, malformed, unknown, revoked or expired keys and disabled users receive 
 in the caller's OpenAI or Anthropic error format. `/healthz` and `/readyz` remain public.
 Database authentication failures return 503. Portal sessions never authenticate `/v1/*`.
 
-Model access comes from the user's stored groups and the config's `groups` section. Group
+Model access comes from the user's stored groups and the active routing revision’s `groups` (or the file when unmanaged). Group
 names match exactly. Allowed models are the union of all matching groups; `models: ["*"]`
 grants every configured model. A user with no matching configured group has no model access,
-including when the config has no groups. Bootstrap users therefore need `user add -groups staff`
-or another configured group. `GET /v1/models` returns only allowed models and their aliases;
+including when the config has no groups. Ordinary CLI users need `user add -groups staff`
+or another configured group. The protected local administrator has all model grants,
+unlimited limits and admin authority independently of editable groups or overrides. `GET /v1/models` returns only allowed models and their aliases;
 callers with no access receive `{"object":"list","data":[]}`.
 
 Model checks run after alias resolution and before upstream-name rewriting or replica selection.
@@ -30,7 +31,7 @@ These limits apply per user, across all keys, protocols, models and replicas.
 The bootstrap commands use `OLR_DATABASE_URL` and work without a running HTTP server. Under
 Compose, run them as `docker compose exec -T router olr admin ...`; on the host use `bin/olr admin ...`.
 `olr admin settings` imports the SSO connection (`-domain authentication`) or the
-routing (`-domain routing`: models, endpoints and aliases) into database revisions and
+routing (`-domain routing`: models, endpoints, aliases and group policies) into database revisions and
 manages drafts, activation, rollback and encrypted secrets; see the
 [administrator guide](ADMIN_GUIDE.md#manage-authentication-settings-in-the-database).
 `olr config check` validates a config file without a database or network.
@@ -396,7 +397,7 @@ CI runs on pushes and pull requests. It uses the same `make lint`, `make vuln` a
 commands with a Postgres 17 service, while a parallel job builds both runtime images, starts
 Compose and runs the frontend checks, Playwright self-service journey, `make smoke`,
 `make portal-check`, and official SDK checks against the router and both mocks. The Go
-job has a five-minute timeout and the image/browser job ten minutes. Dependencies are cached.
+job has a five-minute timeout and the image/browser job fifteen minutes. Dependencies are cached.
 
 
 
@@ -410,3 +411,14 @@ changes insert history transactionally. Application roles cannot rewrite,
 delete or truncate events. History survives account deletion and full backup/
 restore and is not covered by usage retention. See ADMIN_GUIDE.md for the default
 indefinite retention and offline privacy-erasure/pseudonymization procedure.
+
+
+### Administration acceptance reference
+
+See the [reproduction matrix](ADMIN_GUIDE.md#local-administration-acceptance) for
+no-IdP, bundled and isolated external Keycloak modes, PostgreSQL upgrade/restore,
+password recovery and bootstrap-secret retirement. `make acceptance-local` needs
+Compose 2.24.4+; normal bundled Compose needs 2.20+. It builds its own image and
+uses isolated project names, ports and volumes. The standard development realm
+continues to use explicit public test-only credentials. No local acceptance run
+is production pilot evidence for #21.

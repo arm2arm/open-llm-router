@@ -50,7 +50,7 @@ jobs:
 
   images:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -94,6 +94,8 @@ jobs:
         run: make smoke
       - name: Portal self-service browser journey
         run: cd web && npm run test:e2e
+      - name: Clean install without an identity provider
+        run: make acceptance-local
       - name: Keycloak login, portal API and SSO logout
         run: make portal-check
       - name: Brokered login and required claim

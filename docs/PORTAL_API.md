@@ -199,7 +199,7 @@ See [REQUEST_TRACING.md](REQUEST_TRACING.md) for bounds and supported field sema
 
 ## Admin
 
-Members of a group with `admin: true` in the config and the protected local administrator
+Members of a group with `admin: true` in the active routing policy and the protected local administrator
 get `"admin": true` in `/portal/api/me` and these routes; everyone else gets 403.
 Membership and protected status are read from the database on each request. Protected
 authority does not grant inference model access; normal model policies still apply.
@@ -335,8 +335,9 @@ Origin; 404 unknown logical model or revision from another model; 409 stale edit
 503 storage/service unavailable. Failed activation leaves the current revision.
 Existing requests retain their routing snapshot; per-user admission and accounting
 are retained. Activation supports one router process, without a broadcast to peers.
-Logical names, aliases and group policies remain file-owned; these routes do not
-create/delete logical models or edit permissions.
+These legacy per-model routes do not create/delete logical models or edit
+permissions. Import the routing domain below to manage models, aliases and group
+policies together; import disables legacy endpoint writes.
 
 ## Admin authentication settings
 
@@ -402,14 +403,14 @@ These routes require an admin session. Bodies use the normal JSON and same-origi
 checks; drafts accept up to 256 KiB.
 
 - `GET /portal/api/admin/settings/routing` returns `settings` (the managed view for
-  the routing domain: `managed`, `version`, effective `models` and `aliases`,
-  `active`/`draft` revisions with `document` `{models, aliases}`, `validation` and
+  the routing domain: `managed`, `version`, effective `models`, `aliases` and `groups`,
+  `active`/`draft` revisions with `document` `{models, aliases, groups}`, `validation` and
   `checks`, informational file `conflicts` and `history`), `runtime.revision` (the
   revision this process runs; `0` for file and per-model endpoint revisions),
   `credential_references`, `allowed_private_networks` and `group_grants`
-  (group → granted models, `*` for all; file-owned).
+  (group → granted models, `*` for all; active routing policy).
 - `POST …/import` with `{}`; afterwards `PUT /portal/api/admin/endpoints` returns 409.
-- `PUT …/draft` with `{"version":N,"document":{"models":{…},"aliases":{…}}}`. Model
+- `PUT …/draft` with `{"version":N,"document":{"models":{…},"aliases":{…},"groups":{…}}}`. Model
   objects use the YAML field names (`protocols`, `upstream_model`, `timeout_s`, `pool`
   with `url`, `health_path`, `weight`, `max_inflight`, `bearer_token_env`, …).
 - `POST …/discard` with `{"version":N}`.
@@ -498,3 +499,25 @@ success history in their committing transaction and fail if that insert fails.
 Refusal/failure history is best effort when storage is unavailable. API errors
 never claim an event was recorded. Free-text override reasons are deliberately
 excluded from the event payload; only their presence is recorded.
+
+
+### Integrated administration workflow
+
+Use a full local administrator session after its required password change.
+Import routing, edit endpoints/models/aliases and group defaults as one draft,
+preview a stored user's effective access and `affected_users`, run checks, then
+activate with the latest version and draft ID. Assign an ordinary local user to
+an active group, replace their temporary password, issue a key, and exercise
+streaming inference/usage. Rollback restores the routing policy snapshot; it
+preserves per-user overrides, keys and accumulated accounting. History reports
+the actor UUID, target, result and revision without credential or request content.
+
+Authentication mutations additionally require a local sign-in within 15 minutes.
+Checking or testing a draft never activates it. Keep the local administrator
+session available while switching issuers; use the prior revision for rollback
+and `/portal/sign-in/local` during an IdP outage. Ordinary users receive 403 on
+admin routes. The protected administrator cannot be disabled, reassigned,
+demoted through policies/overrides or password-reset by these APIs. Lost protected
+password recovery is an operator CLI action; there is no recovery HTTP endpoint.
+See the [acceptance matrix](ADMIN_GUIDE.md#local-administration-acceptance) and
+[restore walkthrough](RUNBOOK.md#administration-outage-upgrade-and-restore-walkthrough).
