@@ -72,13 +72,13 @@ policies cluster-wide. The source tree cannot attest a site's admission configur
 ## Actual repository settings
 
 The `main` protection policy is versioned in `.github/main-protection.json`. It requires
-PRs, one independent maintainer approval, dismissal of stale approvals, approval after
-the last push, passing CI from GitHub Actions against an up-to-date branch, and resolved
-conversations. Administrators are subject to these rules. Force pushes and deletion are
-disabled. Required checks cover Go/race/integration, browser/image, Helm, live network
-policy, deployment verification/secret scanning, dependency review, and both CodeQL
-languages. These stricter review settings are applied after the remediation PR merges;
-the remediation itself uses the pre-existing protection policy.
+PRs, passing CI from GitHub Actions against an up-to-date branch, and resolved
+conversations. Independent approvals and approval after the last push are optional
+for the current solo-maintainer workflow with AI assistance. Reviews remain available;
+stale approvals are dismissed after changes. Administrators are subject to the
+remaining protections. Force pushes and deletion are disabled. Required checks cover
+Go/race/integration, browser/image, Helm, live network policy, deployment
+verification/secret scanning, dependency review, and both CodeQL languages.
 
 Repository secret scanning, push protection, Dependabot security updates and mandatory
 Action SHA pinning are enabled. CodeQL scans Go and JavaScript/TypeScript on PRs, main
