@@ -152,6 +152,15 @@ class HelmChart(unittest.TestCase):
         self.assertEqual(len(default_peers), 1)
         self.assertEqual(default_peers[0]["namespaceSelector"]["matchLabels"],
                          {"kubernetes.io/metadata.name": "monitoring"})
+        # Controllers can publish nonstandard ports and provide a default TLS
+        # certificate without a per-Ingress Secret.
+        values["portal"]["baseURL"] = "https://llm.example.org:8443"
+        values["keycloak"]["baseURL"] = "https://login.example.org:8443"
+        values["ingress"]["tlsSecretName"] = ""
+        values["keycloak"]["ingress"]["tlsSecretName"] = ""
+        custom = self.render(values)
+        self.assertNotIn("tls", custom["Ingress", NAME]["spec"])
+        self.assertNotIn("tls", custom["Ingress", NAME + "-keycloak"]["spec"])
 
     def test_custom_credentials_and_storage(self):
         password = "db:pass/@?#% +value"
@@ -255,7 +264,8 @@ class HelmChart(unittest.TestCase):
         import copy
         valid = yaml.safe_load((CHART / "examples/traefik.values.yaml").read_text())
         invalid = []
-        for key, value in [("enabled", False), ("baseURL", "https://login.example.org:8080")]:
+        for key, value in [("enabled", False), ("baseURL", "https://wrong.example.org"),
+                           ("baseURL", "http://login.example.org")]:
             values = copy.deepcopy(valid)
             values["keycloak"][key] = value
             invalid.append(values)
@@ -263,9 +273,9 @@ class HelmChart(unittest.TestCase):
         values["networkPolicy"]["ingressPeers"] = []
         invalid.append(values)
         values = copy.deepcopy(valid)
-        values["portal"]["baseURL"] = "https://llm.example.org:8080"
+        values["portal"]["baseURL"] = "https://wrong.example.org"
         invalid.append(values)
-        for key in ("className", "host", "tlsSecretName"):
+        for key in ("className", "host"):
             values = copy.deepcopy(valid)
             values["keycloak"]["ingress"][key] = ""
             invalid.append(values)

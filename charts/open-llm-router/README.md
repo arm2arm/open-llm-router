@@ -141,7 +141,10 @@ peers can access Keycloak's HTTP service; monitoring peers cannot access Keycloa
 
 To expose bundled SSO, enable `keycloak.ingress`, set its class/host/TLS Secret and
 set `keycloak.baseURL` to the same browser-visible origin, e.g. `https://login.example.org`.
-Do not append the internal `:8080` port. The chart sets Keycloak's `xforwarded` proxy
+Use the controller's external port, usually HTTPS 443; do not copy the internal `:8080`
+port unless the controller actually publishes there. Custom external ports and a
+controller-provided default TLS certificate are supported without a per-Ingress Secret.
+The chart sets Keycloak's `xforwarded` proxy
 handling and keeps the router's internal OIDC backchannel separate. Existing Keycloak
 realms need their client redirect/logout URLs updated when the portal origin changes.
 Bundled Keycloak remains an evaluation service; use external SSO for production.

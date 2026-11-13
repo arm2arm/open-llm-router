@@ -4,9 +4,9 @@
 {{- end }}
 {{- $ingress := .Values.keycloak.ingress }}
 {{- $host := required "keycloak.ingress.host is required when Keycloak ingress is enabled" $ingress.host }}
-{{- $scheme := ternary "https" "http" (not (empty $ingress.tlsSecretName)) }}
-{{- if ne (.Values.keycloak.baseURL | trimSuffix "/") (printf "%s://%s" $scheme $host) }}
-{{- fail "keycloak.baseURL must match the Keycloak ingress origin (https with tlsSecretName, otherwise http), without the internal :8080 port" }}
+{{- $origin := urlParse .Values.keycloak.baseURL }}
+{{- if or (ne (regexReplaceAll ":[0-9]+$" (get $origin "host") "") $host) (and $ingress.tlsSecretName (ne (get $origin "scheme") "https")) }}
+{{- fail "keycloak.baseURL must match keycloak.ingress.host and use https when keycloak.ingress.tlsSecretName is set" }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
