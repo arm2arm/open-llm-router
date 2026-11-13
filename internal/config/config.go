@@ -211,23 +211,23 @@ type Replica struct {
 // Group is the policy for the members of one identity-provider group. A limit
 // that is nil is not enforced.
 type Group struct {
-	Models         []string `yaml:"models"` // model names, or "*" for all
-	TokensPerDay   *int64   `yaml:"tokens_per_day"`
-	TokensPerMonth *int64   `yaml:"tokens_per_month"`
-	RPM            *int     `yaml:"rpm"`
-	TPM            *int64   `yaml:"tpm"`            // tokens per minute, a token bucket
-	MaxConcurrent  *int     `yaml:"max_concurrent"` // interactive keys
+	Models         []string `yaml:"models" json:"models"` // model names, or "*" for all
+	TokensPerDay   *int64   `yaml:"tokens_per_day" json:"tokens_per_day"`
+	TokensPerMonth *int64   `yaml:"tokens_per_month" json:"tokens_per_month"`
+	RPM            *int     `yaml:"rpm" json:"rpm"`
+	TPM            *int64   `yaml:"tpm" json:"tpm"`                       // tokens per minute, a token bucket
+	MaxConcurrent  *int     `yaml:"max_concurrent" json:"max_concurrent"` // interactive keys
 	// MaxConcurrentBatch limits batch keys, counted apart from interactive
 	// ones; omitted, batch keys get max_concurrent.
-	MaxConcurrentBatch *int `yaml:"max_concurrent_batch"`
+	MaxConcurrentBatch *int `yaml:"max_concurrent_batch" json:"max_concurrent_batch"`
 	// StrictQuota reserves max_tokens plus the request size before a call,
 	// so concurrent calls cannot exceed tokens_per_day or tokens_per_month.
-	StrictQuota bool `yaml:"strict_quota"`
+	StrictQuota bool `yaml:"strict_quota" json:"strict_quota"`
 	// Admin grants the portal's admin pages to the group's members.
-	Admin bool `yaml:"admin"`
+	Admin bool `yaml:"admin" json:"admin"`
 	// Priority is added to the key class's priority (lower is sooner), for
 	// the router's queue and the backend's scheduler.
-	Priority int `yaml:"priority"`
+	Priority int `yaml:"priority" json:"priority"`
 }
 
 // Problems lists everything found wrong with a config file in one pass.
@@ -292,7 +292,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, yamlProblems(err, data)
 	}
 	cfg.Portal = Portal{BaseURL: "http://localhost:8080", CookieSecure: true}
-	if issuer, ok := lookup("OIDC_ISSUER"); ok {
+	if issuer, ok := lookup("OIDC_ISSUER"); ok && (issuer != "" || cfg.OIDC != nil) {
 		if cfg.OIDC == nil {
 			cfg.OIDC = &OIDC{PortalClientID: "olr-portal"}
 		}

@@ -29,8 +29,7 @@ const settingsUsage = `usage:
 
 Managed settings move a domain from the config file and environment into
 PostgreSQL revisions. Domains: authentication (the SSO connection, default)
-and routing (logical models with endpoint pools, and aliases; group policies
-stay in the file). Import is explicit and keeps the current behavior; after
+and routing (logical models with endpoint pools, aliases and group policies). Import is explicit and keeps the current behavior; after
 it, the active revision is the only authority for the domain. Each command
 prints the domain view as JSON: effective values and sources, active and draft
 revisions with their checks, conflicts and history. Secrets are shown as

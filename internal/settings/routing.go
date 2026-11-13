@@ -20,10 +20,11 @@ const (
 // Routing is the managed set of logical models with their endpoint pools, and
 // the aliases clients may use for them. Endpoint credentials are references to
 // allowed environment variables (bearer_token_env); resolved tokens are never
-// part of the document. Group policies stay file-owned.
+// part of the document. Group policies activate in the same revision.
 type Routing struct {
 	Models  map[string]config.Model `json:"models"`
 	Aliases map[string]string       `json:"aliases"`
+	Groups  map[string]config.Group `json:"groups"`
 }
 
 func (*Routing) domainName() string { return DomainRouting }
@@ -48,7 +49,10 @@ func (r *Routing) baseline(current *config.Config) {
 	data, _ := json.Marshal(current.Models)
 	models := map[string]config.Model{}
 	_ = json.Unmarshal(data, &models)
-	*r = Routing{Models: models, Aliases: maps.Clone(current.Aliases)}
+	groupData, _ := json.Marshal(current.Groups)
+	groups := map[string]config.Group{}
+	_ = json.Unmarshal(groupData, &groups)
+	*r = Routing{Models: models, Aliases: maps.Clone(current.Aliases), Groups: groups}
 	if r.Aliases == nil {
 		r.Aliases = map[string]string{}
 	}
@@ -77,6 +81,17 @@ func (r *Routing) problems() []string {
 			add("aliases: alias names and targets must be up to 128 bytes of text")
 		}
 	}
+	if len(r.Groups) > 256 {
+		add("groups: at most 256 groups")
+	}
+	for _, name := range slices.Sorted(maps.Keys(r.Groups)) {
+		if !plainText(name, 128) {
+			add("groups: names must be 1 to 128 bytes of text")
+		}
+		if len(r.Groups[name].Models) > maxModels {
+			add("groups.%s.models: at most %d model grants", name, maxModels)
+		}
+	}
 	return p
 }
 
@@ -85,7 +100,11 @@ func (*Routing) secrets() []secretBinding { return nil }
 // apply validates the routing against base's group policies and resolves
 // endpoint credentials; config problems name keys, never credential values.
 func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, error) {
-	cfg, err := config.WithRouting(base, r.Models, r.Aliases, in.tokens)
+	groups := r.Groups
+	if groups == nil { // pre-policy revisions used deployment policies
+		groups = base.Groups
+	}
+	cfg, err := config.WithPolicies(base, r.Models, r.Aliases, groups, in.tokens)
 	if err != nil {
 		var problems config.Problems
 		if errors.As(err, &problems) {
@@ -127,13 +146,17 @@ func (r *Routing) values() map[string]string {
 	for alias, target := range r.Aliases {
 		values["aliases."+alias] = target
 	}
+	for name, group := range r.Groups {
+		data, _ := json.Marshal(group)
+		values["groups."+name] = string(data)
+	}
 	return values
 }
 
-func (*Routing) settingNames() []string { return []string{"models", "aliases"} }
+func (*Routing) settingNames() []string { return []string{"models", "aliases", "groups"} }
 
 func (*Routing) fileSources(*config.Config) map[string]string {
-	return map[string]string{"models": config.SourceFile, "aliases": config.SourceFile}
+	return map[string]string{"models": config.SourceFile, "aliases": config.SourceFile, "groups": config.SourceFile}
 }
 
 // checksPassed: activation probes the changed endpoints itself.

@@ -103,7 +103,7 @@ func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal, _ := auth.FromContext(r.Context())
-	snapshot, err := h.Limits.Snapshot(r.Context(), principal.UserID, h.callerPolicy(r))
+	snapshot, err := h.Limits.Snapshot(r.Context(), principal.UserID, h.callerPolicy(r, h.currentConfig()))
 	if err != nil {
 		limits.WriteError(w, config.ProtocolOpenAI, err)
 		return
@@ -112,16 +112,16 @@ func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
-func (h *Handler) callerPolicy(r *http.Request) policy.Policy {
+func (h *Handler) currentConfig() *config.Config { cfg, _ := h.Snapshot(); return cfg }
+
+func (h *Handler) callerPolicy(r *http.Request, cfg *config.Config) policy.Policy {
 	p, _ := auth.FromContext(r.Context())
-	access := policy.Resolve(h.cfg.Groups, p.Groups).WithOverrides(p.Overrides)
-	access.Admin = access.Admin || p.ProtectedAdmin
-	return access
+	return policy.ForUser(cfg.Groups, p.Groups, p.Overrides, p.ProtectedAdmin)
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := h.Snapshot()
-	access := h.callerPolicy(r)
+	access := h.callerPolicy(r, cfg)
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
 	data := make([]map[string]any, 0, len(names))
@@ -166,7 +166,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		return
 	}
 	principal, _ := auth.FromContext(r.Context())
-	access := h.callerPolicy(r)
+	access := h.callerPolicy(r, cfg)
 	slot, gate := h.bodies.acquire(principal.UserID, access.Concurrency(principal.KeyClass))
 	if slot == nil {
 		w.Header().Set("Connection", "close")

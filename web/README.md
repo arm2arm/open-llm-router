@@ -36,3 +36,13 @@ inline styles support Radix's focus/scroll management.
 
 Client snippets follow the versions/settings tested in `docs/CLIENTS.md`.
 OpenCode limits are explicit examples and must match the site's backend.
+
+Administration acceptance is part of `local-auth.spec.ts`: local-only and bundled
+SSO, a fresh external Keycloak process/realm with connection failures and rollback,
+and a real PostgreSQL dump/restore followed by lost-password recovery. Every
+fixture owns its database, container and public synthetic credentials. No dump,
+credential-bearing screenshot, video or trace becomes a test artifact. The dump
+is restored from process memory, and the source database is replaced only after
+stopping its disposable router. `make acceptance-local` creates and cleans a
+separate Compose project without starting Keycloak. CI runs both the complete
+bundled/external suite and that independent no-IdP installation.
