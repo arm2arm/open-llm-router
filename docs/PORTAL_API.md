@@ -481,3 +481,20 @@ canonical `models`, allowed `aliases`, `limits`, `priority`, `admin`, stored
 `overrides`, `protected_admin`, and `affected_users` IDs/usernames. The same
 resolver enforces inference and portal access. Ordinary users receive 403.
 The request uses the same JSON/Origin protection as other admin mutations.
+
+
+### Append-only administration history
+
+`GET /portal/api/admin/history` is admin-only. Optional filters: `action` (exact),
+`actor` (UUID), `target` (UUID or settings domain), `result` (`succeeded`, `refused`,
+`failed`), `from`/`to` (inclusive RFC3339), `before` (nonnegative event-ID cursor),
+`limit` (1–200; default 100). Response: `events` and optional `next_before`; pass
+that cursor to fetch older rows. Invalid filters return 400. Non-admins receive
+403. Event objects expose `id`, `time`, `action`, `actor`, `target_type`,
+`target_id`, `revision`, `result`, `reason` and selected `details`.
+
+History has no mutation endpoints. Credential/configuration state changes write
+success history in their committing transaction and fail if that insert fails.
+Refusal/failure history is best effort when storage is unavailable. API errors
+never claim an event was recorded. Free-text override reasons are deliberately
+excluded from the event payload; only their presence is recorded.

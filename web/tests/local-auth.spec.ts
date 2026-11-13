@@ -1523,3 +1523,64 @@ test('administrator edits group defaults and previews overrides before activatio
   expect(restored.models).not.toContain('limited')
   expect(restored.limits.rpm).toBe(2)
 })
+
+test('administration history shows searchable immutable events without credentials', async ({
+  page,
+  context,
+}) => {
+  const base = await startFixture(false, 'history')
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const created = await context.request.post(`${base}/portal/api/admin/users`, {
+    headers: { Origin: base },
+    data: {
+      username: 'history-browser-user',
+      groups: ['staff'],
+      password: initial,
+    },
+  })
+  expect(created.status()).toBe(201)
+  const id = (await created.json()).id as string
+  expect(
+    (
+      await context.request.put(
+        `${base}/portal/api/admin/users/${id}/overrides/rpm`,
+        {
+          headers: { Origin: base },
+          data: { value: 4, reason: 'private-browser-reason' },
+        },
+      )
+    ).status(),
+  ).toBe(204)
+  await page.goto(`${base}/portal/admin`)
+  const history = page.getByRole('region', { name: 'Administration history' })
+  await history.getByLabel('History target', { exact: true }).fill(id)
+  await history
+    .getByRole('button', { name: 'Search history', exact: true })
+    .click()
+  const events = history.getByRole('table', { name: 'Administration events' })
+  await expect(events).toContainText('user.create_local')
+  await expect(events).toContainText('user.override_set')
+  await expect(events).not.toContainText(initial)
+  await expect(events).not.toContainText('private-browser-reason')
+  await history
+    .getByLabel('History action', { exact: true })
+    .fill('user.override_set')
+  await history
+    .getByRole('button', { name: 'Search history', exact: true })
+    .click()
+  await expect(events.getByRole('row')).toHaveCount(2)
+  await expect(events).toContainText('succeeded')
+  await history
+    .getByLabel('History result', { exact: true })
+    .selectOption('failed')
+  await history
+    .getByRole('button', { name: 'Search history', exact: true })
+    .click()
+  await expect(history).toContainText('No matching administration events')
+})

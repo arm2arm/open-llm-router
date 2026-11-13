@@ -40,6 +40,9 @@ type Actor struct {
 // Label is a short attribution for revision and activation rows.
 func (a Actor) Label() string {
 	label := a.Type
+	if a.ID != "" {
+		label += ":" + a.ID
+	}
 	if a.Name != "" {
 		label += ":" + a.Name
 	}
@@ -110,4 +113,15 @@ func Record(ctx context.Context, db executor, e Event) error {
 		return errors.New("audit event could not be recorded")
 	}
 	return nil
+}
+
+type actorKey struct{}
+
+// WithActor carries authenticated attribution into shared mutation services.
+func WithActor(ctx context.Context, actor Actor) context.Context {
+	return context.WithValue(ctx, actorKey{}, actor)
+}
+func ActorFromContext(ctx context.Context) (Actor, bool) {
+	actor, ok := ctx.Value(actorKey{}).(Actor)
+	return actor, ok
 }

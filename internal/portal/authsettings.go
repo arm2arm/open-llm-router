@@ -30,7 +30,7 @@ const recentLocalSignIn = 15 * time.Minute
 const testLoginCookie = "olr_test_login"
 
 func portalActor(u user) audit.Actor {
-	return audit.Actor{Type: "portal_user", ID: u.ID, Name: u.Username}
+	return audit.Actor{Type: "portal_user", ID: u.ID}
 }
 
 func recentLocal(u user) bool {
@@ -480,13 +480,17 @@ func (h *Handler) applyAuthentication(w http.ResponseWriter, r *http.Request, u 
 		fail(w, 409, "conflict_error", settings.ErrNotManaged.Error())
 		return
 	}
-	commit, _, err := h.prepareAuthentication(r, view.Active.ID, false)
+	commit, abort, err := h.prepareAuthentication(r, view.Active.ID, false)
 	if settingsError(w, err) {
 		return
 	}
+	if err := audit.Record(r.Context(), h.pool, audit.Event{Action: "settings.apply", Actor: portalActor(u), TargetType: "settings",
+		TargetID: settings.DomainAuthentication, Revision: view.Active.ID, Result: audit.Succeeded}); err != nil {
+		abort()
+		unavailable(w)
+		return
+	}
 	commit()
-	_ = audit.Record(r.Context(), h.pool, audit.Event{Action: "settings.apply", Actor: portalActor(u), TargetType: "settings",
-		TargetID: settings.DomainAuthentication, Revision: view.Active.ID, Result: audit.Succeeded})
 	h.authenticationSettings(w, r, u)
 }
 

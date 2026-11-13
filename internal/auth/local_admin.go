@@ -20,7 +20,9 @@ var (
 
 // CreateLocalUser never adopts an existing identity, including an API-key-only
 // local account or an SSO account with the same username/email.
-func (a Admin) CreateLocalUser(ctx context.Context, username, email string, groups []string, password []byte) (string, error) {
+func (a Admin) CreateLocalUser(ctx context.Context, username, email string, groups []string, password []byte) (id string, err error) {
+	a, finish := a.auditOperation(ctx, "user.create_local", "user", "")
+	defer func() { finish(err) }()
 	if username == ProtectedAdminUsername {
 		return "", ErrProtectedAdmin
 	}
@@ -40,14 +42,14 @@ func (a Admin) CreateLocalUser(ctx context.Context, username, email string, grou
 	if groups == nil {
 		groups = []string{}
 	}
-	var id string
-	err = pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
+	err = a.transaction(ctx, func(tx pgx.Tx) error {
 		if err := validateManagedGroups(ctx, tx, groups); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups) VALUES('local',$1,$1,$2,$3) RETURNING id`, username, email, groups).Scan(&id); err != nil {
 			return err
 		}
+		a.event.TargetID = id
 		_, err := tx.Exec(ctx, `INSERT INTO local_credentials(user_id,version,password_hash,must_change_password) VALUES($1,$2,$3,true)`, id, passwordVersion, hash)
 		return err
 	})
@@ -82,7 +84,9 @@ func ordinaryLocal(ctx context.Context, tx pgx.Tx, id string) error {
 	return nil
 }
 
-func (a Admin) SetLocalGroups(ctx context.Context, id string, groups []string) error {
+func (a Admin) SetLocalGroups(ctx context.Context, id string, groups []string) (err error) {
+	a, finish := a.auditOperation(ctx, "user.local_groups", "user", id)
+	defer func() { finish(err) }()
 	if groups == nil {
 		groups = []string{}
 	}
@@ -104,7 +108,9 @@ func (a Admin) SetLocalGroups(ctx context.Context, id string, groups []string) e
 // ResetLocalPassword can also give an API-key-only local user a credential. The
 // replacement is temporary: all sessions and keys are revoked, and the next
 // local login must replace it. Protected-root recovery belongs to the operator.
-func (a Admin) ResetLocalPassword(ctx context.Context, id string, password []byte) error {
+func (a Admin) ResetLocalPassword(ctx context.Context, id string, password []byte) (err error) {
+	a, finish := a.auditOperation(ctx, "credential.reset", "user", id)
+	defer func() { finish(err) }()
 	if !validPassword(password) {
 		return ErrPasswordPolicy
 	}
@@ -129,6 +135,9 @@ func (a Admin) ResetLocalPassword(ctx context.Context, id string, password []byt
 			ON CONFLICT(user_id) DO UPDATE SET version=EXCLUDED.version,password_hash=EXCLUDED.password_hash,must_change_password=true`, id, passwordVersion, hash); err != nil {
 			return err
 		}
+		if err := tx.QueryRow(ctx, `SELECT revision FROM local_credentials WHERE user_id=$1`, id).Scan(&a.event.Revision); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE api_keys SET revoked=true WHERE user_id=$1`, id); err != nil {
 			return err
 		}
@@ -138,6 +147,8 @@ func (a Admin) ResetLocalPassword(ctx context.Context, id string, password []byt
 }
 
 // Operator revocation retains key metadata and is scoped to the displayed owner.
-func (a Admin) RevokeOwnedKey(ctx context.Context, userID, keyID string) error {
+func (a Admin) RevokeOwnedKey(ctx context.Context, userID, keyID string) (err error) {
+	a, finish := a.auditOperation(ctx, "key.revoke", "key", keyID)
+	defer func() { finish(err) }()
 	return a.change(ctx, `UPDATE api_keys SET revoked=true WHERE id=$1 AND user_id=$2`, keyID, userID)
 }

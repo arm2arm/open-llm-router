@@ -89,6 +89,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("GET /portal/api/trace-preferences", h.authenticated(h.tracePreferences))
 	h.mux.HandleFunc("PUT /portal/api/trace-preferences", h.authenticated(h.saveTracePreferences))
 	h.mux.HandleFunc("DELETE /portal/api/request-traces", h.authenticated(h.clearTraces))
+	h.mux.HandleFunc("GET /portal/api/admin/history", h.admin(h.adminHistory))
 	h.mux.HandleFunc("GET /portal/api/admin/users", h.admin(h.adminUsers))
 	h.mux.HandleFunc("POST /portal/api/admin/users", h.admin(h.createLocalUser))
 	h.mux.HandleFunc("GET /portal/api/admin/users/{id}", h.admin(h.adminUser))

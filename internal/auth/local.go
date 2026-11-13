@@ -52,10 +52,10 @@ func (a Admin) ProtectedLocalAdmin(ctx context.Context) (LocalAccount, error) {
 // BootstrapLocalAdmin creates the reserved local administrator once. A database
 // lock serializes concurrent callers; later calls ignore the supplied password.
 // Existing unprotected identities are never adopted, including a local "admin".
-func (a Admin) BootstrapLocalAdmin(ctx context.Context, password []byte) (LocalAccount, bool, error) {
-	var account LocalAccount
-	created := false
-	err := pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
+func (a Admin) BootstrapLocalAdmin(ctx context.Context, password []byte) (account LocalAccount, created bool, err error) {
+	a, finish := a.auditOperation(ctx, "local_admin.bootstrap", "user", "")
+	defer func() { finish(err) }()
+	err = a.transaction(ctx, func(tx pgx.Tx) error {
 		const bootstrapLock int64 = 0x4f4c5241444d494e // "OLRADMIN"
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", bootstrapLock); err != nil {
 			return err
@@ -64,6 +64,8 @@ func (a Admin) BootstrapLocalAdmin(ctx context.Context, password []byte) (LocalA
 			FROM users u JOIN local_credentials c ON c.user_id=u.id WHERE u.protected_admin`).
 			Scan(&account.ID, &account.Username, &account.ProtectedAdmin, &account.MustChangePassword, &account.CredentialRevision)
 		if err == nil {
+			a.event.TargetID = account.ID
+			a.event.Revision = account.CredentialRevision
 			return nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -92,6 +94,8 @@ func (a Admin) BootstrapLocalAdmin(ctx context.Context, password []byte) (LocalA
 		}
 		account.MustChangePassword, created = true, true
 		account.CredentialRevision = 1
+		a.event.TargetID = account.ID
+		a.event.Revision = 1
 		return nil
 	})
 	if err != nil {
@@ -129,13 +133,15 @@ func (a Admin) VerifyLocalPassword(ctx context.Context, username string, passwor
 // ChangeLocalPassword consumes the bootstrap password as well as supporting
 // normal rotation. Compare-and-swap prevents concurrent changes from reviving an
 // old credential. Existing sessions and API-key caches are invalidated together.
-func (a Admin) ChangeLocalPassword(ctx context.Context, userID string, current, next []byte) error {
+func (a Admin) ChangeLocalPassword(ctx context.Context, userID string, current, next []byte) (err error) {
+	a, finish := a.auditOperation(ctx, "credential.rotate", "user", userID)
+	defer func() { finish(err) }()
 	if !validPassword(next) {
 		return ErrPasswordPolicy
 	}
 	var hash string
 	var version int
-	err := a.Pool.QueryRow(ctx, `SELECT c.version,c.password_hash FROM local_credentials c
+	err = a.Pool.QueryRow(ctx, `SELECT c.version,c.password_hash FROM local_credentials c
 		JOIN users u ON u.id=c.user_id WHERE u.id=$1 AND u.issuer='local' AND u.enabled`, userID).Scan(&version, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrInvalidPassword
@@ -164,6 +170,9 @@ func (a Admin) ChangeLocalPassword(ctx context.Context, userID string, current, 
 		}
 		if result.RowsAffected() != 1 {
 			return ErrInvalidPassword
+		}
+		if err := tx.QueryRow(ctx, `SELECT revision FROM local_credentials WHERE user_id=$1`, userID).Scan(&a.event.Revision); err != nil {
+			return err
 		}
 		_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, userID)
 		return err
@@ -194,7 +203,9 @@ type Recovery struct {
 // A retry with the pending temporary password (for example after cache
 // invalidation was not acknowledged) revokes again without rehashing. Reusing
 // the account's current permanent password is refused.
-func (a Admin) RecoverProtectedAdmin(ctx context.Context, password []byte) (Recovery, error) {
+func (a Admin) RecoverProtectedAdmin(ctx context.Context, password []byte) (result Recovery, err error) {
+	a, finish := a.auditOperation(ctx, "local_admin.recover", "user", "")
+	defer func() { finish(err) }()
 	if !validPassword(password) {
 		return Recovery{}, ErrPasswordPolicy
 	}
@@ -202,7 +213,6 @@ func (a Admin) RecoverProtectedAdmin(ctx context.Context, password []byte) (Reco
 	if err != nil {
 		return Recovery{}, err
 	}
-	var result Recovery
 	err = a.changeWith(ctx, func(tx pgx.Tx) error {
 		result = Recovery{}
 		var version int
@@ -218,6 +228,8 @@ func (a Admin) RecoverProtectedAdmin(ctx context.Context, password []byte) (Reco
 		if err != nil {
 			return err
 		}
+		a.event.TargetID = result.ID
+		a.event.Revision = result.CredentialRevision
 		if verifyPassword(version, hash, password) {
 			if !result.MustChangePassword {
 				return ErrPasswordReuse
@@ -238,6 +250,9 @@ func (a Admin) RecoverProtectedAdmin(ctx context.Context, password []byte) (Reco
 			return err
 		}
 		result.SessionsRevoked, result.KeysRevoked = sessions.RowsAffected(), keys.RowsAffected()
+		a.event.TargetID = result.ID
+		a.event.Revision = result.CredentialRevision
+		a.event.Details = map[string]any{"sessions_revoked": result.SessionsRevoked, "keys_revoked": result.KeysRevoked, "credential_replaced": result.CredentialReplaced}
 		return nil
 	})
 	if errors.Is(err, ErrNotFound) {
