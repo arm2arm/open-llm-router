@@ -16,7 +16,8 @@ for sock in sockets:
 PYPORTS
 )
 export OLR_PORT POSTGRES_PORT MOCK_A_PORT MOCK_B_PORT KEYCLOAK_PORT
-export COMPOSE_PROJECT_NAME="$task_project"
+export COMPOSE_PROJECT_NAME="$task_project" COMPOSE_PROFILES=''
+export OLR_LOCAL_CONFIG_FILE="$(pwd)/config.local.example.yaml"
 export OLR_DATABASE_URL='postgres://olr:olr-dev-only@postgres:5432/olr?sslmode=disable'
 export POSTGRES_USER=olr POSTGRES_DB=olr POSTGRES_PASSWORD=olr-dev-only
 export OLR_BOOTSTRAP_ADMIN_PASSWORD='local-install-acceptance-test-only'
