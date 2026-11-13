@@ -45,6 +45,7 @@ func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 	const syncSecret = "sync-secret"
 	environment := map[string]string{config.EnvOIDCClientSecret: "test-secret"}
 	f := startPortal(t, usageOptions{portal: func(h *portal.Handler, cfg *config.Config, pool *pgxpool.Pool, _ *proxy.Handler) {
+		cfg.AdminAPI.Enabled = true
 		// The fixture's portal secret comes "from the environment".
 		cfg.OIDC.SyncClientID, cfg.OIDC.SyncIntervalS, cfg.OIDC.DefaultSignIn = "olr-sync", 900, "keycloak"
 		// The fixture is built by hand; give it the defaults Parse would.
@@ -161,6 +162,45 @@ func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 	if results["discovery"] != "passed" || results["logout_metadata"] != "passed" || results["sync_permissions"] != "failed" {
 		t.Fatal("check results", checked.Results)
 	}
+	// Explicit agent grants allow masked inspection and draft workflows, but
+	// cannot manufacture or bypass the genuine browser sign-in requirement.
+	issued, raw := admin.call(t, "POST", "/portal/api/admin/agent-keys", `{"label":"authentication acceptance","permissions":["authentication:read","authentication:write"],"allowed_networks":["127.0.0.1"],"expires_in_days":1}`, base)
+	var key struct{ Key string }
+	if issued.StatusCode != 201 || json.Unmarshal(raw, &key) != nil {
+		t.Fatal("authentication agent grant refused")
+	}
+	agentCall := func(suffix string, body any, want int) map[string]any {
+		t.Helper()
+		encoded, _ := json.Marshal(body)
+		req, err := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+"/api/admin/v1/"+suffix, strings.NewReader(string(encoded)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+key.Key)
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatalf("authentication agent %s returned %d want %d", suffix, response.StatusCode, want)
+		}
+		var data map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&data); err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	agentView := agentCall("read/get_authentication", map[string]any{}, 200)
+	if agentView["can_change"] != true {
+		t.Fatal("explicit authentication agent grant did not permit changes")
+	}
+	arguments := map[string]any{"body": map[string]any{"version": saved.Settings.Version, "revision": draft.ID}}
+	change := agentCall("changes/preview", map[string]any{"operation": "activate_authentication", "arguments": arguments}, 201)
+	agentCall("changes/"+change["id"].(string)+"/apply", map[string]any{"arguments": arguments, "idempotency_key": "authentication-no-fabricated-test"}, 400)
+	arguments["body"].(map[string]any)["test_sign_in"] = map[string]any{"status": "passed"}
+	agentCall("changes/preview", map[string]any{"operation": "activate_authentication", "arguments": arguments}, 400)
 
 	// Test sign-in with the draft: verifies claims, creates no user or session.
 	testSignIn := func(alter func(map[string]any)) (string, string) {

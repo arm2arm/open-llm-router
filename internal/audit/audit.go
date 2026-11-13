@@ -31,10 +31,15 @@ const (
 )
 
 type Actor struct {
-	Type string `json:"type"`           // operator_cli or portal_user
-	ID   string `json:"id,omitempty"`   // router user UUID, for portal users
-	Name string `json:"name,omitempty"` // OS account or username
-	Host string `json:"host,omitempty"`
+	KeyID     string `json:"key_id,omitempty"`
+	SourceIP  string `json:"source_ip,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+	ChangeID  string `json:"change_id,omitempty"`
+	Type      string `json:"type"`           // operator_cli or portal_user
+	ID        string `json:"id,omitempty"`   // router user UUID, for portal users
+	Name      string `json:"name,omitempty"` // OS account or username
+	Host      string `json:"host,omitempty"`
 }
 
 // Label is a short attribution for revision and activation rows.
@@ -95,6 +100,12 @@ type executor interface {
 // event that must outlive a rolled-back change). Details must already be
 // redacted: field names, counts and IDs, never values of secrets.
 func Record(ctx context.Context, db executor, e Event) error {
+	if e.Actor.KeyID != "" {
+		if e.Details == nil {
+			e.Details = map[string]any{}
+		}
+		e.Details["agent"] = e.Actor
+	}
 	var details []byte
 	if len(e.Details) > 0 {
 		var err error

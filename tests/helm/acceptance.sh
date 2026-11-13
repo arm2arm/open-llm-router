@@ -53,6 +53,8 @@ portal:
 keycloak:
   baseURL: http://localhost:$kc_port
 config:
+  admin_api:
+    enabled: true
   models:
     chat-model:
       # Probe offline inference without the optional 120-second capacity queue.
@@ -110,6 +112,49 @@ curl --fail --silent --show-error -c "$work/cookies" -H "Origin: $base" -H 'Cont
   --data-binary @"$work/login.json" "$base/portal/login/local" > /dev/null
 curl --fail --silent --show-error -b "$work/cookies" "$base/portal/api/me" > "$work/me.json"
 python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); assert m["admin"] and m["user"]["protected_admin"]' "$work/me.json"
+# Real IP-restricted administration through the chart's opt-in configuration.
+# Credentials stay in process memory; no evidence artifact retains the key.
+python3 - "$base" <<'PYAGENT'
+import http.cookiejar, json, sys, urllib.error, urllib.request
+base = sys.argv[1]
+jar = http.cookiejar.CookieJar()
+browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+def call(path, method='GET', data=None, key=None, want=200):
+    headers = {'Content-Type': 'application/json', 'Origin': base}
+    if key:
+        headers['Authorization'] = 'Bearer ' + key
+    request = urllib.request.Request(base + path, method=method, headers=headers,
+        data=json.dumps(data).encode() if data is not None else None)
+    try:
+        response = browser.open(request, timeout=15)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        assert response.status == want, (path, response.status, want)
+        raw = response.read()
+    return json.loads(raw) if raw else None
+call('/portal/login/local', 'POST', {
+    'username': 'admin', 'password': 'helm-only-replacement-password',
+})
+inventory = call('/portal/api/admin/agent-keys')
+assert inventory['enabled'] and inventory['source_ip']
+issued = call('/portal/api/admin/agent-keys', 'POST', {
+    'label': 'Helm acceptance agent', 'permissions': ['service:read'],
+    'allowed_networks': [inventory['source_ip']], 'expires_in_days': 1,
+}, want=201)
+secret, key_id = issued['key'], issued['metadata']['id']
+identity = call('/api/admin/v1/identity', key=secret)
+assert identity['source_ip'] == inventory['source_ip']
+call('/v1/models', key=secret, want=401)
+call('/api/admin/v1/read/list_users', 'POST', {}, secret, 403)
+result = call('/api/admin/v1/mcp', 'POST', {'jsonrpc': '2.0', 'id': 1,
+    'method': 'tools/list'}, secret)
+names = {tool['name'] for tool in result['result']['tools']}
+assert 'get_service_status' in names and 'apply_change' not in names
+call('/portal/api/admin/agent-keys/' + key_id, 'DELETE', {}, want=204)
+call('/api/admin/v1/identity', key=secret, want=401)
+print('PASS: Helm administration key, source IP, MCP scope filtering and revocation')
+PYAGENT
 # Test the bundled realm through real browser-style authorization-code login.
 kubectl -n olr port-forward service/olr-open-llm-router-keycloak "$kc_port:8080" > "$work/keycloak-forward.log" 2>&1 &
 kc_pf=$!

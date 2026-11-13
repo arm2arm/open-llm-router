@@ -32,6 +32,8 @@ const loginCookie = "olr_login"
 const sessionLifetime = 8 * time.Hour
 
 type Handler struct {
+	agentLimits   agentLimiter
+	agentMu       sync.Mutex
 	cfg           *config.Config
 	pool          *pgxpool.Pool
 	limits        *limits.Manager
@@ -62,6 +64,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 		return nil, err
 	}
 	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), passwordSlots: make(chan struct{}, 2)}
+	h.registerAgent()
 	h.ssoState.Store(h.startSSO(cfg.OIDC, cfg.OIDCClientSecret, nil))
 	h.mux.HandleFunc("GET /portal/login", h.login)
 	h.mux.HandleFunc("GET /portal/login/local", func(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +200,8 @@ func (h *Handler) jsonBody(w http.ResponseWriter, r *http.Request, value any) bo
 // complete routing configuration.
 func (h *Handler) jsonBodyLimit(w http.ResponseWriter, r *http.Request, value any, limit int64) bool {
 	origins := r.Header.Values("Origin")
-	if len(origins) != 1 || origins[0] != h.cfg.Portal.BaseURL || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin") {
+	_, agent := r.Context().Value(agentContext{}).(agentIdentity)
+	if !agent && (len(origins) != 1 || origins[0] != h.cfg.Portal.BaseURL || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin")) {
 		fail(w, 403, "permission_error", "request origin is forbidden")
 		return false
 	}

@@ -14,6 +14,11 @@ auth:
   max_key_lifetime_days: 90
   max_active_keys_per_user: 10
 
+# Optional agent administration; see docs/AGENT_ADMINISTRATION.md.
+admin_api:
+  enabled: false
+  trusted_proxy_cidrs: []
+
 # Quota calendar and upload admission (per router process).
 limits:
   timezone: UTC                    # default; e.g. Europe/Berlin

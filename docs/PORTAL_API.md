@@ -521,3 +521,22 @@ demoted through policies/overrides or password-reset by these APIs. Lost protect
 password recovery is an operator CLI action; there is no recovery HTTP endpoint.
 See the [acceptance matrix](ADMIN_GUIDE.md#local-administration-acceptance) and
 [restore walkthrough](RUNBOOK.md#administration-outage-upgrade-and-restore-walkthrough).
+
+## Agent administration keys
+
+See [Agent administration](AGENT_ADMINISTRATION.md) for the dedicated bearer API,
+MCP transport, permissions and proxy trust contract. Browser key management uses
+admin sessions and the existing same-origin JSON protections:
+
+- `GET /portal/api/admin/agent-keys`: own key metadata, permission catalog,
+  detected/peer IP, proxy status and site lifetime defaults.
+- `POST /portal/api/admin/agent-keys`: `{label, permissions, allowed_networks,
+  expires_in_days}`; returns `{key, metadata}` once. Requires a recent sign-in;
+  sensitive scopes require a recent local administrator.
+  Optional `replaces_key_id` creates a replacement with equal or reduced
+  permissions/networks, checked against the current owned key. It renews the
+  configured lifetime without coupling the replacement to the old key's revocation.
+- `PUT /portal/api/admin/agent-keys/{id}`: `{permissions, allowed_networks, expires}`
+  (RFC3339 expiration). Only reduces authority and invalidates descendants.
+- `DELETE /portal/api/admin/agent-keys/{id}`: revokes an owned key and disables its
+  descendants. Browser revocation remains available when agent access is disabled.

@@ -22,6 +22,7 @@ import (
 	"time"
 	_ "time/tzdata" // IANA zones also work in the static runtime image.
 
+	"github.com/arm2arm/open-llm-router/internal/adminaccess"
 	"github.com/jackc/pgx/v5"
 	"go.yaml.in/yaml/v4"
 )
@@ -46,6 +47,7 @@ const (
 // Config is the content of the config file plus the secrets from the
 // environment.
 type Config struct {
+	AdminAPI       AdminAPI          `yaml:"admin_api"`
 	Security       Security          `yaml:"security"`
 	ContentTracing ContentTracing    `yaml:"content_tracing"`
 	Auth           Auth              `yaml:"auth"`
@@ -84,6 +86,17 @@ const (
 	UnknownUserReject      = "reject"
 	UnknownForwarderPolicy = "forwarder_policy"
 )
+
+// AdminAPI controls the opt-in agent administration surface. Proxy trust is operator-only.
+type AdminAPI struct {
+	Enabled             bool     `yaml:"enabled"`
+	TrustedProxyCIDRs   []string `yaml:"trusted_proxy_cidrs"`
+	DefaultLifetimeDays int      `yaml:"default_lifetime_days"`
+	MaxLifetimeDays     int      `yaml:"max_lifetime_days"`
+	MaxActiveKeys       int      `yaml:"max_active_keys"`
+	RequestsPerMinute   int      `yaml:"requests_per_minute"`
+	MaxConcurrent       int      `yaml:"max_concurrent"`
+}
 
 type Security struct {
 	RequireTLS bool `yaml:"require_tls"`
@@ -283,7 +296,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, problems
 	}
 
-	cfg := Config{Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays, MaxKeyLifetimeDays: DefaultMaxKeyLifetimeDays, MaxActiveKeysPerUser: DefaultMaxActiveKeysPerUser}, Limits: Limits{
+	cfg := Config{AdminAPI: AdminAPI{DefaultLifetimeDays: 7, MaxLifetimeDays: 90, MaxActiveKeys: 10, RequestsPerMinute: 60, MaxConcurrent: 4}, Auth: Auth{DefaultKeyLifetimeDays: DefaultKeyLifetimeDays, MaxKeyLifetimeDays: DefaultMaxKeyLifetimeDays, MaxActiveKeysPerUser: DefaultMaxActiveKeysPerUser}, Limits: Limits{
 		Timezone: "UTC", MaxBodyBytes: DefaultMaxBodyBytes,
 		MaxBodyReaders: DefaultMaxBodyReaders, MaxBodyReadersPerUser: DefaultMaxBodyReadersPerUser},
 		Forwarders: Forwarders{UnknownUser: UnknownUserReject},
@@ -495,7 +508,34 @@ func isVarName(s string) bool {
 }
 
 func (c *Config) validate() Problems {
+	// Programmatic configurations (including managed revisions) share file defaults.
+	if c.AdminAPI.DefaultLifetimeDays == 0 {
+		c.AdminAPI.DefaultLifetimeDays = 7
+	}
+	if c.AdminAPI.MaxLifetimeDays == 0 {
+		c.AdminAPI.MaxLifetimeDays = 90
+	}
+	if c.AdminAPI.MaxActiveKeys == 0 {
+		c.AdminAPI.MaxActiveKeys = 10
+	}
+	if c.AdminAPI.RequestsPerMinute == 0 {
+		c.AdminAPI.RequestsPerMinute = 60
+	}
+	if c.AdminAPI.MaxConcurrent == 0 {
+		c.AdminAPI.MaxConcurrent = 4
+	}
 	var p Problems
+	if c.AdminAPI.DefaultLifetimeDays < 1 || c.AdminAPI.MaxLifetimeDays < c.AdminAPI.DefaultLifetimeDays || c.AdminAPI.MaxLifetimeDays > 365 || c.AdminAPI.MaxActiveKeys < 1 || c.AdminAPI.RequestsPerMinute < 1 || c.AdminAPI.MaxConcurrent < 1 {
+		p = append(p, "admin_api: invalid lifetime, key limit or request limit")
+	}
+	if len(c.AdminAPI.TrustedProxyCIDRs) > 0 {
+		if networks, err := adminaccess.Networks(c.AdminAPI.TrustedProxyCIDRs); err != nil {
+			p = append(p, "admin_api.trusted_proxy_cidrs: invalid networks")
+		} else {
+			c.AdminAPI.TrustedProxyCIDRs = networks
+		}
+	}
+
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
 	if len(c.ContentTracing.RedactPatterns) > 32 {
 		add("content_tracing.redact_patterns: at most 32 patterns")

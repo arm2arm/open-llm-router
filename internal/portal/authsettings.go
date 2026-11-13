@@ -30,6 +30,9 @@ const recentLocalSignIn = 15 * time.Minute
 const testLoginCookie = "olr_test_login"
 
 func portalActor(u user) audit.Actor {
+	if u.AgentActor != nil {
+		return *u.AgentActor
+	}
 	return audit.Actor{Type: "portal_user", ID: u.ID}
 }
 
@@ -113,6 +116,9 @@ func (h *Handler) authenticationView(r *http.Request, u user) (authenticationVie
 	state := h.current()
 	out.Runtime.SSOConfigured, out.Runtime.SSOAvailable = state.oidc != nil, state.available.Load()
 	out.CanChange = recentLocal(u)
+	if agent, ok := r.Context().Value(agentContext{}).(agentIdentity); ok {
+		out.CanChange = agent.Key.Allows("authentication:write") && agent.Key.Allows("authentication:read")
+	}
 	if !out.CanChange {
 		out.ChangeRequirement = "Changes need a local administrator sign-in within the last 15 minutes."
 	}
