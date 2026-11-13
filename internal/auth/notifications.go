@@ -156,6 +156,9 @@ func (a Admin) changeWith(ctx context.Context, mutate func(pgx.Tx) error) error 
 		if rows.Err() != nil {
 			return errors.New("discover authentication listeners failed")
 		}
+		if err := a.recordAudit(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", invalidationChannel, channel); err != nil {
 			return errors.New("publish cache invalidation failed")
 		}

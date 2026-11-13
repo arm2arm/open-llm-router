@@ -834,3 +834,26 @@ its own kubeconfig and deletes the cluster. See [Calico on kind](https://docs.ti
 Repeat these probes on the target cluster before production, including ingress/monitoring,
 migration/backup and external endpoints. Test wrong CA and wrong hostname rejection for
 PostgreSQL/OIDC/inference/OTLP. Rendering alone is not proof of network enforcement.
+
+
+### Preserve administration history during backup and restore
+
+Include `audit_events`, endpoint/settings revisions, activations and migration
+metadata in every full database backup. They have no cascading actor foreign
+keys: erasing an account does not erase its history. Store database backups with
+encryption and restricted access: password hashes, sessions and encrypted managed
+secrets are sensitive even though audit events exclude credential values. Keep
+the managed-settings encryption key outside the dump and restore it through the
+normal deployment secret source. Restore into an isolated database first; check
+`olr admin history -limit 10`, protected administrator UUID/credential revision,
+active settings revisions and local login before returning service to traffic.
+
+The application does not prune audit history. Document the site's retention,
+archive and legal-erasure policy before offline DBA maintenance; cover historical
+exports and backup expiration too. Application users cannot rewrite, delete or
+truncate events. Schema owners/superusers can defeat triggers and therefore need
+separate, monitored operator access. Preserve a backup before upgrading; never
+repair a failed event insert by disabling its protection and retrying mutations.
+An audit-store outage fails sensitive changes; fix storage and retry. Following a
+cache-invalidation timeout, inspect history because the state may already have
+committed with its success event.

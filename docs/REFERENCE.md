@@ -398,3 +398,15 @@ Compose and runs the frontend checks, Playwright self-service journey, `make smo
 `make portal-check`, and official SDK checks against the router and both mocks. The Go
 job has a five-minute timeout and the image/browser job ten minutes. Dependencies are cached.
 
+
+
+### Administration history reference
+
+`olr admin history [-action ACTION] [-actor UUID] [-target UUID_OR_DOMAIN]
+[-result succeeded|refused|failed] [-from RFC3339] [-to RFC3339] [-before ID]
+[-limit 1..200]` reads the same append-only history as the admin portal. It
+requires operator database access. Successful account/credential/configuration
+changes insert history transactionally. Application roles cannot rewrite,
+delete or truncate events. History survives account deletion and full backup/
+restore and is not covered by usage retention. See ADMIN_GUIDE.md for the default
+indefinite retention and offline privacy-erasure/pseudonymization procedure.

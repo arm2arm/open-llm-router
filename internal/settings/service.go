@@ -477,7 +477,18 @@ func (s *Service[D, P]) insertRevision(ctx context.Context, tx pgx.Tx, origin st
 	if err != nil {
 		return 0, ErrStorage
 	}
+	if err := recordValidation(ctx, tx, s.domain(), id, actor, result); err != nil {
+		return 0, err
+	}
 	return id, nil
+}
+
+func recordValidation(ctx context.Context, tx pgx.Tx, domain string, revision int64, actor audit.Actor, result Validation) error {
+	outcome := audit.Succeeded
+	if !result.Valid {
+		outcome = audit.Refused
+	}
+	return audit.Record(ctx, tx, audit.Event{Action: "settings.validate", Actor: actor, TargetType: "settings", TargetID: domain, Revision: revision, Result: outcome, Reason: "configuration validation", Details: map[string]any{"problem_count": len(result.Problems)}})
 }
 
 // Import makes the database the authority for a domain, starting from the
@@ -695,6 +706,9 @@ func (s *Service[D, P]) activate(ctx context.Context, domain string, expected, r
 			return err
 		}
 		if err := setValidation(ctx, tx, revision, result); err != nil {
+			return err
+		}
+		if err := recordValidation(ctx, tx, domain, revision, actor, result); err != nil {
 			return err
 		}
 		event.Details = map[string]any{"previous_revision": st.active, "changed": changed[D, P](active.doc, row.doc)}

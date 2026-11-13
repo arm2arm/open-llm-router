@@ -1162,3 +1162,47 @@ provider and synchronize them first. SSO memberships are never editable here.
 Legacy routing revisions created before policy management use deployment-file
 groups; new drafts explicitly snapshot all policies. Retain the original
 baseline file when rolling back those legacy revisions.
+
+
+### Administration history
+
+**Admin → Administration history** shows append-only events for account creation,
+enablement, local/SSO group updates, deletion, password rotation/reset/recovery,
+key issuance/revocation/deletion, overrides and authentication/routing/policy
+revisions. Filter by exact action, actor UUID, target UUID/domain, result or
+RFC3339 timestamps; use Older/Newer events for cursor pagination. The operator
+CLI reads the same service: `olr admin history -target USER_UUID -limit 100`.
+Ordinary users cannot read this API and there are no event-edit/delete endpoints.
+
+Successful mutations and their events commit in the same database transaction.
+An unavailable event store fails the mutation and rolls it back. Pre-validation
+refusals are recorded separately where the database is reachable. An unavailable
+database cannot record its own outage; CLI recovery also emits redacted stderr
+attribution. A cache-invalidation acknowledgement failure can occur after commit:
+history retains the successful committed event and a subsequent failed-attempt
+event. Retry the original operation as directed; do not infer rollback from the
+client error alone. Applying authentication/routing runtime settings records the
+apply event before publishing the prepared runtime; failure leaves it unchanged.
+
+Events contain stable IDs, action, database timestamp, revision, result, fixed
+reason and selected field names/counts. Passwords, hashes, API keys, client
+secrets, key labels, arbitrary override reasons and request content are excluded.
+Override events say whether a reason was provided; the current reason remains
+in the separately managed override record. Portal attribution uses authenticated
+UUIDs rather than usernames; CLI attribution identifies the operator OS account
+and host, and IdP-driven updates use an identity-provider actor. Application
+changes cannot update, delete or truncate historical events or configuration
+revisions. A database owner/superuser with schema-changing authority is outside
+this application privilege model; use separate operational access and backups.
+
+Retention is explicit: usage/trace retention never prunes audit events. History
+is retained indefinitely by default, until a site adopts a documented archive and
+retention period. No application API/CLI purges history. Account erasure removes
+the identity, credentials and usage but preserves UUID-only administration
+history; with the directory linkage removed, new portal events are pseudonymous.
+Legacy events/revision labels or operator account/host attribution can still be
+personal data. A site requiring further erasure must use authorized, offline DBA
+maintenance and an approved pseudonym mapping/archive policy, covering logs,
+exports and backups as well; application admin access cannot bypass immutability.
+Keep any mapping separately with restricted access. Do not claim that deleting
+an account automatically erases historical attribution from existing backups.
