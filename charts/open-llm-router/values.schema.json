@@ -16,7 +16,6 @@
       "required": [
         "repository",
         "tag",
-        "digest",
         "pullPolicy"
       ],
       "properties": {
@@ -103,11 +102,18 @@
       ],
       "properties": {
         "models": {
-          "type": "object",
-          "minProperties": 1
+          "type": "object"
         },
         "groups": {
           "type": "object"
+        },
+        "security": {
+          "type": "object",
+          "properties": {
+            "require_tls": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },
@@ -330,6 +336,9 @@
         },
         "resources": {
           "type": "object"
+        },
+        "ingress": {
+          "$ref": "#/properties/ingress"
         }
       }
     },
@@ -444,6 +453,10 @@
     },
     "production": {
       "type": "boolean"
+    },
+    "enforceImageDigests": {
+      "type": "boolean",
+      "description": "Require immutable digests for all enabled images; opt-in independently of production."
     }
   },
   "allOf": [
@@ -460,36 +473,38 @@
       },
       "then": {
         "properties": {
-          "image": {
-            "properties": {
-              "digest": {
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              }
-            }
-          },
           "networkPolicy": {
             "properties": {
               "enabled": {
                 "const": true
               }
             }
-          },
-          "config": {
-            "required": [
-              "security"
-            ],
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "enforceImageDigests": {
+            "const": true
+          }
+        },
+        "required": [
+          "enforceImageDigests"
+        ]
+      },
+      "then": {
+        "properties": {
+          "image": {
             "properties": {
-              "security": {
-                "required": [
-                  "require_tls"
-                ],
-                "properties": {
-                  "require_tls": {
-                    "const": true
-                  }
-                }
+              "digest": {
+                "pattern": "^sha256:[a-f0-9]{64}$"
               }
-            }
+            },
+            "required": [
+              "digest"
+            ]
           }
         },
         "allOf": [
@@ -562,7 +577,10 @@
                         "digest": {
                           "pattern": "^sha256:[a-f0-9]{64}$"
                         }
-                      }
+                      },
+                      "required": [
+                        "digest"
+                      ]
                     }
                   }
                 }

@@ -103,6 +103,65 @@ class HelmChart(unittest.TestCase):
         self.assertEqual(realm["clients"][0]["secret"], "${OIDC_PORTAL_CLIENT_SECRET}")
         self.assertEqual(realm["clients"][0]["redirectUris"], ["${PORTAL_BASE_URL}/portal/callback"])
 
+    def test_demo_can_be_disabled_without_environment_or_models(self):
+        rendered = self.render({"demoBackend": {"enabled": False}})
+        self.assertNotIn(("Deployment", NAME + "-demo"), rendered)
+        config = yaml.safe_load(rendered["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(config["models"], {})
+        self.assertFalse(config["security"]["require_tls"])
+        self.assertNotIn("OLR_DEMO_BACKEND_URL", json.dumps(config))
+        custom = {"demoBackend": {"enabled": False}, "config": {"models": {"real-model": {
+            "protocols": ["openai"], "timeout_s": 30,
+            "pool": [{"url": "http://inference:8000", "weight": 1, "max_inflight": 1}],
+        }}}}
+        config = yaml.safe_load(self.render(custom)["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(list(config["models"]), ["real-model"])
+        # Values copied from chart 0.2 retain the old default pool explicitly.
+        legacy = {"demoBackend": {"enabled": False}, "config": {"models": {"chat-model": {
+            "pool": [{"url": "${OLR_DEMO_BACKEND_URL}", "weight": 2, "max_inflight": 3}],
+        }}}}
+        config = yaml.safe_load(self.render(legacy)["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(config["models"], {})
+        legacy["demoBackend"]["enabled"] = True
+        config = yaml.safe_load(self.render(legacy)["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        replica = config["models"]["chat-model"]["pool"][0]
+        self.assertEqual(replica, {"url": f"http://{NAME}-demo:8000", "weight": 2, "max_inflight": 3})
+
+    def test_traefik_keycloak_ingress_and_controller_peers(self):
+        values = yaml.safe_load((CHART / "examples/traefik.values.yaml").read_text())
+        rendered = self.render(values)
+        for suffix, host, secret in [("", "llm.example.org", "olr-tls"),
+                                     ("-keycloak", "login.example.org", "keycloak-tls")]:
+            ingress = rendered["Ingress", NAME + suffix]["spec"]
+            self.assertEqual(ingress["ingressClassName"], "traefik")
+            self.assertEqual(ingress["tls"], [{"hosts": [host], "secretName": secret}])
+            self.assertEqual(ingress["rules"][0]["host"], host)
+            backend = ingress["rules"][0]["http"]["paths"][0]["backend"]["service"]
+            self.assertEqual(backend, {"name": NAME + suffix, "port": {"name": "http"}})
+        env = {e["name"]: e.get("value") for e in rendered["Deployment", NAME + "-keycloak"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["KC_HOSTNAME"], "https://login.example.org")
+        self.assertEqual(env["KC_PROXY_HEADERS"], "xforwarded")
+        router_env = {e["name"]: e.get("value") for e in rendered["Deployment", NAME]["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(router_env["OIDC_ISSUER"], "https://login.example.org/realms/olr-demo")
+        self.assertEqual(router_env["OIDC_BACKCHANNEL_URL"], f"http://{NAME}-keycloak:8080/realms/olr-demo")
+        router = rendered["NetworkPolicy", NAME + "-router"]["spec"]["ingress"][0]["from"]
+        self.assertEqual(router, values["networkPolicy"]["ingressPeers"] + values["networkPolicy"]["monitoringPeers"])
+        keycloak = rendered["NetworkPolicy", NAME + "-keycloak"]["spec"]["ingress"][1]["from"]
+        self.assertEqual(keycloak, values["networkPolicy"]["ingressPeers"])
+        default_peers = self.render()["NetworkPolicy", NAME + "-router"]["spec"]["ingress"][0]["from"]
+        self.assertEqual(len(default_peers), 1)
+        self.assertEqual(default_peers[0]["namespaceSelector"]["matchLabels"],
+                         {"kubernetes.io/metadata.name": "monitoring"})
+        # Controllers can publish nonstandard ports and provide a default TLS
+        # certificate without a per-Ingress Secret.
+        values["portal"]["baseURL"] = "https://llm.example.org:8443"
+        values["keycloak"]["baseURL"] = "https://login.example.org:8443"
+        values["ingress"]["tlsSecretName"] = ""
+        values["keycloak"]["ingress"]["tlsSecretName"] = ""
+        custom = self.render(values)
+        self.assertNotIn("tls", custom["Ingress", NAME]["spec"])
+        self.assertNotIn("tls", custom["Ingress", NAME + "-keycloak"]["spec"])
+
     def test_custom_credentials_and_storage(self):
         password = "db:pass/@?#% +value"
         values = {"postgresql": {"password": password, "persistence": {"storageClass": "fast", "size": "16Gi"}},
@@ -165,9 +224,10 @@ class HelmChart(unittest.TestCase):
         self.assertNotIn("initContainers", pod)
         self.assertIn({"name": "PORTAL_COOKIE_SECURE", "value": "true"}, pod["containers"][0]["env"])
 
-    def test_production_rejects_mutable_images_and_disabled_security(self):
+    def test_optional_digest_policy_rejects_mutable_images_when_enabled(self):
         import copy
         production = yaml.safe_load((CHART / "examples/production.yaml").read_text())
+        production["enforceImageDigests"] = True
         production["image"]["digest"] = "sha256:" + "a" * 64
         invalid = []
         for digest in ("", "sha256:short", "latest"):
@@ -178,10 +238,9 @@ class HelmChart(unittest.TestCase):
             values = copy.deepcopy(production)
             values[service] = {"enabled": True, "image": "mutable:latest" if service != "demoBackend" else {"digest": ""}}
             invalid.append(values)
-        for section, key in (("networkPolicy", "enabled"), ("config", "security")):
-            values = copy.deepcopy(production)
-            values[section][key] = False if section == "networkPolicy" else {"require_tls": False}
-            invalid.append(values)
+        values = copy.deepcopy(production)
+        values["networkPolicy"]["enabled"] = False
+        invalid.append(values)
         for values in invalid:
             with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "values.yaml"
@@ -189,6 +248,42 @@ class HelmChart(unittest.TestCase):
                 result = self.invoke("template", "trial", CHART, "-f", path)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("schema", result.stderr)
+
+    def test_production_can_use_tags_and_optional_transport_tls(self):
+        values = yaml.safe_load((CHART / "examples/production.yaml").read_text())
+        values["enforceImageDigests"] = False
+        values["image"].pop("digest")
+        values["config"]["security"]["require_tls"] = False
+        rendered = self.render(values)
+        image = rendered["Deployment", NAME]["spec"]["template"]["spec"]["containers"][0]["image"]
+        self.assertEqual(image, "registry.example.org/olr:REPLACE_WITH_TESTED_GIT_SHA")
+        config = yaml.safe_load(rendered["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertFalse(config["security"]["require_tls"])
+
+    def test_invalid_keycloak_ingress_and_missing_peers_fail(self):
+        import copy
+        valid = yaml.safe_load((CHART / "examples/traefik.values.yaml").read_text())
+        invalid = []
+        for key, value in [("enabled", False), ("baseURL", "https://wrong.example.org"),
+                           ("baseURL", "http://login.example.org")]:
+            values = copy.deepcopy(valid)
+            values["keycloak"][key] = value
+            invalid.append(values)
+        values = copy.deepcopy(valid)
+        values["networkPolicy"]["ingressPeers"] = []
+        invalid.append(values)
+        values = copy.deepcopy(valid)
+        values["portal"]["baseURL"] = "https://wrong.example.org"
+        invalid.append(values)
+        for key in ("className", "host"):
+            values = copy.deepcopy(valid)
+            values["keycloak"]["ingress"][key] = ""
+            invalid.append(values)
+        for values in invalid:
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "values.yaml"
+                path.write_text(yaml.safe_dump(values))
+                self.assertNotEqual(self.invoke("template", "trial", CHART, "-f", path).returncode, 0)
 
     def test_bundled_and_demo_image_digests_render_in_all_containers(self):
         digest = "sha256:" + "b" * 64
@@ -249,7 +344,7 @@ class HelmChart(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
 
     def test_lint_examples_and_package(self):
-        for values in [None, "demo.values.yaml", "production.yaml"]:
+        for values in [None, "demo.values.yaml", "production.yaml", "traefik.values.yaml"]:
             args = ["lint", CHART, "--strict"]
             if values:
                 args += ["-f", CHART / "examples" / values]

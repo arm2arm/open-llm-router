@@ -1,4 +1,8 @@
 {{- if .Values.ingress.enabled }}
+{{- $origin := urlParse .Values.portal.baseURL }}
+{{- if or (ne (regexReplaceAll ":[0-9]+$" (get $origin "host") "") .Values.ingress.host) (and .Values.ingress.tlsSecretName (ne (get $origin "scheme") "https")) }}
+{{- fail "portal.baseURL must match ingress.host and use https when ingress.tlsSecretName is set" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

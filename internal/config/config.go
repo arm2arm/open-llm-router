@@ -594,9 +594,8 @@ func (c *Config) validate() Problems {
 		add("PORTAL_BASE_URL: must be an http or https origin without credentials, path, query or fragment")
 	}
 
-	if len(c.Models) == 0 {
-		add("models: at least one model is required")
-	}
+	// An empty catalog supports initial setup and backend recovery through the
+	// portal. Configured models, aliases and group references are still checked.
 	for _, name := range slices.Sorted(maps.Keys(c.Models)) {
 		m, at := c.Models[name], "models."+name
 		if name == "" || name == "*" {

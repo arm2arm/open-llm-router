@@ -1,0 +1,35 @@
+# Evaluation behind an existing Traefik controller, including bundled demo SSO.
+# Replace hosts/TLS Secret names and match the controller's actual pod labels.
+# Bundled Keycloak uses start-dev; use external SSO for a production installation.
+portal:
+  baseURL: https://llm.example.org
+  cookieSecure: true
+ingress:
+  enabled: true
+  className: traefik
+  host: llm.example.org
+  tlsSecretName: olr-tls
+keycloak:
+  baseURL: https://login.example.org
+  ingress:
+    enabled: true
+    className: traefik
+    host: login.example.org
+    tlsSecretName: keycloak-tls
+networkPolicy:
+  ingressPeers:
+    # Standalone Traefik chart. Adjust labels to your installation.
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: traefik}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: traefik}
+    # RKE2/Rancher Traefik. Remove the peer you do not use.
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: kube-system}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: rke2-traefik}
+  monitoringPeers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: monitoring}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: prometheus}

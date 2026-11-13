@@ -2,6 +2,29 @@
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* Inject the optional demo model without inherited environment references. */}}
+{{- define "olr.config" -}}
+{{- $config := deepCopy .Values.config -}}
+{{- $models := $config.models | default dict -}}
+{{- if hasKey $models "chat-model" -}}
+{{- $chat := index $models "chat-model" -}}
+{{- $legacyDemo := and (eq (len ($chat.pool | default list)) 1) (eq (index $chat.pool 0).url "${OLR_DEMO_BACKEND_URL}") -}}
+{{- if or (empty $chat.pool) $legacyDemo -}}
+{{- if .Values.demoBackend.enabled -}}
+{{- if $legacyDemo -}}
+{{- $_ := set (index $chat.pool 0) "url" (printf "http://%s:8000" (include "olr.componentName" (dict "root" . "component" "demo"))) -}}
+{{- else -}}
+{{- $_ := set $chat "pool" (list (dict "url" (printf "http://%s:8000" (include "olr.componentName" (dict "root" . "component" "demo"))) "health_path" "/health" "weight" 1 "max_inflight" 4)) -}}
+{{- end -}}
+{{- else -}}
+{{- $_ := unset $models "chat-model" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $config "models" $models -}}
+{{- toYaml $config -}}
+{{- end -}}
+
 {{- define "olr.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}

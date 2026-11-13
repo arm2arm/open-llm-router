@@ -7,4 +7,4 @@ metadata:
     {{- include "olr.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- include "olr.config" . | nindent 4 }}

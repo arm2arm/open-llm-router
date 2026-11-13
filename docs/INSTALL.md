@@ -350,6 +350,11 @@ appear in the portal. No real model is downloaded or run by this chart.
 
 ### 4. Configure real endpoints or production services
 
+Disabling `demoBackend` no longer requires `OLR_DEMO_BACKEND_URL`: the chart omits
+its placeholder model unless you supply a real pool. The portal and API can start
+with an empty catalog. They also stay available if every configured backend is down;
+readiness depends on the database, while backend health is checked asynchronously.
+
 To use Ollama, vLLM or SGLang, set `demoBackend.enabled: false` and replace the
 upstream model and **complete** `pool` list in your values file, then run the same
 Helm command. For example:

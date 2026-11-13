@@ -1,10 +1,12 @@
 production: true
+# Optional chart-level policy; true requires digests for every enabled image.
+enforceImageDigests: false
 # Copy to a private site values file. Replace the image, host, issuer, model and
 # backend origin. Credentials belong in the separately created olr-secrets Secret.
 image:
   repository: registry.example.org/olr
   tag: REPLACE_WITH_TESTED_GIT_SHA
-  digest: sha256:REPLACE_WITH_VERIFIED_64_HEX_DIGEST
+  digest: "" # Optional: sha256:<verified 64-hex digest>; overrides tag.
 # Use your existing managed database, model servers and production Keycloak.
 postgresql:
   enabled: false
@@ -73,6 +75,12 @@ ingress:
 # selectors for in-cluster services. Include every approved destination only.
 networkPolicy:
   enabled: true
+  # Match the namespace and labels of your installed F5 controller.
+  ingressPeers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: nginx-ingress}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: nginx-ingress}
   egress:
     - to: [{ipBlock: {cidr: 192.0.2.10/32}}] # PostgreSQL
       ports: [{protocol: TCP, port: 5432}]

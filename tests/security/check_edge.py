@@ -55,7 +55,9 @@ def main():
                 try:
                     assert request(0) == 401, "edge did not reach authentication upstream"
                     break
-                except urllib.error.URLError:
+                # Docker can publish the port before NGINX accepts HTTP,
+                # resulting in a reset or timeout as well as a refused socket.
+                except (urllib.error.URLError, ConnectionError, TimeoutError):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(0.1)

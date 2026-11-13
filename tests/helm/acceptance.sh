@@ -52,6 +52,11 @@ portal:
   baseURL: $base
 keycloak:
   baseURL: http://localhost:$kc_port
+config:
+  models:
+    chat-model:
+      # Probe offline inference without the optional 120-second capacity queue.
+      queue_timeout_s: 0
 EOF
 install() {
   "$helm_bin" upgrade --install olr charts/open-llm-router -n olr \
@@ -165,5 +170,30 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 sso
+# The router Service must remain ready when its only inference backend is gone.
+kubectl -n olr scale deployment/olr-open-llm-router-demo --replicas=0
+for attempt in $(seq 1 30); do
+  code=$(curl --silent --show-error --max-time 15 -o "$work/offline.json" -w '%{http_code}' \
+    -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+    -d '{"model":"chat-model","messages":[],"max_tokens":1}' "$base/v1/chat/completions")
+  if [ "$code" = 503 ]; then break; fi
+  [ "$attempt" != 30 ] || { echo "offline inference returned $code, expected 503"; exit 1; }
+  sleep 1
+done
+# Cover at least one Kubernetes readiness probe after the backend becomes unhealthy.
+sleep 6
+kubectl -n olr wait --for=condition=Ready pod -l app.kubernetes.io/name=open-llm-router --timeout=30s
+curl --fail --silent --show-error "$base/readyz" > /dev/null
+curl --fail --silent --show-error "$base/portal/login/local" > /dev/null
+models
+# Disable the demo entirely; no OLR_DEMO_BACKEND_URL or model pool is required.
+install --set demoBackend.enabled=false
+forward
+curl --fail --silent --show-error "$base/portal/login/local" > /dev/null
+curl --fail --silent --show-error "$base/v1/models" -H "Authorization: Bearer $key" > "$work/empty-models.json"
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["data"] == []' "$work/empty-models.json"
+install
+forward
+models
 "$helm_bin" uninstall olr -n olr --wait --timeout 300s
-echo 'Helm acceptance passed: full-stack install, local admin, SSO, streaming, stable credentials, upgrade, rollback and persistent reinstall.'
+echo 'Helm acceptance passed: full-stack install, local admin, SSO, streaming, upgrade/rollback, persistent reinstall, backend outage and demo-disabled setup.'

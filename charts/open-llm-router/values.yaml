@@ -1,5 +1,7 @@
-# The default stack is a disposable demo; production enables strict image/TLS policy.
+# The default stack is a disposable demo. TLS and digest enforcement are opt-in.
 production: false
+# Require immutable digests for every enabled image. Independent of production.
+enforceImageDigests: false
 # Build the router image from this checkout; no public image is assumed.
 image:
   repository: olr-router
@@ -46,6 +48,13 @@ keycloak:
   enabled: true
   image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
   baseURL: http://localhost:8081
+  # Browser-visible route; baseURL must match its scheme and host.
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    annotations: {}
+    tlsSecretName: ""
   adminPassword: ""
   clientSecret: ""
   demoUserPassword: ""
@@ -83,9 +92,11 @@ env: {}
 
 # The same router YAML as config.example.yaml. ${ENV_VAR} references are passed
 # unchanged to the router. Put credentials in secrets.env or existingSecret.
-# The default endpoint resolves to this release's bundled demo backend.
-# For a real backend, disable demoBackend and replace upstream_model/pool.
+# A demo model is added only when demoBackend.enabled=true. Disable it for an
+# empty initial catalog or supply real models here; no demo environment is needed.
 config:
+  security:
+    require_tls: false
   content_tracing:
     enabled: false
     redact_patterns: []
@@ -106,14 +117,12 @@ config:
       idle_timeout_s: 120
       queue_timeout_s: 120
       session_affinity: true
-      pool:
-        - url: ${OLR_DEMO_BACKEND_URL}
-          health_path: /health
-          weight: 1
-          max_inflight: 4
+      # Empty: use the bundled demo only when enabled; otherwise omit this
+      # placeholder. Set a complete pool list to use a real backend.
+      pool: []
   groups:
     staff:
-      models: [chat-model]
+      models: ["*"]
       tokens_per_day: 2000000
       tokens_per_month: 20000000
       rpm: 60
@@ -128,7 +137,7 @@ service:
   annotations: {}
 
 # Controller-specific streaming settings belong in annotations. See the chart
-# README for a maintained NGINX controller example and TLS setup.
+# README for Traefik and NGINX examples and TLS setup.
 ingress:
   enabled: false
   className: ""
@@ -150,11 +159,9 @@ affinity: {}
 # Enforced by a NetworkPolicy-capable CNI. External endpoints need explicit peers.
 networkPolicy:
   enabled: true
-  ingressPeers:
-    - namespaceSelector:
-        matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
-      podSelector:
-        matchLabels: {app.kubernetes.io/component: controller}
+  # Select your controller's actual namespace AND pod labels. No controller is
+  # assumed. Required when exposing either router or Keycloak through ingress.
+  ingressPeers: []
   monitoringPeers:
     - namespaceSelector:
         matchLabels: {kubernetes.io/metadata.name: monitoring}

@@ -27,8 +27,11 @@ Compose stack includes development Keycloak and mock backends.
 Startup applies database migrations and fails before listening if the database is unavailable.
 OIDC discovery, token verification initialization and group-sync initialization run separately
 and retry after failures; local authentication and API keys remain usable. `/portal/api/auth`
-reports SSO availability. `/healthz` is liveness; `/readyz` needs the database and one healthy replica
-per model. A first `SIGTERM` gives streams 30 s (`-shutdown-grace`) to finish.
+reports SSO availability. `/healthz` is liveness; `/readyz` checks database availability.
+Backend checks run asynchronously: the portal, model catalog and management API stay
+available with no models or no healthy replicas. Inference returns 503 for an unavailable
+model and recovers after health checks succeed. View backend health in Admin or metrics.
+A first `SIGTERM` gives streams 30 s (`-shutdown-grace`) to finish.
 
 ### Behind a TLS reverse proxy
 

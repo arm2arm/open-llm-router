@@ -28,7 +28,7 @@ spec:
       labels:
         {{- include "olr.selectorLabels" . | nindent 8 }}
       annotations:
-        {{- $annotations := mergeOverwrite (deepCopy .Values.podAnnotations) (dict "checksum/config" (toYaml .Values.config | sha256sum)) }}
+        {{- $annotations := mergeOverwrite (deepCopy .Values.podAnnotations) (dict "checksum/config" (include "olr.config" . | sha256sum)) }}
         {{- toYaml $annotations | nindent 8 }}
     spec:
       automountServiceAccountToken: false
