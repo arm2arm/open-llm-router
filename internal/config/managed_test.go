@@ -105,3 +105,23 @@ func TestPoliciesCopyAndValidateTheWholeRevision(t *testing.T) {
 		t.Fatal("accepted unknown model grant")
 	}
 }
+
+func TestEmptyIssuerKeepsAnOmittedOIDCSectionLocalOnly(t *testing.T) {
+	const local = `models:
+  m:
+    protocols: [openai]
+    timeout_s: 5
+    pool: [{url: http://backend:8000, weight: 1, max_inflight: 1}]
+`
+	cfg, err := Parse([]byte(local), lookupIn(map[string]string{"OIDC_ISSUER": ""}))
+	if err != nil || cfg.OIDC != nil {
+		t.Fatal("empty Compose environment enabled SSO", err)
+	}
+	cfg, err = Parse([]byte(local), lookupIn(map[string]string{"OIDC_ISSUER": "http://idp.example/realms/dev"}))
+	if err != nil || cfg.OIDC == nil {
+		t.Fatal("nonempty issuer did not enable SSO", err)
+	}
+	if _, err = Parse([]byte("oidc:\n  issuer: http://idp.example/realms/dev\n  portal_client_id: portal\n"+local), lookupIn(map[string]string{"OIDC_ISSUER": ""})); err == nil {
+		t.Fatal("an explicit invalid SSO section was silently disabled")
+	}
+}

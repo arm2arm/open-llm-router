@@ -292,7 +292,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		return nil, yamlProblems(err, data)
 	}
 	cfg.Portal = Portal{BaseURL: "http://localhost:8080", CookieSecure: true}
-	if issuer, ok := lookup("OIDC_ISSUER"); ok {
+	if issuer, ok := lookup("OIDC_ISSUER"); ok && (issuer != "" || cfg.OIDC != nil) {
 		if cfg.OIDC == nil {
 			cfg.OIDC = &OIDC{PortalClientID: "olr-portal"}
 		}

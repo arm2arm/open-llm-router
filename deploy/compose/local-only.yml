@@ -1,0 +1,23 @@
+# Compose 2.24.4+: merge directly with docker-compose.yml in this directory.
+# Example: docker compose -f deploy/compose/docker-compose.yml \
+#   -f deploy/compose/local-only.yml up --build --detach --wait
+services:
+  router:
+    environment:
+      OIDC_ISSUER: ""
+      OIDC_PORTAL_CLIENT_SECRET: ""
+      OIDC_SYNC_CLIENT_SECRET: ""
+      OIDC_BACKCHANNEL_URL: ""
+      OIDC_AUDIENCE: ""
+      OIDC_REQUIRED_CLAIM: ""
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      mock-llm-a:
+        condition: service_started
+      mock-llm-b:
+        condition: service_started
+    volumes: !override
+      - ${OLR_LOCAL_CONFIG_FILE:-../../config.local.example.yaml}:/etc/olr/config.yaml:ro
+  keycloak:
+    profiles: [sso]

@@ -92,7 +92,7 @@ const (
 type AuthSetting struct{ Name, YAML, Env string }
 
 // AuthSettings lists the authentication settings in display order. "enabled"
-// is derived: an oidc section or OIDC_ISSUER turns SSO on.
+// is derived: an oidc section or a nonempty OIDC_ISSUER turns SSO on.
 var AuthSettings = []AuthSetting{
 	{"enabled", "", "OIDC_ISSUER"},
 	{"default_sign_in", "default_sign_in", ""},

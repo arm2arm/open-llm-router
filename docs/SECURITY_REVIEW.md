@@ -75,14 +75,15 @@ updates for Go modules, npm, Docker digests and Actions.
 
 ### 6. Accepted risks (info)
 
-- A user can create any number of API keys in the portal. Each is attributable to the user
-  and expires (`auth.default_key_lifetime_days`).
+- API keys are attributable to users and expire (`auth.default_key_lifetime_days`);
+  issuance now also enforces the site maximum lifetime and active-key count (default 10).
 - `/readyz` is public and pings the database, bounded to 2 s per call. Do not route it through
   the public TLS proxy if that matters to the site.
 - Request log lines carry the user ID and the 12-character display prefix of the key; they
   never carry the key, prompts or responses. Keep the log retention at or below the usage
   retention (runbook).
-- Groups of API-key users are refreshed at portal login only until the sync job of #24.
+- Groups of API-key users refresh at portal login and through the configured Keycloak
+  sync job; an outage delays refresh, so disable an account locally when urgent.
 - Rate limiting per client address is left to the reverse proxy; the router does not trust
   forwarding headers.
 
@@ -151,3 +152,27 @@ The existing inference concurrency and replica limits still govern admitted work
 reader/byte ceiling and live heap, then verifies cancellation cleanup. Network regression
 tests cover stalled fixed-length and chunked uploads and immediate oversized rejection.
 See [edge configuration](RUNBOOK.md#behind-a-tls-reverse-proxy) for the matching limits.
+
+
+## Local administration follow-up (#83–85)
+
+13 November 2026. Automated source review by the implementing agent, backed by
+regression/browser tests; this is not an independent human approval or the #21
+production review. Scope: local credentials/recovery, portal authorization,
+managed authentication/routing/group settings, audit transactions and new
+installation/restore fixtures.
+
+| Reviewed boundary | Finding or evidence |
+|---|---|
+| Clean no-IdP startup | Release-blocking install failure fixed: an empty `OIDC_ISSUER` created an invalid OIDC configuration even when YAML omitted OIDC. Empty/no-section now stays local-only; explicit invalid OIDC still fails closed. `TestEmptyIssuerKeepsAnOmittedOIDCSectionLocalOnly` and `make acceptance-local` cover both. |
+| Protected identity/credentials | API, store and database deletion/disablement/demotion/credential guards; `policy.ForUser` preserves independent protected authority, grants and unlimited limits. Concurrent bootstrap, password rotation, reset refusal and recovery are tested in `local_admin*_test.go`. |
+| Portal mutation authorization | Admin wrappers use active stored access; JSON mutations enforce same-origin requests. Authentication changes/checks/test sign-in require a recent local admin session; SSO and ordinary sessions are refused. Browser/API tests cover 403 and restricted first-change sessions. |
+| Secret and token handling | Passwords use bounded Argon2id; session revisions invalidate rotated credentials; recovery revokes keys/sessions. Stored SSO secrets require the separate settings encryption key. Views/history expose metadata; tests assert no password/hash/key/client-secret/free-text reason in audit or logs. Browser capture artifacts remain disabled. |
+| Policy activation races and rollback | Local assignment and routing activation share the database advisory lock; existing memberships block destructive group deletion. Model/grant/policy validation is atomic, previews use stored overrides, and in-flight requests retain their routing snapshot. Integration tests exercise refusal and rollback. |
+| Audit consistency and restore | Injected audit-store failure rolls back sensitive credential/account/settings changes. History/revisions reject updates/deletion/truncation. Upgrade and full dump/restore preserve identity, credentials, active revisions and existing events; recovery is auditable. |
+| External IdP trust | An isolated real Keycloak realm tests bad client credentials, inaccessible discovery, issuer mismatch, successful checked sign-in, provider outage/restart and rollback with local access intact. Destination/redirect/issuer protections remain enforced. |
+
+No additional release-blocking finding was identified in this scoped review after
+the startup fix. Existing operator trust, single-router scope, history retention,
+TLS/edge throttling and DBA/superuser limitations still apply. Independent review
+and the target deployment's production acceptance remain required separately.
