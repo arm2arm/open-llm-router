@@ -1233,7 +1233,7 @@ the container environment. The protected UUID and changed password survive.
 There is no default local password. Omitting bootstrap entirely is also valid:
 start the router, then bootstrap with the operator CLI and a privately mounted file.
 
-The override omits the `oidc` YAML section, clears development OIDC variables and
+The override omits the `oidc` YAML section, removes development OIDC environment bindings and
 removes Keycloak from the router's dependencies. Keycloak remains part of the
 standard development stack. An empty `OIDC_ISSUER` with no `oidc` section leaves
 SSO off; a configured section with an empty issuer remains invalid and fails

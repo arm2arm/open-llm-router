@@ -33,6 +33,9 @@ cleanup() {
   "${task_compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+# Omitted OIDC variables also avoid conflicting with a later Admin-managed
+# connection; an empty client-secret variable is still an explicit source.
+"${task_compose[@]}" config --format json | python3 -c 'import json, sys; env=json.load(sys.stdin)["services"]["router"]["environment"]; assert not any(name.startswith("OIDC_") for name in env)'
 "${task_compose[@]}" config --quiet
 "${task_compose[@]}" up --build --detach --wait --wait-timeout 90
 export OLR_TEST_ROUTER_IMAGE

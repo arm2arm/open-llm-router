@@ -3,13 +3,18 @@
 #   -f deploy/compose/local-only.yml up --build --detach --wait
 services:
   router:
+    # Remove inherited values entirely so managed SSO secrets can be added later.
     environment:
-      OIDC_ISSUER: ""
-      OIDC_PORTAL_CLIENT_SECRET: ""
-      OIDC_SYNC_CLIENT_SECRET: ""
-      OIDC_BACKCHANNEL_URL: ""
-      OIDC_AUDIENCE: ""
-      OIDC_REQUIRED_CLAIM: ""
+      OIDC_ISSUER: !reset null
+      OIDC_PORTAL_CLIENT_ID: !reset null
+      OIDC_PORTAL_CLIENT_SECRET: !reset null
+      OIDC_SYNC_CLIENT_ID: !reset null
+      OIDC_SYNC_CLIENT_SECRET: !reset null
+      OIDC_BACKCHANNEL_URL: !reset null
+      OIDC_AUDIENCE: !reset null
+      OIDC_GROUPS_CLAIM: !reset null
+      OIDC_USERNAME_CLAIM: !reset null
+      OIDC_REQUIRED_CLAIM: !reset null
     depends_on: !override
       postgres:
         condition: service_healthy
