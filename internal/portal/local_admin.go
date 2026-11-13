@@ -19,7 +19,7 @@ func (h *Handler) localGroups(w http.ResponseWriter, groups []string) ([]string,
 	}
 	slices.Sort(names)
 	for i, name := range names {
-		if _, ok := h.cfg.Groups[name]; !ok || (i > 0 && names[i-1] == name) {
+		if _, ok := h.routingConfig().Groups[name]; !ok || (i > 0 && names[i-1] == name) {
 			fail(w, 400, "invalid_request_error", "group names must be distinct existing configured groups")
 			return nil, false
 		}

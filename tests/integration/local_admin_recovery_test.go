@@ -194,6 +194,14 @@ models:
 	// Recover with only the database; Keycloak is configured but down.
 	call(newBrowser(), "GET", "/portal/login", nil, nil, 503)
 	recovered := cli(recoveryAdminPassword+"\n", "", "recover", "-password-stdin")
+	var recordedRevision, credentialRevision int64
+	if err := pool.QueryRow(t.Context(), `SELECT revision FROM local_credentials WHERE user_id=$1`, account.ID).Scan(&credentialRevision); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT revision FROM audit_events WHERE action='local_admin.recover' AND target_id=$1 AND result='succeeded' ORDER BY id DESC LIMIT 1`, account.ID).Scan(&recordedRevision); err != nil || recordedRevision != credentialRevision {
+		t.Fatal("CLI recovery lacks transactional history", err)
+	}
+
 	if recovered.ID != account.ID || !recovered.ProtectedAdmin || !recovered.MustChangePassword || !recovered.CredentialReplaced ||
 		recovered.SessionsRevoked < 1 || recovered.KeysRevoked != 1 {
 		t.Fatalf("recovery result %+v", recovered.Recovery)

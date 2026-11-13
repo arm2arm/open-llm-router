@@ -37,6 +37,7 @@ const adminUsage = `usage:
   olr admin override clear -user USER_UUID -field FIELD
   olr admin override list -user USER_UUID
   olr admin settings show|import|draft|discard|activate|rollback ...
+  olr admin history [-action ACTION] [-actor UUID] [-target ID] [-result RESULT] [-from RFC3339] [-to RFC3339] [-before ID] [-limit N]
 
 OLR_DATABASE_URL is required. User add prints the new UUID. Key create prints
 the plaintext key once; save it securely. Key and user list print JSON.
@@ -74,6 +75,9 @@ func admin(args []string, out, errout io.Writer) error {
 	}
 	if args[0] == "recover" {
 		return recoverCommand(args[1:], os.Stdin, out, errout)
+	}
+	if args[0] == "history" {
+		return historyCommand(args[1:], out, errout)
 	}
 	if args[0] == "settings" {
 		return settingsCommand(args[1:], out, errout)

@@ -123,6 +123,10 @@ func (h *Handler) endpointRestore(w http.ResponseWriter, r *http.Request, by use
 }
 
 func (h *Handler) routingConfig() *config.Config {
+	if h.RoutingRuntime != nil {
+		cfg, _ := h.RoutingRuntime.Snapshot()
+		return cfg
+	}
 	if h.Endpoints != nil {
 		cfg, _ := h.Endpoints.Runtime.Snapshot()
 		return cfg

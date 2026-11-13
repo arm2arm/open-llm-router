@@ -16,9 +16,7 @@ import (
 )
 
 func (h *Handler) access(u user) policy.Policy {
-	access := policy.Resolve(h.cfg.Groups, u.Groups).WithOverrides(u.Overrides)
-	access.Admin = access.Admin || u.ProtectedAdmin
-	return access
+	return policy.ForUser(h.routingConfig().Groups, u.Groups, u.Overrides, u.ProtectedAdmin)
 }
 func effective(p policy.Policy) limits.EffectiveLimits { return limits.Effective(p) }
 func (h *Handler) me(w http.ResponseWriter, r *http.Request, u user) {

@@ -80,3 +80,48 @@ models:
 		t.Fatal("OIDC_ISSUER enables SSO from the environment", err)
 	}
 }
+
+func TestPoliciesCopyAndValidateTheWholeRevision(t *testing.T) {
+	base, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := 7
+	groups := map[string]Group{"managed": {Models: []string{"chat-model"}, RPM: &one}}
+	next, err := WithPolicies(base, base.Models, base.Aliases, groups, lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Groups["managed"].Models[0] = "changed"
+	*next.Groups["managed"].RPM = 9
+	if groups["managed"].Models[0] != "chat-model" || *groups["managed"].RPM != 7 {
+		t.Fatal("revision aliases input policies")
+	}
+	if _, ok := base.Groups["managed"]; ok {
+		t.Fatal("revision mutated deployment baseline")
+	}
+	groups["managed"] = Group{Models: []string{"nonexistent"}}
+	if _, err = WithPolicies(base, base.Models, base.Aliases, groups, lookupIn(validEnv)); err == nil {
+		t.Fatal("accepted unknown model grant")
+	}
+}
+
+func TestEmptyIssuerKeepsAnOmittedOIDCSectionLocalOnly(t *testing.T) {
+	const local = `models:
+  m:
+    protocols: [openai]
+    timeout_s: 5
+    pool: [{url: http://backend:8000, weight: 1, max_inflight: 1}]
+`
+	cfg, err := Parse([]byte(local), lookupIn(map[string]string{"OIDC_ISSUER": ""}))
+	if err != nil || cfg.OIDC != nil {
+		t.Fatal("empty Compose environment enabled SSO", err)
+	}
+	cfg, err = Parse([]byte(local), lookupIn(map[string]string{"OIDC_ISSUER": "http://idp.example/realms/dev"}))
+	if err != nil || cfg.OIDC == nil {
+		t.Fatal("nonempty issuer did not enable SSO", err)
+	}
+	if _, err = Parse([]byte("oidc:\n  issuer: http://idp.example/realms/dev\n  portal_client_id: portal\n"+local), lookupIn(map[string]string{"OIDC_ISSUER": ""})); err == nil {
+		t.Fatal("an explicit invalid SSO section was silently disabled")
+	}
+}

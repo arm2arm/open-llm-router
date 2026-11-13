@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5"
@@ -47,18 +48,28 @@ func (s postgresStore) touch(ctx context.Context, keyID string) error {
 type Admin struct {
 	Pool      *pgxpool.Pool
 	KeyPolicy config.Auth
+	Actor     audit.Actor
+	event     *audit.Event
 }
 
-func (a Admin) AddUser(ctx context.Context, username, email string, groups []string) (string, error) {
+func (a Admin) AddUser(ctx context.Context, username, email string, groups []string) (id string, err error) {
+	a, finish := a.auditOperation(ctx, "user.create", "user", "")
+	defer func() { finish(err) }()
 	if strings.TrimSpace(username) == "" {
 		return "", errors.New("username must be nonempty")
 	}
 	if groups == nil {
 		groups = []string{}
 	}
-	var id string
-	err := a.Pool.QueryRow(ctx, `INSERT INTO users (issuer, sub, username, email, groups)
+	err = a.transaction(ctx, func(tx pgx.Tx) error {
+		if err := validateManagedGroups(ctx, tx, groups); err != nil {
+			return err
+		}
+		err := tx.QueryRow(ctx, `INSERT INTO users (issuer, sub, username, email, groups)
 		VALUES ('local', $1, $1, $2, $3) RETURNING id`, username, email, groups).Scan(&id)
+		a.event.TargetID = id
+		return err
+	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return "", errors.New("local user already exists")
@@ -75,7 +86,10 @@ func (a Admin) DisableUser(ctx context.Context, userID string) error {
 
 // SetEnabled disables or re-enables a user. Disabled users have no API or
 // portal access; their sessions end at once.
-func (a Admin) SetEnabled(ctx context.Context, userID string, enabled bool) error {
+func (a Admin) SetEnabled(ctx context.Context, userID string, enabled bool) (err error) {
+	a, finish := a.auditOperation(ctx, "user.enablement", "user", userID)
+	a.event.Details = map[string]any{"enabled": enabled}
+	defer func() { finish(err) }()
 	return a.changeWith(ctx, func(tx pgx.Tx) error {
 		result, err := tx.Exec(ctx, `UPDATE users SET enabled=$2 WHERE id=$1`, userID, enabled)
 		if err != nil {
@@ -129,7 +143,9 @@ func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string
 	return a.createKey(ctx, userID, label, class, lifetime, false)
 }
 
-func (a Admin) createKey(ctx context.Context, userID, label, class string, lifetime time.Duration, trusted bool) (string, error) {
+func (a Admin) createKey(ctx context.Context, userID, label, class string, lifetime time.Duration, trusted bool) (issued string, err error) {
+	a, finish := a.auditOperation(ctx, "key.create", "user", userID)
+	defer func() { finish(err) }()
 	maximum := a.KeyPolicy.MaxKeyLifetimeDays
 	if maximum == 0 {
 		maximum = config.DefaultMaxKeyLifetimeDays
@@ -155,7 +171,7 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		return "", err
 	}
 	hash := sha256.Sum256([]byte(key))
-	err = pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
+	err = a.transaction(ctx, func(tx pgx.Tx) error {
 		var id string
 		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND enabled FOR UPDATE`, userID).Scan(&id); err != nil {
 			return err
@@ -167,16 +183,16 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		if active >= cap {
 			return ErrKeyLimit
 		}
-		result, err := tx.Exec(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
+		var keyID string
+		err := tx.QueryRow(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
 		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
 		FROM users WHERE id = $1 AND enabled AND NOT EXISTS
-		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password)`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted)
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password) RETURNING id`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted).Scan(&keyID)
 		if err != nil {
 			return err
 		}
-		if result.RowsAffected() == 0 {
-			return errors.New("user not found, disabled, or password change required")
-		}
+		a.event.TargetType, a.event.TargetID = "key", keyID
+		a.event.Details = map[string]any{"user_id": userID, "class": class, "trusted_forwarder": trusted}
 		return nil
 	})
 	if errors.Is(err, ErrKeyLimit) {
@@ -210,7 +226,9 @@ func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
 	return keys, nil
 }
 
-func (a Admin) RevokeKey(ctx context.Context, keyID string) error {
+func (a Admin) RevokeKey(ctx context.Context, keyID string) (err error) {
+	a, finish := a.auditOperation(ctx, "key.revoke", "key", keyID)
+	defer func() { finish(err) }()
 	return a.change(ctx, `UPDATE api_keys SET revoked = true WHERE id = $1`, keyID)
 }
 
@@ -218,6 +236,8 @@ func (a Admin) RevokeKey(ctx context.Context, keyID string) error {
 // expired is deleted for good; usage rows that referenced it keep their data
 // without the key reference. It reports whether the key was deleted.
 func (a Admin) RemoveOwnedKey(ctx context.Context, userID, keyID string) (deleted bool, err error) {
+	a, finish := a.auditOperation(ctx, "key.remove", "key", keyID)
+	defer func() { finish(err) }()
 	err = a.changeWith(ctx, func(tx pgx.Tx) error {
 		result, err := tx.Exec(ctx, `DELETE FROM api_keys WHERE id=$1 AND user_id=$2
 			AND (revoked OR expires <= clock_timestamp())`, keyID, userID)
@@ -226,8 +246,10 @@ func (a Admin) RemoveOwnedKey(ctx context.Context, userID, keyID string) (delete
 		}
 		if result.RowsAffected() == 1 {
 			deleted = true
+			a.event.Action = "key.delete"
 			return nil
 		}
+		a.event.Action = "key.revoke"
 		result, err = tx.Exec(ctx, `UPDATE api_keys SET revoked=true WHERE id=$1 AND user_id=$2`, keyID, userID)
 		if err != nil {
 			return errors.New("revoke API key failed")
@@ -242,7 +264,9 @@ func (a Admin) RemoveOwnedKey(ctx context.Context, userID, keyID string) (delete
 
 // DeleteUser erases a user with their keys, sessions, per-request records
 // (including calls forwarded for them) and daily totals, in one transaction.
-func (a Admin) DeleteUser(ctx context.Context, userID string) error {
+func (a Admin) DeleteUser(ctx context.Context, userID string) (err error) {
+	a, finish := a.auditOperation(ctx, "user.delete", "user", userID)
+	defer func() { finish(err) }()
 	return a.change(ctx, `DELETE FROM users WHERE id = $1`, userID)
 }
 
@@ -337,7 +361,9 @@ func (a Admin) TokenIdentity(ctx context.Context, issuer, sub, username, email s
 
 // SetGroups replaces a user's groups; API-key caches observe it before this
 // returns.
-func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) error {
+func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) (err error) {
+	a, finish := a.auditOperation(ctx, "user.groups", "user", userID)
+	defer func() { finish(err) }()
 	if groups == nil {
 		groups = []string{}
 	}
@@ -346,12 +372,16 @@ func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) er
 
 // SyncIdentity refreshes claims without re-enabling disabled accounts or linking
 // by email. API key caches observe new memberships before this returns.
-func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string) (string, error) {
+func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string) (id string, err error) {
+	if a.Actor.Type == "" {
+		a.Actor = audit.Actor{Type: "identity_provider"}
+	}
+	a, finish := a.auditOperation(ctx, "user.identity_sync", "user", "")
+	defer func() { finish(err) }()
 	if groups == nil {
 		groups = []string{}
 	}
-	var id string
-	err := a.changeWith(ctx, func(tx pgx.Tx) error {
+	err = a.changeWith(ctx, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at)
 			VALUES($1,$2,$3,$4,$5,clock_timestamp()) ON CONFLICT(issuer,sub) DO UPDATE SET
 			username=EXCLUDED.username,email=EXCLUDED.email,groups=EXCLUDED.groups,synced_at=EXCLUDED.synced_at
@@ -359,6 +389,7 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
+		a.event.TargetID = id
 		return err
 	})
 	return id, err
@@ -375,19 +406,30 @@ type Override struct {
 
 // SetOverride replaces one field of a user's effective policy. Every router
 // applies it to the next request, because the change clears the API-key caches.
-func (a Admin) SetOverride(ctx context.Context, userID, field string, value *int64, reason, setBy string) error {
+func (a Admin) SetOverride(ctx context.Context, userID, field string, value *int64, reason, setBy string) (err error) {
+	a, finish := a.auditOperation(ctx, "user.override_set", "user", userID)
+	a.event.Reason = "per-user limit override"
+	if policy.ValidOverride(field, value) {
+		a.event.Details = map[string]any{"field": field, "unlimited": value == nil, "reason_provided": reason != ""}
+	}
+	defer func() { finish(err) }()
 	if !policy.ValidOverride(field, value) {
 		return errors.New("invalid override field or value")
 	}
-	return a.change(ctx, `INSERT INTO quota_overrides (user_id, field, value, reason, set_by, set_at)
+	return a.changePolicy(ctx, userID, `INSERT INTO quota_overrides (user_id, field, value, reason, set_by, set_at)
 		SELECT id, $2, $3, $4, $5, clock_timestamp() FROM users WHERE id = $1
 		ON CONFLICT (user_id, field) DO UPDATE SET value = EXCLUDED.value, reason = EXCLUDED.reason,
 		set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`, userID, field, value, reason, setBy)
 }
 
 // ClearOverride returns one field to the group policy.
-func (a Admin) ClearOverride(ctx context.Context, userID, field string) error {
-	return a.change(ctx, `DELETE FROM quota_overrides WHERE user_id = $1 AND field = $2`, userID, field)
+func (a Admin) ClearOverride(ctx context.Context, userID, field string) (err error) {
+	a, finish := a.auditOperation(ctx, "user.override_clear", "user", userID)
+	if slices.Contains(policy.OverrideFields, field) {
+		a.event.Details = map[string]any{"field": field}
+	}
+	defer func() { finish(err) }()
+	return a.changePolicy(ctx, userID, `DELETE FROM quota_overrides WHERE user_id = $1 AND field = $2`, userID, field)
 }
 
 // ListOverrides returns a user's overrides by field.
@@ -410,4 +452,30 @@ func (a Admin) ListOverrides(ctx context.Context, userID string) ([]Override, er
 		return nil, errors.New("list overrides failed")
 	}
 	return list, nil
+}
+
+// Policy edits cannot target the reserved administrator. Hold the identity lock
+// across the write so this guard also applies to CLI callers.
+func (a Admin) changePolicy(ctx context.Context, userID, sql string, args ...any) error {
+	return a.changeWith(ctx, func(tx pgx.Tx) error {
+		var protected bool
+		err := tx.QueryRow(ctx, `SELECT protected_admin FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&protected)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if protected {
+			return ErrProtectedAdmin
+		}
+		result, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }

@@ -20,6 +20,12 @@ func WithModels(base *Config, models map[string]Model, lookup func(string) (stri
 // still in use cannot be removed. Backend credentials are resolved through
 // lookup from bearer_token_env references.
 func WithRouting(base *Config, models map[string]Model, aliases map[string]string, lookup func(string) (string, bool)) (*Config, error) {
+	return WithPolicies(base, models, aliases, base.Groups, lookup)
+}
+
+// WithPolicies copies and validates models, aliases and group policies together.
+// No model or policy from the previous revision can leak into the replacement.
+func WithPolicies(base *Config, models map[string]Model, aliases map[string]string, groups map[string]Group, lookup func(string) (string, bool)) (*Config, error) {
 	data, err := json.Marshal(models)
 	if err != nil {
 		return nil, Problems{"invalid model configuration"}
@@ -29,6 +35,14 @@ func WithRouting(base *Config, models map[string]Model, aliases map[string]strin
 		return nil, Problems{"invalid model configuration"}
 	}
 	cfg := *base
+	cfg.Groups = nil
+	groupData, err := json.Marshal(groups)
+	if err != nil {
+		return nil, Problems{"invalid group policies"}
+	}
+	if json.Unmarshal(groupData, &cfg.Groups) != nil {
+		return nil, Problems{"invalid group policies"}
+	}
 	cfg.Models = copied
 	cfg.Aliases = maps.Clone(aliases)
 	if cfg.Aliases == nil {
@@ -78,7 +92,7 @@ const (
 type AuthSetting struct{ Name, YAML, Env string }
 
 // AuthSettings lists the authentication settings in display order. "enabled"
-// is derived: an oidc section or OIDC_ISSUER turns SSO on.
+// is derived: an oidc section or a nonempty OIDC_ISSUER turns SSO on.
 var AuthSettings = []AuthSetting{
 	{"enabled", "", "OIDC_ISSUER"},
 	{"default_sign_in", "default_sign_in", ""},

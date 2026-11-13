@@ -834,3 +834,69 @@ its own kubeconfig and deletes the cluster. See [Calico on kind](https://docs.ti
 Repeat these probes on the target cluster before production, including ingress/monitoring,
 migration/backup and external endpoints. Test wrong CA and wrong hostname rejection for
 PostgreSQL/OIDC/inference/OTLP. Rendering alone is not proof of network enforcement.
+
+
+### Preserve administration history during backup and restore
+
+Include `audit_events`, endpoint/settings revisions, activations and migration
+metadata in every full database backup. They have no cascading actor foreign
+keys: erasing an account does not erase its history. Store database backups with
+encryption and restricted access: password hashes, sessions and encrypted managed
+secrets are sensitive even though audit events exclude credential values. Keep
+the managed-settings encryption key outside the dump and restore it through the
+normal deployment secret source. Restore into an isolated database first; check
+`olr admin history -limit 10`, protected administrator UUID/credential revision,
+active settings revisions and local login before returning service to traffic.
+
+The application does not prune audit history. Document the site's retention,
+archive and legal-erasure policy before offline DBA maintenance; cover historical
+exports and backup expiration too. Application users cannot rewrite, delete or
+truncate events. Schema owners/superusers can defeat triggers and therefore need
+separate, monitored operator access. Preserve a backup before upgrading; never
+repair a failed event insert by disabling its protection and retrying mutations.
+An audit-store outage fails sensitive changes; fix storage and retry. Following a
+cache-invalidation timeout, inspect history because the state may already have
+committed with its success event.
+
+
+### Administration outage, upgrade and restore walkthrough
+
+Practice first in an isolated environment. [Local administration acceptance](ADMIN_GUIDE.md#local-administration-acceptance)
+links automated no-IdP, bundled/external-IdP, upgrade and full dump/restore checks.
+The backup/restore browser test owns its database and router, compares protected
+UUID/password hash/credential revision, active settings, audit events and usage,
+and restarts with bootstrap inputs removed. Its dump stays in memory; credentials
+and dumps are never CI artifacts.
+
+1. Before an upgrade, record the protected UUID, credential revision, active
+   authentication/routing revision IDs and latest `olr admin history` IDs through
+   private operator access. Back up the full database and the matching settings
+   encryption key separately. Preserve private configuration and image digest.
+2. Stop all routers before restoring a full backup into the isolated target. Use
+   the backup command above and the matching key/configuration; never selectively
+   restore credentials without identities, revisions and history. Start the new
+   image with retired bootstrap variables/mounts removed. Schema migrations are
+   forward-only; the integration suite checks both legacy and existing managed
+   installations. For a binary downgrade restore its matching pre-upgrade backup.
+3. Verify the protected UUID and credential revision, active settings IDs, history
+   and accounting against the backup. Sign in locally, run readiness and a streamed
+   request with an ordinary user's key, then inspect usage and policy limits.
+   A password/key created after the backup cannot be expected to survive restore.
+4. If the restored protected password is unknown, run `olr admin recover` with a
+   private file or redirected stdin. It keeps the UUID, revokes existing keys and
+   sessions, and requires a new password. Replace temporary recovery material,
+   issue new keys as needed and confirm the successful recovery event. Retired
+   bootstrap values cannot reset this account.
+5. During an IdP outage, use `/portal/sign-in/local`. Discovery/sync failures must
+   leave local login and API keys available. Restart and verify local access;
+   restore provider connectivity or roll back authentication with a recent local
+   administrator session. A previous issuer's SSO session ends when it is no
+   longer active; account UUIDs are never linked by username/email.
+6. For routing rollback, inspect affected users first, restore a previously active
+   revision, and check model grants/aliases/limits on the next request. Requests
+   already streaming retain their original routing snapshot; accounting remains
+   attached to the user. Keep the audit events for activation and rollback.
+
+These checks target one router and synthetic mock inference. Dedicated provider
+adapters, multi-router live configuration/shared limits and production GPU/two-week
+pilot evidence remain outside this acceptance and are tracked separately (#21).

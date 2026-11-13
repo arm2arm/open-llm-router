@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/pool"
@@ -227,6 +228,14 @@ func (s *Service) Save(ctx context.Context, name string, expected int64, model c
 	defer cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	actorInfo := audit.Actor{Type: "portal_user", ID: actor}
+	if scoped, ok := audit.ActorFromContext(ctx); ok {
+		actorInfo = scoped
+	}
+	event := audit.Event{Action: "endpoints.activate", Actor: actorInfo, TargetType: "model", TargetID: name, Result: audit.Succeeded}
+	if restore >= 0 {
+		event.Action = "endpoints.rollback"
+	}
 	var publish func()
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(571403029385094382)`); err != nil {
@@ -286,14 +295,19 @@ func (s *Service) Save(ctx context.Context, name string, expected int64, model c
 		if _, err := tx.Exec(ctx, `INSERT INTO endpoint_active(model_name,revision_id) VALUES($1,$2) ON CONFLICT(model_name) DO UPDATE SET revision_id=EXCLUDED.revision_id`, name, revision); err != nil {
 			return ErrStorage
 		}
-		return nil
+		event.Revision = revision
+		return audit.Record(ctx, tx, event)
 	})
 	if err != nil {
 		var validation *ValidationError
 		var problems config.Problems
+		event.Result, event.Reason = audit.Refused, "endpoint change refused"
 		if !errors.As(err, &validation) && !errors.As(err, &problems) && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrModel) && !errors.Is(err, ErrRevision) && !errors.Is(err, ErrRoutingManaged) {
+			event.Result, event.Reason = audit.Failed, "endpoint change failed"
+			_ = audit.Record(ctx, s.DB, event)
 			return nil, ErrStorage
 		}
+		_ = audit.Record(ctx, s.DB, event)
 		return nil, err
 	}
 	publish()

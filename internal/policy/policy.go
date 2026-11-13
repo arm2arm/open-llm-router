@@ -66,6 +66,15 @@ func Resolve(groups map[string]config.Group, memberships []string) Policy {
 	return p
 }
 
+// ForUser is shared by enforcement and previews. The reserved local
+// administrator's access is independent of every editable policy and override.
+func ForUser(groups map[string]config.Group, memberships []string, overrides map[string]*int64, protected bool) Policy {
+	if protected {
+		return Policy{models: map[string]bool{"*": true}, Admin: true}
+	}
+	return Resolve(groups, memberships).WithOverrides(overrides)
+}
+
 // Override fields, as stored in quota_overrides.field.
 const (
 	FieldTokensPerDay       = "tokens_per_day"

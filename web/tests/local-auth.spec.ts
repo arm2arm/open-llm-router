@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
@@ -12,6 +12,7 @@ const changed = 'browser-replacement-password-only'
 const rotated = 'browser-rotated-password-only'
 const project = process.env.COMPOSE_PROJECT_NAME ?? 'olr'
 const compose = ['compose', '--env-file', '/dev/null', '-p', project]
+const externalContainers: string[] = []
 const fixtures: {
   database: string
   container: string
@@ -79,6 +80,7 @@ async function startFixture(
     : suffix === 'authentication'
       ? `oidc:\n  issuer: http://localhost:${keycloakPort}/realms/olr-dev\n  portal_client_id: olr-portal\n  audience: olr-api\n`
       : ''
+  const managedSecrets = suffix === 'external' || suffix === 'restore'
   const keycloakEnv = keycloak
     ? [
         '-e',
@@ -121,8 +123,15 @@ async function startFixture(
       'PORTAL_COOKIE_SECURE=false',
       '-e',
       'OLR_BOOTSTRAP_ADMIN_PASSWORD',
-      '-e',
-      `OIDC_PORTAL_CLIENT_SECRET=${keycloak ? 'olr-portal-dev-only' : 'browser-test-only'}`,
+      ...(managedSecrets
+        ? [
+            '-e',
+            'OLR_SETTINGS_ENCRYPTION_KEY=CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=',
+          ]
+        : [
+            '-e',
+            `OIDC_PORTAL_CLIENT_SECRET=${keycloak ? 'olr-portal-dev-only' : 'browser-test-only'}`,
+          ]),
       ...keycloakEnv,
       '-e',
       'OLR_API_KEY_ENCRYPTION_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=',
@@ -180,6 +189,7 @@ test.beforeAll(async () => {
   routing = await startFixture(false, 'routing')
 })
 test.afterAll(() => {
+  for (const container of externalContainers) docker(['rm', '-f', container])
   for (const fixture of fixtures.reverse()) {
     try {
       docker(['rm', '-f', fixture.container])
@@ -1442,4 +1452,661 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   expect((await complete('quick')).status()).toBe(404)
   expect((await complete('test')).status()).toBe(200)
   expect(errors).toEqual([])
+})
+
+test('administrator edits group defaults and previews overrides before activation', async ({
+  page,
+  context,
+}) => {
+  const base = await startFixture(false, 'policies')
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const created = await context.request.post(`${base}/portal/api/admin/users`, {
+    headers: { Origin: base },
+    data: { username: 'policy-user', groups: ['staff'], password: initial },
+  })
+  expect(created.status()).toBe(201)
+  const id = (await created.json()).id as string
+  expect(
+    (
+      await context.request.put(
+        `${base}/portal/api/admin/users/${id}/overrides/rpm`,
+        {
+          headers: { Origin: base },
+          data: { value: 2, reason: 'synthetic acceptance' },
+        },
+      )
+    ).status(),
+  ).toBe(204)
+  await page.goto(`${base}/portal/admin`)
+  const panel = page.getByRole('region', { name: 'Routing settings' })
+  await panel.getByRole('button', { name: 'Import current routing' }).click()
+  const form = panel.getByRole('form', { name: 'Edit routing draft' })
+  await form.getByLabel('staff grant limited', { exact: true }).check()
+  await form.getByLabel('staff rpm', { exact: true }).fill('9')
+  await form.getByLabel('staff max_concurrent_batch', { exact: true }).fill('4')
+  await form.getByLabel('staff strict quota', { exact: true }).check()
+  await form.getByLabel('Preview user', { exact: true }).selectOption(id)
+  await form
+    .getByRole('button', { name: 'Preview access and affected users' })
+    .click()
+  const preview = form.locator('[aria-label="Policy preview results"]')
+  await expect(preview).toContainText('limited')
+  await expect(preview).toContainText('2 (user override)')
+  await expect(preview).toContainText('Unlimited')
+  await form
+    .getByRole('button', { name: 'Save routing draft', exact: true })
+    .click()
+  await expect(
+    panel.locator('[aria-label="Draft affected users"]'),
+  ).toContainText('policy-user')
+  await panel.getByRole('button', { name: 'Activate routing draft' }).click()
+  await expect(
+    panel.locator('[aria-label="Routing draft status"]'),
+  ).toHaveCount(0)
+  const detail = await context.request.get(
+    `${base}/portal/api/admin/users/${id}`,
+  )
+  expect(detail.status()).toBe(200)
+  const effective = await detail.json()
+  expect(effective.models).toContain('limited')
+  expect(effective.limits.rpm).toBe(2)
+  expect(effective.limits.max_concurrent_batch).toBe(4)
+  expect(effective.limits.strict_quota).toBe(true)
+  await panel
+    .getByRole('button', {
+      name: 'Roll back routing to revision 1',
+      exact: true,
+    })
+    .click()
+  await expect(panel.getByTestId('routing-runtime')).toHaveText(
+    'routing revision 1',
+  )
+  const restored = await (
+    await context.request.get(`${base}/portal/api/admin/users/${id}`)
+  ).json()
+  expect(restored.models).not.toContain('limited')
+  expect(restored.limits.rpm).toBe(2)
+})
+
+test('administration history shows searchable immutable events without credentials', async ({
+  page,
+  context,
+}) => {
+  const base = await startFixture(false, 'history')
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const created = await context.request.post(`${base}/portal/api/admin/users`, {
+    headers: { Origin: base },
+    data: {
+      username: 'history-browser-user',
+      groups: ['staff'],
+      password: initial,
+    },
+  })
+  expect(created.status()).toBe(201)
+  const id = (await created.json()).id as string
+  expect(
+    (
+      await context.request.put(
+        `${base}/portal/api/admin/users/${id}/overrides/rpm`,
+        {
+          headers: { Origin: base },
+          data: { value: 4, reason: 'private-browser-reason' },
+        },
+      )
+    ).status(),
+  ).toBe(204)
+  await page.goto(`${base}/portal/admin`)
+  const history = page.getByRole('region', { name: 'Administration history' })
+  await history.getByLabel('History target', { exact: true }).fill(id)
+  await history
+    .getByRole('button', { name: 'Search history', exact: true })
+    .click()
+  const events = history.getByRole('table', { name: 'Administration events' })
+  await expect(events).toContainText('user.create_local')
+  await expect(events).toContainText('user.override_set')
+  await expect(events).not.toContainText(initial)
+  await expect(events).not.toContainText('private-browser-reason')
+  await history
+    .getByLabel('History action', { exact: true })
+    .fill('user.override_set')
+  await history
+    .getByRole('button', { name: 'Search history', exact: true })
+    .click()
+  await expect(events.getByRole('row')).toHaveCount(2)
+  await expect(events).toContainText('succeeded')
+  await history
+    .getByLabel('History result', { exact: true })
+    .selectOption('failed')
+  await history
+    .getByRole('button', { name: 'Search history', exact: true })
+    .click()
+  await expect(history).toContainText('No matching administration events')
+})
+
+// The external connection is a fresh process and realm, never the bundled IdP
+// or an operator's production realm. All credentials below are public fixtures.
+async function externalKeycloak(base: string, directory: string) {
+  const port = await new Promise<number>((resolve, reject) => {
+    const listener = createServer()
+    listener.on('error', reject)
+    listener.listen(0, '127.0.0.1', () => {
+      const address = listener.address()
+      if (!address || typeof address === 'string')
+        return reject(new Error('No IdP test port'))
+      listener.close(() => resolve(address.port))
+    })
+  })
+  const container = `olr-external-${process.pid}`
+  externalContainers.push(container)
+  const source = JSON.parse(
+    readFileSync('../deploy/keycloak/olr-dev-realm.json', 'utf8'),
+  )
+  source.realm = `olr-acceptance-${process.pid}`
+  source.displayName = 'Isolated local acceptance realm (test only)'
+  for (const client of source.clients) {
+    if (client.clientId === 'olr-portal') {
+      client.secret = 'external-portal-test-only'
+      client.redirectUris = [`${base}/portal/callback`]
+      client.webOrigins = [base]
+      client.attributes['post.logout.redirect.uris'] = `${base}/`
+    }
+  }
+  const realmFile = join(directory, 'external-realm.json')
+  writeFileSync(realmFile, JSON.stringify(source), { mode: 0o644 })
+  const origin = `http://127.0.0.1:${port}`
+  docker([
+    'run',
+    '-d',
+    '--name',
+    container,
+    '--network',
+    `${project}_default`,
+    '-p',
+    `127.0.0.1:${port}:8080`,
+    '-e',
+    `KC_HOSTNAME=${origin}`,
+    '-e',
+    'KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true',
+    '-v',
+    `${realmFile}:/opt/keycloak/data/import/acceptance.json:ro`,
+    'quay.io/keycloak/keycloak:26.8.2',
+    'start-dev',
+    '--import-realm',
+  ])
+  const issuer = `${origin}/realms/${source.realm}`
+  await expect
+    .poll(
+      async () => {
+        try {
+          return (await fetch(`${issuer}/.well-known/openid-configuration`))
+            .status
+        } catch {
+          return 0
+        }
+      },
+      { timeout: 90_000 },
+    )
+    .toBe(200)
+  return {
+    container,
+    issuer,
+    backchannel: `http://${container}:8080/realms/${source.realm}`,
+  }
+}
+
+test('isolated external Keycloak checks, dual login, issuer switch, outage, restart and rollback', async ({
+  page,
+  context,
+  browser,
+}) => {
+  test.setTimeout(180_000)
+  const base = await startFixture(false, 'external')
+  const fixture = fixtures.find((f) => f.base === base)!
+  const external = await externalKeycloak(base, fixture.directory)
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const endpoint = `${base}/portal/api/admin/settings/authentication`
+  const call = async (method: string, suffix: string, data?: unknown) => {
+    const response = await context.request.fetch(endpoint + suffix, {
+      method,
+      headers: method === 'GET' ? {} : { Origin: base },
+      data,
+    })
+    expect(response.status()).toBe(200)
+    return response.json()
+  }
+  const imported = await call('POST', '/import', {})
+  const localRevision = imported.settings.active.id as number
+  const baseline = imported.settings.active.document
+  const save = async (
+    document: Record<string, unknown>,
+    secrets?: Record<string, string>,
+  ) => {
+    const current = await call('GET', '')
+    return call('PUT', '/draft', {
+      version: current.settings.version,
+      document,
+      secrets,
+    })
+  }
+  const check = async (revision: number) =>
+    call('POST', '/checks', {
+      revision,
+      test_client_id: 'olr-service',
+      test_client_secret: 'olr-service-dev-only',
+    })
+  const document = {
+    ...baseline,
+    enabled: true,
+    issuer: external.issuer,
+    backchannel_url: external.backchannel,
+    portal_client_id: 'olr-portal',
+    audience: 'olr-api',
+    sync_client_id: 'olr-sync',
+  }
+  let draft = await save(document, {
+    portal_client_secret: 'wrong-test-secret',
+    sync_client_secret: 'wrong-sync-test-secret',
+  })
+  let checks = await check(draft.settings.draft.id)
+  expect(
+    checks.results.find(
+      (r: { name: string }) => r.name === 'portal_credentials',
+    ).status,
+  ).toBe('failed')
+  expect(
+    checks.results.find((r: { name: string }) => r.name === 'sync_permissions')
+      .status,
+  ).toBe('failed')
+  expect(JSON.stringify(checks)).not.toContain('wrong-test-secret')
+  draft = await save(
+    { ...document, backchannel_url: 'http://127.0.0.1:1/realms/unavailable' },
+    {
+      portal_client_secret: 'external-portal-test-only',
+      sync_client_secret: 'olr-sync-dev-only',
+    },
+  )
+  checks = await check(draft.settings.draft.id)
+  expect(
+    checks.results.find((r: { name: string }) => r.name === 'discovery').status,
+  ).toBe('failed')
+  // A mismatched public issuer is refused even through a reachable backchannel.
+  draft = await save(
+    { ...document, issuer: `${external.issuer}-wrong` },
+    {
+      portal_client_secret: 'external-portal-test-only',
+      sync_client_secret: 'olr-sync-dev-only',
+    },
+  )
+  checks = await check(draft.settings.draft.id)
+  expect(
+    checks.results.find((r: { name: string }) => r.name === 'discovery').status,
+  ).toBe('failed')
+  draft = await save(document, {
+    portal_client_secret: 'external-portal-test-only',
+    sync_client_secret: 'olr-sync-dev-only',
+  })
+  const revision = draft.settings.draft.id as number
+  checks = await check(revision)
+  expect(
+    checks.results.every((r: { status: string }) => r.status !== 'failed'),
+  ).toBe(true)
+  const started = await call('POST', '/test-sign-in', { revision })
+  await page.goto(started.url)
+  await page.getByLabel('Username', { exact: true }).fill('staff')
+  await page.getByLabel('Password', { exact: true }).fill('staff-dev-only')
+  await page.getByRole('button', { name: 'Sign In', exact: true }).click()
+  await expect(page).toHaveURL(
+    `${base}/portal/admin?authentication_test=passed#authentication`,
+  )
+  const checked = await call('GET', '')
+  expect(checked.settings.draft.checks.test_sign_in.status).toBe('passed')
+  await call('POST', '/activate', {
+    version: checked.settings.version,
+    revision,
+  })
+  const visitor = await browser.newContext()
+  const sso = await visitor.newPage()
+  await sso.goto(`${base}/portal/sign-in/keycloak`)
+  await sso.getByLabel('Username', { exact: true }).fill('staff')
+  await sso.getByLabel('Password', { exact: true }).fill('staff-dev-only')
+  await sso.getByRole('button', { name: 'Sign In', exact: true }).click()
+  await expect(
+    sso.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  expect((await visitor.request.get(`${base}/portal/api/me`)).status()).toBe(
+    200,
+  )
+  const ssoMe = await (
+    await visitor.request.get(`${base}/portal/api/me`)
+  ).json()
+  const localMe = await (
+    await context.request.get(`${base}/portal/api/me`)
+  ).json()
+  expect(ssoMe.user.id).not.toBe(localMe.user.id)
+  expect(
+    (await visitor.request.get(`${base}/portal/api/admin/history`)).status(),
+  ).toBe(403)
+  // Stop only the isolated IdP. Local administration survives both the outage
+  // and a real router restart, and can roll back without contacting the IdP.
+  docker(['stop', external.container])
+  docker(['restart', fixture.container])
+  await expect
+    .poll(
+      async () => {
+        try {
+          return (await fetch(`${base}/portal/api/auth`)).status
+        } catch {
+          return 0
+        }
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(200)
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const afterRestart = await call('GET', '')
+  expect(afterRestart.runtime.revision).toBe(revision)
+  await call('POST', '/rollback', {
+    version: afterRestart.settings.version,
+    revision: localRevision,
+  })
+  expect((await call('GET', '')).runtime.sso_configured).toBe(false)
+  expect((await visitor.request.get(`${base}/portal/api/me`)).status()).toBe(
+    401,
+  )
+  await visitor.close()
+  const history = await (
+    await context.request.get(
+      `${base}/portal/api/admin/history?target=authentication`,
+    )
+  ).json()
+  const encoded = JSON.stringify(history)
+  for (const secret of [
+    'external-portal-test-only',
+    'olr-sync-dev-only',
+    'staff-dev-only',
+    'wrong-test-secret',
+    'wrong-sync-test-secret',
+  ])
+    expect(encoded).not.toContain(secret)
+  expect(
+    history.events.some(
+      (e: { action: string }) => e.action === 'settings.rollback',
+    ),
+  ).toBe(true)
+})
+
+test('backup restore preserves protected credentials, revisions, audit and accounting before recovery', async ({
+  page,
+  context,
+  browser,
+}) => {
+  test.setTimeout(120_000)
+  const base = await startFixture(false, 'restore')
+  const fixture = fixtures.find((f) => f.base === base)!
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const call = async (method: string, path: string, data?: unknown) => {
+    const response = await context.request.fetch(`${base}/portal/api/${path}`, {
+      method,
+      headers: method === 'GET' ? {} : { Origin: base },
+      data,
+    })
+    expect(response.status()).toBe(200)
+    return response.json()
+  }
+  const root = (await call('GET', 'me')).user.id as string
+  const readers = await call('GET', 'admin/users?match=reader')
+  const reader = readers.users[0].id as string
+  expect(
+    (
+      await context.request.put(
+        `${base}/portal/api/admin/users/${reader}/groups`,
+        { headers: { Origin: base }, data: { groups: ['staff'] } },
+      )
+    ).status(),
+  ).toBe(204)
+  expect(
+    (
+      await context.request.put(
+        `${base}/portal/api/admin/users/${reader}/overrides/rpm`,
+        {
+          headers: { Origin: base },
+          data: { value: 3, reason: 'restore acceptance' },
+        },
+      )
+    ).status(),
+  ).toBe(204)
+  const rootKey = (
+    await (
+      await context.request.post(`${base}/portal/api/keys`, {
+        headers: { Origin: base },
+        data: { label: 'recovery-revoked-key' },
+      })
+    ).json()
+  ).key as string
+  const imported = await call('POST', 'admin/settings/routing/import', {})
+  const document = imported.settings.active.document
+  document.groups.staff.models = ['test', 'limited']
+  document.groups.staff.rpm = 9
+  let routing = await call('PUT', 'admin/settings/routing/draft', {
+    version: imported.settings.version,
+    document,
+  })
+  routing = await call('POST', 'admin/settings/routing/activate', {
+    version: routing.settings.version,
+    revision: routing.settings.draft.id,
+  })
+  const authentication = await call(
+    'POST',
+    'admin/settings/authentication/import',
+    {},
+  )
+  const visitor = await browser.newContext()
+  expect(
+    (
+      await visitor.request.post(`${base}/portal/login/local`, {
+        headers: { Origin: base },
+        data: { username: 'reader', password: initial },
+      })
+    ).status(),
+  ).toBe(200)
+  const key = (
+    await (
+      await visitor.request.post(`${base}/portal/api/keys`, {
+        headers: { Origin: base },
+        data: { label: 'retained-reader-key' },
+      })
+    ).json()
+  ).key as string
+  const streamed = await visitor.request.post(`${base}/v1/chat/completions`, {
+    headers: { Authorization: `Bearer ${key}` },
+    data: {
+      model: 'limited',
+      stream: true,
+      max_tokens: 7,
+      messages: [{ role: 'user', content: 'synthetic restore acceptance' }],
+    },
+  })
+  expect(streamed.status()).toBe(200)
+  expect(await streamed.text()).toContain('[DONE]')
+  await expect
+    .poll(() =>
+      sql(
+        fixture.database,
+        `SELECT count(*) FROM usage WHERE user_id='${reader}' AND is_stream AND status='200'`,
+      ),
+    )
+    .toBe('1')
+  const snapshotSQL = `SELECT json_build_object('root',u.id,'hash',c.password_hash,'credential_revision',c.revision,'settings',(SELECT jsonb_object_agg(domain,active_revision) FROM settings_state),'audit',(SELECT md5(string_agg(row_to_json(e)::text,'|' ORDER BY id)) FROM audit_events e),'usage',(SELECT sum(input_tokens+output_tokens) FROM usage_daily WHERE user_id='${reader}')) FROM users u JOIN local_credentials c ON c.user_id=u.id WHERE u.protected_admin`
+  const before = sql(fixture.database, snapshotSQL)
+  const image = docker(['inspect', '--format', '{{.Image}}', fixture.container])
+  docker(['stop', fixture.container])
+  // The dump stays in this test process's memory. It is never a test artifact,
+  // terminal log, screenshot, trace or file in the repository.
+  const backup = docker([
+    ...compose,
+    'exec',
+    '-T',
+    'postgres',
+    'pg_dump',
+    '-U',
+    'olr',
+    '--no-owner',
+    '--no-acl',
+    fixture.database,
+  ])
+  sql('olr', `DROP DATABASE ${fixture.database} WITH (FORCE)`)
+  sql('olr', `CREATE DATABASE ${fixture.database}`)
+  const restore = spawnSync(
+    'docker',
+    [
+      ...compose,
+      'exec',
+      '-T',
+      'postgres',
+      'psql',
+      '-U',
+      'olr',
+      '-d',
+      fixture.database,
+      '-v',
+      'ON_ERROR_STOP=1',
+    ],
+    { cwd: '..', input: backup, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+  )
+  if (restore.status !== 0)
+    throw new Error(
+      'Isolated restore failed; credential-bearing output suppressed',
+    )
+  expect(sql(fixture.database, snapshotSQL) === before).toBe(true)
+  // Recreate this disposable router with both bootstrap sources retired.
+  docker(['rm', '-f', fixture.container])
+  const port = new URL(base).port
+  docker([
+    'run',
+    '-d',
+    '--name',
+    fixture.container,
+    '--network',
+    `${project}_default`,
+    '-p',
+    `127.0.0.1:${port}:8080`,
+    '-e',
+    `OLR_DATABASE_URL=postgres://olr:olr-dev-only@postgres:5432/${fixture.database}?sslmode=disable`,
+    '-e',
+    `PORTAL_BASE_URL=${base}`,
+    '-e',
+    'PORTAL_COOKIE_SECURE=false',
+    '-e',
+    'OLR_SETTINGS_ENCRYPTION_KEY=CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=',
+    '-v',
+    `${join(fixture.directory, 'config.yaml')}:/etc/olr/config.yaml:ro`,
+    image,
+  ])
+  await expect
+    .poll(
+      async () => {
+        try {
+          return (await fetch(`${base}/portal/api/auth`)).status
+        } catch {
+          return 0
+        }
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(200)
+  expect(sql(fixture.database, snapshotSQL) === before).toBe(true)
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  expect((await call('GET', 'me')).user.id).toBe(root)
+  expect((await call('GET', 'admin/settings/routing')).runtime.revision).toBe(
+    routing.settings.active.id,
+  )
+  expect(
+    (await call('GET', 'admin/settings/authentication')).runtime.revision,
+  ).toBe(authentication.settings.active.id)
+  const detail = await call('GET', `admin/users/${reader}`)
+  expect(detail.limits.rpm).toBe(3)
+  expect(detail.models).toContain('limited')
+  expect(
+    (
+      await visitor.request.get(`${base}/v1/models`, {
+        headers: { Authorization: `Bearer ${key}` },
+      })
+    ).status(),
+  ).toBe(200)
+  // Lost-password recovery uses redirected input, with no secret in argv,
+  // while retaining protected UUID and the restored configuration/history.
+  const recovery = 'restore-recovery-test-password'
+  const final = 'restore-final-test-password'
+  const recovered = spawnSync(
+    'docker',
+    [
+      'exec',
+      '-i',
+      fixture.container,
+      '/usr/local/bin/olr',
+      'admin',
+      'recover',
+      '-password-stdin',
+    ],
+    { input: recovery, encoding: 'utf8' },
+  )
+  expect(recovered.status).toBe(0)
+  expect(recovered.stdout + recovered.stderr).not.toContain(recovery)
+  expect(
+    (
+      await context.request.get(`${base}/v1/models`, {
+        headers: { Authorization: `Bearer ${rootKey}` },
+      })
+    ).status(),
+  ).toBe(401)
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, recovery)
+  await passwordFields(page, recovery, final)
+  await signIn(page, final)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  expect((await call('GET', 'me')).user.id).toBe(root)
+  const history = await call('GET', `admin/history?target=${root}`)
+  expect(
+    history.events.some(
+      (e: { action: string; result: string }) =>
+        e.action === 'local_admin.recover' && e.result === 'succeeded',
+    ),
+  ).toBe(true)
+  for (const secret of [key, rootKey, initial, changed, recovery, final])
+    expect(JSON.stringify(history)).not.toContain(secret)
+  await visitor.close()
 })

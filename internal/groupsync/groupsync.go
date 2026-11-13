@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/oidcclient"
@@ -141,7 +142,7 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 		users = append(users, u)
 	}
 	rows.Close()
-	admin := auth.Admin{Pool: s.pool}
+	admin := auth.Admin{Pool: s.pool, Actor: audit.Actor{Type: "identity_provider_sync"}}
 	for _, u := range users {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
