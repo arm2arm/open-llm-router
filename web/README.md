@@ -46,3 +46,13 @@ is restored from process memory, and the source database is replaced only after
 stopping its disposable router. `make acceptance-local` creates and cleans a
 separate Compose project without starting Keycloak. CI runs both the complete
 bundled/external suite and that independent no-IdP installation.
+
+## TypeScript compiler and lint API
+
+`npm run typecheck` and the production build use TypeScript 7's `tsc`, installed
+through the pinned `@typescript/native` npm alias. ESLint imports `typescript`,
+which resolves to the official `@typescript/typescript6` compatibility package.
+TypeScript 7 does not provide the compiler API required by the current ESLint
+parser. Keep both aliases when updating the lockfile so clean installs preserve
+peer dependency checks and select the native compiler consistently. This follows
+[Microsoft's side-by-side migration guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
