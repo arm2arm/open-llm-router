@@ -365,8 +365,31 @@ export type AuthenticationView = {
   encryption_key_configured: boolean
 }
 
+export type GroupPolicy = {
+  models: string[]
+  tokens_per_day?: number | null
+  tokens_per_month?: number | null
+  rpm?: number | null
+  tpm?: number | null
+  max_concurrent?: number | null
+  max_concurrent_batch?: number | null
+  strict_quota: boolean
+  admin: boolean
+  priority: number
+}
+export type PolicyPreview = {
+  models: string[]
+  aliases: Record<string, string>
+  admin: boolean
+  priority: number
+  limits: Record<string, number | boolean | null>
+  overrides: Record<string, number | null>
+  protected_admin: boolean
+  affected_users: { id: string; username: string }[]
+}
 export type RoutingDocument = {
   models: Record<string, EndpointModel>
+  groups: Record<string, GroupPolicy>
   aliases: Record<string, string>
 }
 export type RoutingRevision = Omit<SettingsRevision, 'document'> & {
@@ -387,4 +410,6 @@ export type RoutingView = {
   credential_references: string[]
   allowed_private_networks: string[]
   group_grants: Record<string, string[]>
+  affected_users: { id: string; username: string }[]
+  impact_available: boolean
 }

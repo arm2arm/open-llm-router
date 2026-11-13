@@ -823,7 +823,7 @@ PostgreSQL as well as configuration and external secrets.
 
 Activation currently supports **one router process**. Other processes do not
 receive live revision notifications. To create or delete logical models and
-aliases, manage routing as revisions (below); group-policy editors and provider
+aliases and group policies, manage routing as revisions (below); provider
 adapters remain planned work.
 
 ### Manage models, endpoints and aliases as routing revisions
@@ -833,7 +833,7 @@ name, native protocols, timeouts, affinity, priority and endpoint pools) and the
 aliases clients may use, as one revision. Like authentication settings it is
 file-managed until imported, then versioned with drafts, activation and rollback
 in **Admin → Routing** (or `/portal/api/admin/settings/routing`, or
-`olr admin settings -domain routing`). Group policies stay in the YAML file.
+`olr admin settings -domain routing`). Group grants and per-user policy defaults are included in the same revision.
 
 **Admin → Routing** shows how a request is routed: the groups that grant each
 model (`*` grants all), its aliases, native protocols, upstream name and each
@@ -1082,7 +1082,7 @@ issued OIDC access tokens retain their embedded group claims until replaced.
    grants no models. A matching Keycloak username or email remains a separate identity.
 4. Find the user and select **Manage**. Review identity source, password status,
    effective model access, limits and existing quota overrides. Save local group
-   memberships here; edit the groups' model grants/default limits in YAML.
+   memberships here; edit the groups' model grants/default limits in Admin → Routing.
 
 | Action | Browser sessions | API keys and access |
 |---|---|---|
@@ -1132,3 +1132,33 @@ browser forms and local user/key administration are implemented. Admin-managed e
 [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
 local tests and this documentation do not replace deployed acceptance and two
 weeks of real user activity.
+
+
+### Edit group policies and preview effective access
+
+After importing Routing, edit **Group policies** in the routing draft. Grant
+canonical models or `*`, set each per-user quota/rate/concurrency default,
+strict quota, priority and administrator access. Endpoints/providers are reached
+through the granted model's pool; these are not shared group/provider budgets.
+Saving does not change access. Activation and rollback replace models, aliases
+and policies together; requests already admitted retain their snapshot and
+accounting. Existing per-user overrides remain authoritative.
+
+Use **Preview access and affected users** with chosen memberships and an optional
+stored user. The preview applies that user's stored overrides, includes aliases,
+and labels `null` numeric limits **Unlimited**. Matching groups combine model
+and admin grants; numeric limits use the largest value, and any omitted/unlimited
+field makes that field unlimited. Omitted batch concurrency inherits interactive
+concurrency in each group before merging. Strict quota requires every matched
+group; the lowest priority wins. Unknown memberships grant nothing. A preview
+without matched groups grants no models. Saved drafts automatically list all
+affected user IDs before activation. Protected local `admin` access is independent
+of policies and overrides, and override mutations targeting that account fail.
+
+A referenced model cannot be removed until its aliases and group grants are
+updated in that same draft. A group with stored members cannot be removed:
+reassign local memberships in Users, or change SSO memberships at the identity
+provider and synchronize them first. SSO memberships are never editable here.
+Legacy routing revisions created before policy management use deployment-file
+groups; new drafts explicitly snapshot all policies. Retain the original
+baseline file when rolling back those legacy revisions.

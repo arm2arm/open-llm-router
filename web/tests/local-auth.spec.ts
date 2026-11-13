@@ -1443,3 +1443,83 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   expect((await complete('test')).status()).toBe(200)
   expect(errors).toEqual([])
 })
+
+test('administrator edits group defaults and previews overrides before activation', async ({
+  page,
+  context,
+}) => {
+  const base = await startFixture(false, 'policies')
+  await page.goto(`${base}/portal/sign-in/local`)
+  await signIn(page, initial)
+  await passwordFields(page, initial, changed)
+  await signIn(page, changed)
+  await expect(
+    page.getByRole('heading', { name: 'API keys', exact: true }),
+  ).toBeVisible()
+  const created = await context.request.post(`${base}/portal/api/admin/users`, {
+    headers: { Origin: base },
+    data: { username: 'policy-user', groups: ['staff'], password: initial },
+  })
+  expect(created.status()).toBe(201)
+  const id = (await created.json()).id as string
+  expect(
+    (
+      await context.request.put(
+        `${base}/portal/api/admin/users/${id}/overrides/rpm`,
+        {
+          headers: { Origin: base },
+          data: { value: 2, reason: 'synthetic acceptance' },
+        },
+      )
+    ).status(),
+  ).toBe(204)
+  await page.goto(`${base}/portal/admin`)
+  const panel = page.getByRole('region', { name: 'Routing settings' })
+  await panel.getByRole('button', { name: 'Import current routing' }).click()
+  const form = panel.getByRole('form', { name: 'Edit routing draft' })
+  await form.getByLabel('staff grant limited', { exact: true }).check()
+  await form.getByLabel('staff rpm', { exact: true }).fill('9')
+  await form.getByLabel('staff max_concurrent_batch', { exact: true }).fill('4')
+  await form.getByLabel('staff strict quota', { exact: true }).check()
+  await form.getByLabel('Preview user', { exact: true }).selectOption(id)
+  await form
+    .getByRole('button', { name: 'Preview access and affected users' })
+    .click()
+  const preview = form.locator('[aria-label="Policy preview results"]')
+  await expect(preview).toContainText('limited')
+  await expect(preview).toContainText('2 (user override)')
+  await expect(preview).toContainText('Unlimited')
+  await form
+    .getByRole('button', { name: 'Save routing draft', exact: true })
+    .click()
+  await expect(
+    panel.locator('[aria-label="Draft affected users"]'),
+  ).toContainText('policy-user')
+  await panel.getByRole('button', { name: 'Activate routing draft' }).click()
+  await expect(
+    panel.locator('[aria-label="Routing draft status"]'),
+  ).toHaveCount(0)
+  const detail = await context.request.get(
+    `${base}/portal/api/admin/users/${id}`,
+  )
+  expect(detail.status()).toBe(200)
+  const effective = await detail.json()
+  expect(effective.models).toContain('limited')
+  expect(effective.limits.rpm).toBe(2)
+  expect(effective.limits.max_concurrent_batch).toBe(4)
+  expect(effective.limits.strict_quota).toBe(true)
+  await panel
+    .getByRole('button', {
+      name: 'Roll back routing to revision 1',
+      exact: true,
+    })
+    .click()
+  await expect(panel.getByTestId('routing-runtime')).toHaveText(
+    'routing revision 1',
+  )
+  const restored = await (
+    await context.request.get(`${base}/portal/api/admin/users/${id}`)
+  ).json()
+  expect(restored.models).not.toContain('limited')
+  expect(restored.limits.rpm).toBe(2)
+})

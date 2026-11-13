@@ -252,6 +252,11 @@ func (s *Service[D, P]) readRevision(ctx context.Context, q querier, id int64) (
 	if err != nil {
 		return row, errors.New("a stored settings revision is not readable by this version")
 	}
+	// Legacy routing revisions predate managed policies. Always resolve their
+	// policies from the deployment baseline, never a newer active revision.
+	if routing, ok := any(doc).(*Routing); ok && routing.Groups == nil {
+		routing.Groups = s.File.Groups
+	}
 	row.doc = (*D)(doc)
 	if len(validation) > 0 {
 		row.Validation = &Validation{}
@@ -333,7 +338,36 @@ func (s *Service[D, P]) build(ctx context.Context, q querier, doc P, base *confi
 		}
 		return nil, secrets, []string{"the settings do not form a valid configuration"}, nil
 	}
-	return cfg, secrets, nil, nil
+	if routing, ok := any(doc).(*Routing); ok && routing.Groups != nil {
+		// Compare to the stored active policies too: CLI callers need not have
+		// loaded the process's active routing snapshot. At startup this is the
+		// same revision, so an old deployment baseline cannot block restoration.
+		previous := s.current().Groups
+		var activeGroups []byte
+		err := q.QueryRow(ctx, `SELECT r.document->'groups' FROM settings_state s JOIN settings_revisions r ON r.id=s.active_revision WHERE s.domain='routing'`).Scan(&activeGroups)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, nil, ErrStorage
+		}
+		if err == nil && len(activeGroups) > 0 && string(activeGroups) != "null" {
+			previous = nil
+			if json.Unmarshal(activeGroups, &previous) != nil {
+				return nil, nil, nil, ErrStorage
+			}
+		}
+		for _, name := range slices.Sorted(maps.Keys(previous)) {
+			if _, exists := routing.Groups[name]; exists {
+				continue
+			}
+			var members int
+			if err := q.QueryRow(ctx, `SELECT count(*) FROM users WHERE $1=ANY(groups) AND NOT protected_admin`, name).Scan(&members); err != nil {
+				return nil, nil, nil, ErrStorage
+			}
+			if members > 0 {
+				problems = append(problems, fmt.Sprintf("groups.%s: still referenced by %d users; reassign local memberships or update them at the identity provider before removing this group", name, members))
+			}
+		}
+	}
+	return cfg, secrets, problems, nil
 }
 
 // check validates a document against this process: secrets must resolve, the
@@ -508,6 +542,9 @@ func (s *Service[D, P]) SaveDraft(ctx context.Context, domain string, expected i
 		doc, err := decodeDocument[D, P](document)
 		if err != nil {
 			return err
+		}
+		if routing, ok := any(doc).(*Routing); ok && routing.Groups == nil {
+			routing.Groups = s.current().Groups
 		}
 		var problems []string
 		bindings := doc.secrets()
@@ -979,4 +1016,21 @@ func (s *Service[D, P]) RecordChecks(ctx context.Context, domain string, revisio
 		}
 		return nil
 	})
+}
+
+// Preview validates an unsaved routing/policy document without mutating state.
+// It uses the same build and reference checks as draft activation.
+func (s *Service[D, P]) Preview(ctx context.Context, document []byte) (*config.Config, error) {
+	doc, err := decodeDocument[D, P](document)
+	if err != nil {
+		return nil, err
+	}
+	cfg, _, problems, err := s.build(ctx, s.DB, doc, s.current())
+	if err != nil {
+		return nil, err
+	}
+	if len(problems) > 0 {
+		return nil, &ValidationError{problems}
+	}
+	return cfg, nil
 }

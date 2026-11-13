@@ -119,6 +119,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/import", h.routingAdmin(h.importRouting))
 	h.mux.HandleFunc("PUT /portal/api/admin/settings/routing/draft", h.routingAdmin(h.saveRoutingDraft))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/discard", h.routingAdmin(h.discardRoutingDraft))
+	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/preview", h.routingAdmin(h.previewPolicies))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/checks", h.routingAdmin(h.checkRouting))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/activate", h.routingAdmin(h.activateRouting))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/routing/rollback", h.routingAdmin(h.rollbackRouting))

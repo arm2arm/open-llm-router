@@ -366,7 +366,7 @@ func (h *Handler) verifyTestSignIn(r *http.Request, revision int64, nonce, verif
 	groups = auth.GroupNames(groups, cfg.OIDC.GroupNames)
 	known := 0
 	for _, group := range groups {
-		if _, ok := h.cfg.Groups[group]; ok {
+		if _, ok := h.routingConfig().Groups[group]; ok {
 			known++
 		}
 	}

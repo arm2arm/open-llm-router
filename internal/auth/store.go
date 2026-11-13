@@ -57,8 +57,13 @@ func (a Admin) AddUser(ctx context.Context, username, email string, groups []str
 		groups = []string{}
 	}
 	var id string
-	err := a.Pool.QueryRow(ctx, `INSERT INTO users (issuer, sub, username, email, groups)
+	err := pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
+		if err := validateManagedGroups(ctx, tx, groups); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `INSERT INTO users (issuer, sub, username, email, groups)
 		VALUES ('local', $1, $1, $2, $3) RETURNING id`, username, email, groups).Scan(&id)
+	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return "", errors.New("local user already exists")
@@ -379,7 +384,7 @@ func (a Admin) SetOverride(ctx context.Context, userID, field string, value *int
 	if !policy.ValidOverride(field, value) {
 		return errors.New("invalid override field or value")
 	}
-	return a.change(ctx, `INSERT INTO quota_overrides (user_id, field, value, reason, set_by, set_at)
+	return a.changePolicy(ctx, userID, `INSERT INTO quota_overrides (user_id, field, value, reason, set_by, set_at)
 		SELECT id, $2, $3, $4, $5, clock_timestamp() FROM users WHERE id = $1
 		ON CONFLICT (user_id, field) DO UPDATE SET value = EXCLUDED.value, reason = EXCLUDED.reason,
 		set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`, userID, field, value, reason, setBy)
@@ -387,7 +392,7 @@ func (a Admin) SetOverride(ctx context.Context, userID, field string, value *int
 
 // ClearOverride returns one field to the group policy.
 func (a Admin) ClearOverride(ctx context.Context, userID, field string) error {
-	return a.change(ctx, `DELETE FROM quota_overrides WHERE user_id = $1 AND field = $2`, userID, field)
+	return a.changePolicy(ctx, userID, `DELETE FROM quota_overrides WHERE user_id = $1 AND field = $2`, userID, field)
 }
 
 // ListOverrides returns a user's overrides by field.
@@ -410,4 +415,30 @@ func (a Admin) ListOverrides(ctx context.Context, userID string) ([]Override, er
 		return nil, errors.New("list overrides failed")
 	}
 	return list, nil
+}
+
+// Policy edits cannot target the reserved administrator. Hold the identity lock
+// across the write so this guard also applies to CLI callers.
+func (a Admin) changePolicy(ctx context.Context, userID, sql string, args ...any) error {
+	return a.changeWith(ctx, func(tx pgx.Tx) error {
+		var protected bool
+		err := tx.QueryRow(ctx, `SELECT protected_admin FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&protected)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if protected {
+			return ErrProtectedAdmin
+		}
+		result, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }

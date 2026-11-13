@@ -461,3 +461,23 @@ issuer and browser URLs stay public and are verified without exceptions. Remove 
 override when the public issuer is directly reachable. Switching providers requires only
 environment settings, plus registering the configured `/portal/callback` redirect and
 `/` post-logout redirect with that provider.
+
+
+### Group policies in routing revisions
+
+The routing document includes `groups`, a map of group names to canonical
+`models`, optional positive `tokens_per_day`, `tokens_per_month`, `rpm`, `tpm`,
+`max_concurrent`, `max_concurrent_batch`, plus `strict_quota`, `priority`, and
+`admin`. Null/omitted numeric limits are unlimited; omitted batch concurrency
+inherits interactive concurrency. A group requires at least one model grant.
+Routing draft validation checks model references and refuses removing groups
+that still have stored memberships. `affected_users` and `impact_available` in
+the routing view describe the pending draft's impact before activation.
+
+`POST /portal/api/admin/settings/routing/preview` accepts a `document` or
+`revision` (0 for active), optional `user_id`, and optional `memberships` array.
+Omitting memberships uses the selected user's stored memberships. It returns
+canonical `models`, allowed `aliases`, `limits`, `priority`, `admin`, stored
+`overrides`, `protected_admin`, and `affected_users` IDs/usernames. The same
+resolver enforces inference and portal access. Ordinary users receive 403.
+The request uses the same JSON/Origin protection as other admin mutations.

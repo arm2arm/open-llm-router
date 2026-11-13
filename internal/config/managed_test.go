@@ -80,3 +80,28 @@ models:
 		t.Fatal("OIDC_ISSUER enables SSO from the environment", err)
 	}
 }
+
+func TestPoliciesCopyAndValidateTheWholeRevision(t *testing.T) {
+	base, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := 7
+	groups := map[string]Group{"managed": {Models: []string{"chat-model"}, RPM: &one}}
+	next, err := WithPolicies(base, base.Models, base.Aliases, groups, lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.Groups["managed"].Models[0] = "changed"
+	*next.Groups["managed"].RPM = 9
+	if groups["managed"].Models[0] != "chat-model" || *groups["managed"].RPM != 7 {
+		t.Fatal("revision aliases input policies")
+	}
+	if _, ok := base.Groups["managed"]; ok {
+		t.Fatal("revision mutated deployment baseline")
+	}
+	groups["managed"] = Group{Models: []string{"nonexistent"}}
+	if _, err = WithPolicies(base, base.Models, base.Aliases, groups, lookupIn(validEnv)); err == nil {
+		t.Fatal("accepted unknown model grant")
+	}
+}

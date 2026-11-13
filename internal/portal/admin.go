@@ -182,6 +182,10 @@ func (h *Handler) setOverride(w http.ResponseWriter, r *http.Request, by user) {
 		}
 		err = admin.SetOverride(r.Context(), id, field, body.Value, body.Reason, "portal:"+by.Username)
 	}
+	if errors.Is(err, auth.ErrProtectedAdmin) {
+		fail(w, 403, "permission_error", auth.ErrProtectedAdmin.Error())
+		return
+	}
 	if errors.Is(err, auth.ErrNotFound) {
 		fail(w, 404, "not_found_error", "user or override not found")
 		return
@@ -243,7 +247,7 @@ type groupTotals struct {
 // counts in each of them.
 func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 	day, month := h.calendar()
-	names := slices.Sorted(maps.Keys(h.cfg.Groups))
+	names := slices.Sorted(maps.Keys(h.routingConfig().Groups))
 	rows, err := h.pool.Query(r.Context(), `SELECT g.name,
 		(SELECT count(*) FROM users u WHERE g.name = ANY(u.groups) AND u.enabled),
 		COALESCE(sum(d.requests) FILTER (WHERE d.day = $2::date), 0)::bigint,
@@ -265,7 +269,7 @@ func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 			unavailable(w)
 			return
 		}
-		g.Admin = h.cfg.Groups[g.Group].Admin
+		g.Admin = h.routingConfig().Groups[g.Group].Admin
 		groups = append(groups, g)
 	}
 	if rows.Err() != nil {

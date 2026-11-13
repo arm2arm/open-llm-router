@@ -42,6 +42,9 @@ func (a Admin) CreateLocalUser(ctx context.Context, username, email string, grou
 	}
 	var id string
 	err = pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
+		if err := validateManagedGroups(ctx, tx, groups); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups) VALUES('local',$1,$1,$2,$3) RETURNING id`, username, email, groups).Scan(&id); err != nil {
 			return err
 		}
@@ -84,6 +87,9 @@ func (a Admin) SetLocalGroups(ctx context.Context, id string, groups []string) e
 		groups = []string{}
 	}
 	return a.changeWith(ctx, func(tx pgx.Tx) error {
+		if err := validateManagedGroups(ctx, tx, groups); err != nil {
+			return err
+		}
 		if err := ordinaryLocal(ctx, tx, id); err != nil {
 			return err
 		}
