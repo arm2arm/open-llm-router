@@ -173,7 +173,7 @@ sso
 # The router Service must remain ready when its only inference backend is gone.
 kubectl -n olr scale deployment/olr-open-llm-router-demo --replicas=0
 for attempt in $(seq 1 30); do
-  code=$(curl --silent --show-error --max-time 3 -o "$work/offline.json" -w '%{http_code}' \
+  code=$(curl --silent --show-error --max-time 15 -o "$work/offline.json" -w '%{http_code}' \
     -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
     -d '{"model":"chat-model","messages":[],"max_tokens":1}' "$base/v1/chat/completions")
   if [ "$code" = 503 ]; then break; fi

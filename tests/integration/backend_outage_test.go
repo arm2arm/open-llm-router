@@ -53,7 +53,9 @@ groups: {staff: {models: ['*']}}
 			base, _ := startRouter(t, binary, config, database.dsn)
 			probe(t, base, "/healthz", http.StatusOK)
 			probe(t, base, "/readyz", http.StatusOK)
-			probe(t, base, "/portal/login/local", http.StatusOK)
+			// The Go-only CI job has no built SPA assets. Exercise the portal's
+			// management surface here; Helm acceptance checks the built login UI.
+			probe(t, base, "/portal/api/auth", http.StatusOK)
 			pool := openDatabase(t, database.dsn)
 			admin := auth.Admin{Pool: pool}
 			user, err := admin.AddUser(t.Context(), "outage-test", "", []string{"staff"})
