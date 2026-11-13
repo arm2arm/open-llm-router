@@ -44,9 +44,12 @@ deploy/release/helm-verified.sh olr olr /private/site.yaml deploy/release/image-
 deploy/release/kubectl-verified.sh /private/olr-overlay deploy/release/image-policy.json
 ```
 
-The Helm wrapper forces `production=true`. Chart schema rejects a missing or invalid
-router digest, mutable enabled supporting images, disabled network policy and
-disabled verified TLS. Bundled demo services are incompatible with production TLS;
+The verified Helm wrapper explicitly sets `production=true`, `enforceImageDigests=true`
+and `config.security.require_tls=true`. These reject missing image digests, mutable
+enabled supporting images, disabled network policy and unverified transport. Ordinary
+chart installs allow tags and default to `require_tls: false`; `production` alone does
+not force either policy. Supplied digests must always have valid SHA-256 syntax.
+Bundled demo services are incompatible with explicitly enabled end-to-end TLS;
 use external managed PostgreSQL and identity services. PostgreSQL and Keycloak demo
 defaults are digest-pinned too, including the PostgreSQL init container. Demo backend
 images support a separate digest override.

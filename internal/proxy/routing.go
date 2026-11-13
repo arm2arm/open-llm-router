@@ -91,6 +91,7 @@ func (h *Handler) PrepareRouting(ctx context.Context, cfg *config.Config, models
 // RunHealth probes the currently published pool set, retaining all old leases
 // until their requests finish without restarting admission or usage accounting.
 func (h *Handler) RunHealth(ctx context.Context) {
+	h.CurrentPools().Check(ctx)
 	ticker := time.NewTicker(pool.CheckInterval)
 	defer ticker.Stop()
 	for {

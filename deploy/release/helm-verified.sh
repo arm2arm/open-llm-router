@@ -14,4 +14,5 @@ trap 'rm -rf "$HELM_PLUGINS"' EXIT
 ln -s "$root/deploy/release" "$HELM_PLUGINS/olr-verify-images"
 helm upgrade --install "$1" "$root/charts/open-llm-router" \
   --namespace "$2" --values "$3" --set production=true \
+  --set enforceImageDigests=true --set config.security.require_tls=true \
   --post-renderer olr-verify-images --wait --timeout 5m

@@ -15,9 +15,13 @@ Read the initial password, then complete the required first password change:
   kubectl -n {{ .Release.Namespace }} get secret {{ include "olr.secretName" . }} -o jsonpath='{.data.OLR_BOOTSTRAP_ADMIN_PASSWORD}' | base64 --decode; echo
 {{- if .Values.keycloak.enabled }}
 
+{{- if .Values.keycloak.ingress.enabled }}
+Keycloak is exposed through its ingress at {{ .Values.keycloak.baseURL }}.
+{{- else }}
 Forward Keycloak in a second terminal before using SSO:
 {{- $keycloakPort := regexFind ":[0-9]+$" (get (urlParse .Values.keycloak.baseURL) "host") | trimPrefix ":" | default "8081" }}
   kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "olr.componentName" (dict "root" . "component" "keycloak") }} {{ $keycloakPort }}:8080
+{{- end }}
 
 Demo SSO user: staff. Read its initial password:
   kubectl -n {{ .Release.Namespace }} get secret {{ include "olr.secretName" . }} -o jsonpath='{.data.OLR_DEMO_USER_PASSWORD}' | base64 --decode; echo
@@ -30,6 +34,6 @@ Bundled Keycloak runs in development mode; use external production SSO for publi
 chat-model uses the bundled mock backend and returns deterministic demo text.
 {{- end }}
 
-Keep replicaCount=1. Retain database storage and the API-key encryption key.
+Keep replicaCount=1. Retain database storage and any managed-settings encryption key.
 Generated credentials and enabled persistent volumes survive helm uninstall.
 Installation, real endpoints and upgrades: docs/INSTALL.md in the repository.

@@ -17,7 +17,8 @@ networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
 YAML
-"$helm_bin" template olr charts/open-llm-router -n olr > "$work/helm.yaml"
+"$helm_bin" template olr charts/open-llm-router -n olr \
+  -f charts/open-llm-router/examples/traefik.values.yaml > "$work/helm.yaml"
 kubectl kustomize deploy/k8s/test > "$work/kustomize.yaml"
 "$kind_bin" create cluster --name "$cluster" --config "$work/kind.yaml"
 # Calico's official versioned manifest supplies actual policy enforcement.
@@ -25,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manife
 kubectl create -f "$work/calico.yaml"
 kubectl -n kube-system rollout status ds/calico-node --timeout=180s
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
-for ns in olr ingress-nginx; do kubectl create namespace "$ns"; done
+for ns in olr ingress-nginx traefik; do kubectl create namespace "$ns"; done
 probe_image=postgres:17
 for format in helm kustomize; do
   cp "$work/$format.yaml" "$work/rendered.yaml"
@@ -37,10 +38,14 @@ open(sys.argv[2],'w').write(yaml.safe_dump_all(items))
 PY
   kubectl apply -f "$work/policy.yaml"
   if [ "$format" = helm ]; then
+    controller_namespace=traefik
+    controller_labels=app.kubernetes.io/name=traefik
     router='app.kubernetes.io/name=open-llm-router,app.kubernetes.io/instance=olr'
     db='app.kubernetes.io/name=open-llm-router-postgresql,app.kubernetes.io/instance=olr,app.kubernetes.io/component=postgresql'
     backend='app.kubernetes.io/name=open-llm-router-demo,app.kubernetes.io/instance=olr,app.kubernetes.io/component=demo'
   else
+    controller_namespace=ingress-nginx
+    controller_labels=app.kubernetes.io/component=controller
     router='app.kubernetes.io/component=router'
     db='app.kubernetes.io/component=postgres'
     backend='app.kubernetes.io/component=mock-llm-a'
@@ -54,9 +59,17 @@ p=sys.argv[1];d=json.load(open(p));d['spec']['containers'].append({'name':'http'
 PYROUTER
   kubectl apply -f "$work/router.json"
   kubectl -n olr run unrelated --image="$probe_image" --command -- sleep 600
-  kubectl -n ingress-nginx run controller --image="$probe_image" --labels=app.kubernetes.io/component=controller --command -- sleep 600
+  kubectl -n "$controller_namespace" run controller --image="$probe_image" --labels="$controller_labels" --command -- sleep 600
+  if [ "$format" = helm ]; then
+    kubectl -n olr run keycloak --image=busybox:1.37.0 \
+      --labels=app.kubernetes.io/name=open-llm-router-keycloak,app.kubernetes.io/instance=olr,app.kubernetes.io/component=keycloak \
+      --command -- httpd -f -p 8080
+    kubectl -n kube-system run olr-policy-controller --image="$probe_image" \
+      --labels=app.kubernetes.io/name=rke2-traefik --command -- sleep 600
+    kubectl -n kube-system wait --for=condition=Ready pod/olr-policy-controller --timeout=180s
+  fi
   kubectl -n olr wait --for=condition=Ready pod --all --timeout=180s
-  kubectl -n ingress-nginx wait --for=condition=Ready pod/controller --timeout=180s
+  kubectl -n "$controller_namespace" wait --for=condition=Ready pod/controller --timeout=180s
   db_ip=$(kubectl -n olr get pod db -o jsonpath='{.status.podIP}')
   router_ip=$(kubectl -n olr get pod router -o jsonpath='{.status.podIP}')
   backend_ip=$(kubectl -n olr get pod backend -o jsonpath='{.status.podIP}')
@@ -69,13 +82,21 @@ PYROUTER
   sleep 5
   kubectl -n olr exec router -- getent hosts kubernetes.default.svc.cluster.local
   kubectl -n olr exec router -- timeout 3 bash -c "exec 3<>/dev/tcp/$backend_ip/8000"
-  kubectl -n ingress-nginx exec controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$router_ip/8080"
+  kubectl -n "$controller_namespace" exec controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$router_ip/8080"
+  if [ "$format" = helm ]; then
+    keycloak_ip=$(kubectl -n olr get pod keycloak -o jsonpath='{.status.podIP}')
+    kubectl -n "$controller_namespace" exec controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$keycloak_ip/8080"
+    kubectl -n kube-system exec olr-policy-controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$router_ip/8080"
+    kubectl -n kube-system exec olr-policy-controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$keycloak_ip/8080"
+    if kubectl -n olr exec unrelated -- timeout 3 bash -c "exec 3<>/dev/tcp/$keycloak_ip/8080"; then echo 'unrelated pod reached Keycloak'; exit 1; fi
+    kubectl -n kube-system delete pod olr-policy-controller --grace-period=0 --force --wait=true
+  fi
   if kubectl -n olr exec unrelated -- timeout 3 bash -c "exec 3<>/dev/tcp/$router_ip/8080"; then echo 'unrelated pod reached router/admin listener'; exit 1; fi
   if kubectl -n olr exec unrelated -- pg_isready -h "$db_ip" -t 2; then echo 'unrelated pod reached database'; exit 1; fi
   if kubectl -n olr exec unrelated -- timeout 3 bash -c "exec 3<>/dev/tcp/$backend_ip/8000"; then echo 'unrelated pod reached backend'; exit 1; fi
-  if kubectl -n ingress-nginx exec controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$backend_ip/8000"; then echo 'ingress controller reached private backend'; exit 1; fi
+  if kubectl -n "$controller_namespace" exec controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$backend_ip/8000"; then echo 'ingress controller reached private backend'; exit 1; fi
   kubectl -n olr delete pods --all --grace-period=0 --force --wait=true
-  kubectl -n ingress-nginx delete pod controller --grace-period=0 --force --wait=true
+  kubectl -n "$controller_namespace" delete pod controller --grace-period=0 --force --wait=true
   kubectl -n olr delete networkpolicy --all
   echo "$format: router database/backend and DNS allowed; unrelated access denied"
 done

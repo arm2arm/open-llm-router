@@ -70,11 +70,14 @@ services and HTTPS ingress.
 | `demoBackend.enabled` | `true` | Deploy the mock backend for `chat-model` |
 | `demoBackend.image.repository`, `tag`, `pullPolicy` | `olr-mock-llm`, `local`, `IfNotPresent` | Demo image built from the Dockerfile's `mock-llm` target |
 | `portal.baseURL`, `cookieSecure` | `http://localhost:8080`, `false` | Browser origin; HTTPS and `true` for public access |
-| `config` | Demo model and staff/admin policies | Router YAML; `${VAR}` references expand in the router |
+| `config` | Optional demo and staff/admin policies | Router YAML; `${VAR}` references expand in the router; staff allows all configured models by default |
+| `config.security.require_tls` | `false` | Opt-in HTTPS backends/SSO, secure portal cookies and verified PostgreSQL TLS |
+| `enforceImageDigests` | `false` | Opt-in immutable images for the router and every enabled dependency |
 | `env` | `{}` | Non-secret environment variables; disable bundled Keycloak for external `OIDC_*` |
 | `replicaCount` | `1` | Enforced single router process, with `Recreate` rollouts |
 | `service.type`, `port`, `annotations` | `ClusterIP`, `80`, `{}` | Router Service exposure |
 | `ingress.enabled`, `className`, `host`, `tlsSecretName`, `annotations` | Disabled | Existing controller and TLS Secret |
+| `keycloak.ingress.enabled`, `className`, `host`, `tlsSecretName`, `annotations` | Disabled | Separate route for bundled SSO; `keycloak.baseURL` must match its public origin |
 | `resources` | 500m/256Mi request, 1Gi memory limit | Router resources |
 | `postgresql.resources`, `keycloak.resources`, `demoBackend.resources` | See values | Per-component resources |
 | `podAnnotations`, `nodeSelector`, `tolerations`, `affinity` | Empty | Router annotations and placement |
@@ -87,8 +90,12 @@ even booleans/numbers. Helm merges maps but replaces lists: provide the complete
 `pool` list when changing a backend. Remove an inherited model/group with `null`.
 The router validates the full configuration at startup.
 
-For a real model, set `demoBackend.enabled: false`, replace
-`config.models.chat-model.upstream_model` and its full `pool` list. Tokens belong
+Set `demoBackend.enabled: false` to omit the default demo model and workload. No
+`OLR_DEMO_BACKEND_URL` is needed. With no configured pool, the portal starts with
+an empty catalog for initial setup. For a real model, replace
+`config.models.chat-model.upstream_model` and its full `pool` list, or add a named
+model with its protocols and timeouts. The existing `chat-model` metadata defaults
+remain available for overrides. Tokens belong
 in `secrets.env` or `existingSecret`; refer to them with `bearer_token_env` in the
 pool. `env.OLR_BACKEND_ALLOWED_CIDRS` and `env.OLR_BACKEND_TOKEN_ENVS` control extra
 destinations/token names selectable in Admin. Saved Admin endpoint revisions
@@ -120,7 +127,25 @@ empty, set `postgresql.enabled: false` and supply `externalDatabase.url`.
 
 ### Public ingress
 
-Public ingress also requires the controller settings in
+The chart uses standard Kubernetes `Ingress` and `NetworkPolicy` resources and assumes
+no ingress controller. Set `ingress.className` and `networkPolicy.ingressPeers` to match
+your controller's namespace **and** pod labels. Selectors in the same peer are combined;
+separate peer entries are alternatives. When policy is enabled, ingress requires explicit
+controller peers. Port-forwarding does not require an ingress controller.
+
+[examples/traefik.values.yaml](examples/traefik.values.yaml) shows standalone Traefik
+and RKE2/Rancher peers, TLS origins, and separate router and bundled Keycloak ingresses.
+Remove the peer you do not use and check your installation's labels. Both controller
+peers can access Keycloak's HTTP service; monitoring peers cannot access Keycloak.
+
+To expose bundled SSO, enable `keycloak.ingress`, set its class/host/TLS Secret and
+set `keycloak.baseURL` to the same browser-visible origin, e.g. `https://login.example.org`.
+Do not append the internal `:8080` port. The chart sets Keycloak's `xforwarded` proxy
+handling and keeps the router's internal OIDC backchannel separate. Existing Keycloak
+realms need their client redirect/logout URLs updated when the portal origin changes.
+Bundled Keycloak remains an evaluation service; use external SSO for production.
+
+For the F5 NGINX controller example, public ingress also requires the settings in
 [`deploy/nginx/f5-controller-config.yaml`](../../deploy/nginx/f5-controller-config.yaml),
 merged into the F5 controller's existing ConfigMap. The production annotations set a
 4 MiB body cap and per-client request rate; the controller config sets a 120 s body
@@ -171,15 +196,17 @@ readiness. The router gets 35 seconds to drain streams during shutdown.
 schema, isolated Service selectors, secret/database wiring, storage, external
 services, security and packaging.
 
-Production values must set `production: true` and immutable image digests. Install or
-upgrade through the [verified release/deployment workflow](../../docs/RELEASE_SECURITY.md)
-to check image signatures, provenance and SBOMs before applying manifests.
+Image digests are optional, including with `production: true`; a supplied digest overrides
+the tag and must be valid. Set `enforceImageDigests: true` to require them. The explicit
+[verified release/deployment workflow](../../docs/RELEASE_SECURITY.md) enables that policy
+and transport TLS, and checks signatures, provenance and SBOMs before applying manifests.
 
 `bash tests/helm/acceptance.sh` needs Helm 4, kind, Docker, kubectl and Python 3.
 It creates its own cluster/kubeconfig, builds the two images and installs all
 components with one Helm command. It verifies local admin setup, real SSO login
 and logout, streaming, stable generated credentials through upgrade/rollback,
-and data/key reuse after uninstall/reinstall. Its trap removes its cluster;
+data/key reuse after uninstall/reinstall, and portal/API availability with the only backend
+offline or the demo disabled. Its trap removes its cluster;
 it never selects the caller's cluster. Both checks run in CI. Override `HELM` and
 `KIND` with binary paths when needed.
 

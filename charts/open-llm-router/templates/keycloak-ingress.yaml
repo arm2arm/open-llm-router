@@ -1,0 +1,40 @@
+{{- if .Values.keycloak.ingress.enabled }}
+{{- if not .Values.keycloak.enabled }}
+{{- fail "keycloak.ingress.enabled requires keycloak.enabled=true" }}
+{{- end }}
+{{- $ingress := .Values.keycloak.ingress }}
+{{- $host := required "keycloak.ingress.host is required when Keycloak ingress is enabled" $ingress.host }}
+{{- $scheme := ternary "https" "http" (not (empty $ingress.tlsSecretName)) }}
+{{- if ne (.Values.keycloak.baseURL | trimSuffix "/") (printf "%s://%s" $scheme $host) }}
+{{- fail "keycloak.baseURL must match the Keycloak ingress origin (https with tlsSecretName, otherwise http), without the internal :8080 port" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "olr.componentName" (dict "root" . "component" "keycloak") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "olr.labels" . | nindent 4 }}
+  {{- with $ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ required "keycloak.ingress.className is required when Keycloak ingress is enabled" $ingress.className | quote }}
+  {{- with $ingress.tlsSecretName }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ . | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "olr.componentName" (dict "root" . "component" "keycloak") }}
+                port:
+                  name: http
+{{- end }}

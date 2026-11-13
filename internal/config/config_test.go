@@ -28,6 +28,16 @@ aliases: {claude-sonnet-4-5: chat-model}
 
 var validEnv = map[string]string{"OIDC_ISSUER": "http://keycloak:8080/realms/olr-dev"}
 
+func TestEmptyCatalogSupportsInitialSetup(t *testing.T) {
+	cfg, err := Parse([]byte("models: {}\ngroups: {admins: {models: ['*'], admin: true}}\n"), lookupIn(nil))
+	if err != nil || len(cfg.Models) != 0 || !cfg.Groups["admins"].Admin {
+		t.Fatal("empty initial catalog refused", err)
+	}
+	if _, err := Parse([]byte("models: {}\ngroups: {staff: {models: [missing]}}\n"), lookupIn(nil)); err == nil {
+		t.Fatal("unknown group model reference accepted")
+	}
+}
+
 func lookupIn(env map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) {
 		v, ok := env[name]
@@ -234,9 +244,6 @@ func TestParseRejects(t *testing.T) {
 		{name: "no client id",
 			yaml: change(t, "  portal_client_id: olr-portal\n", ""),
 			want: []string{"oidc.portal_client_id: must be set"}},
-		{name: "no models",
-			yaml: "models: {}\n",
-			want: []string{"models: at least one model is required"}},
 		{name: "unknown protocol",
 			yaml: change(t, "[openai, anthropic]", "[openai, gemini]"),
 			want: []string{"models.chat-model.protocols:", `"gemini"`}},

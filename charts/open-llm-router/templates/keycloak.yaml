@@ -78,6 +78,9 @@ spec:
                   key: OLR_DEMO_USER_PASSWORD
             - {name: KC_HOSTNAME, value: {{ .Values.keycloak.baseURL | trimSuffix "/" | quote }}}
             - {name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC, value: "true"}
+            {{- if .Values.keycloak.ingress.enabled }}
+            - {name: KC_PROXY_HEADERS, value: xforwarded}
+            {{- end }}
             - {name: KC_HEALTH_ENABLED, value: "true"}
             - {name: PORTAL_BASE_URL, value: {{ .Values.portal.baseURL | trimSuffix "/" | quote }}}
           ports:

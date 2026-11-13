@@ -1,4 +1,8 @@
 {{- if .Values.ingress.enabled }}
+{{- $scheme := ternary "https" "http" (not (empty .Values.ingress.tlsSecretName)) }}
+{{- if ne (.Values.portal.baseURL | trimSuffix "/") (printf "%s://%s" $scheme .Values.ingress.host) }}
+{{- fail "portal.baseURL must match the router ingress origin (https with tlsSecretName, otherwise http), without the internal :8080 port" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

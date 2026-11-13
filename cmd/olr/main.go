@@ -236,7 +236,6 @@ func serve(args []string) error {
 		retention.Run(retentionCtx, database, cfg.Retention, cfg.Limits.Location, log)
 	}()
 	defer func() { cancelRetention(); <-retentionDone }()
-	forwarder.Pools.Check(ctx)
 	// Health checks keep running during graceful shutdown until Run returns.
 	healthCtx, cancelHealth := context.WithCancel(context.Background())
 	healthDone := make(chan struct{})
@@ -246,7 +245,9 @@ func serve(args []string) error {
 	srv.Handle("/", home.New(true))
 	srv.SetAPIMiddleware(authenticator.Middleware)
 	srv.SetReadiness(func(ctx context.Context) bool {
-		return forwarder.CurrentPools().Ready() && database.Ping(ctx) == nil
+		// The portal and management API must remain reachable to repair failed
+		// inference backends. Individual inference calls fail closed with 503.
+		return database.Ping(ctx) == nil
 	})
 	forwarder.Register(srv.Handle)
 	srv.Handle("GET /metrics", observability.Handler())
