@@ -35,6 +35,16 @@ func TestBackendOriginAndCredentialBinding(t *testing.T) {
 	}
 }
 
+func TestRoutingDecodeCanonicalizesBackendAndManualReplicaURLs(t *testing.T) {
+	var doc Routing
+	if err := doc.decode([]byte(`{"models":{"manual":{"pool":[{"url":"http://141.33.4.201:8081/v1"}]},"managed":{"pool":[{"backend":"gpu","url":""}]}},"backends":{"gpu":{"url":"https://GPU.EXAMPLE:443/v1/models"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Models["manual"].Pool[0].URL != "http://141.33.4.201:8081" || doc.Backends["gpu"].URL != "https://gpu.example" || doc.Models["managed"].Pool[0].URL != "" {
+		t.Fatal("routing document did not retain canonical connection URLs")
+	}
+}
+
 func TestBackendGroupsAndPresetValidation(t *testing.T) {
 	file := parse(t, "", nil)
 	var doc Routing

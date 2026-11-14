@@ -3,7 +3,6 @@ package settings
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"net/url"
 	"regexp"
 	"strings"
@@ -29,28 +28,7 @@ var storedID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 
 // NormalizeBackendURL accepts the common API base URLs pasted into the editor.
 func NormalizeBackendURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if !strings.Contains(raw, "://") {
-		raw = "http://" + raw
-	}
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(raw) > 2048 {
-		return "", errors.New("enter an HTTP(S) backend URL without credentials, query or fragment")
-	}
-	switch strings.TrimRight(u.Path, "/") {
-	case "", "/v1", "/v1/models", "/v1/chat/completions", "/v1/messages", "/api/tags":
-	default:
-		return "", errors.New("enter the host URL or its /v1 API base")
-	}
-	u.Path, u.RawPath = "", ""
-	u.Host = strings.ToLower(u.Host)
-	if u.Scheme == "http" && u.Port() == "80" || u.Scheme == "https" && u.Port() == "443" {
-		u.Host = u.Hostname()
-		if strings.Contains(u.Host, ":") {
-			u.Host = "[" + u.Host + "]"
-		}
-	}
-	return u.String(), nil
+	return config.NormalizeBackendURL(raw)
 }
 
 // SecretName binds a saved key to both backend identity and canonical origin.

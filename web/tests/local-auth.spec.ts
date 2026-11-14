@@ -995,7 +995,8 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
   const second = form.getByRole('group', { name: 'Replica 2', exact: true })
   await second
     .getByLabel('Backend origin', { exact: true })
-    .fill('http://mock-llm-b:8000')
+    .fill('http://mock-llm-b:8000/v1/models')
+  await second.getByLabel('Internal network · allow HTTP').check()
   await second.getByLabel('Weight', { exact: true }).fill('2')
   await form
     .getByRole('button', { name: 'Remove replica 1', exact: true })
@@ -1003,6 +1004,9 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
   await form
     .getByLabel('Upstream model name', { exact: true })
     .fill('chat-model')
+  await expect(
+    form.getByRole('region', { name: 'Upstream model discovery' }),
+  ).toContainText('http://mock-llm-b:8000: OpenAI-compatible')
   await form
     .getByRole('button', { name: 'Test connections', exact: true })
     .click()

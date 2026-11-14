@@ -267,6 +267,9 @@ The backend workspace uses the routing draft/activation API, preserving audit ev
 and optimistic version checks. Each entry in the routing document's **backends** map
 supports name, detected provider, canonical URL, encrypted api_key reference,
 private_network, health_path, groups, and preset.
+The `private_network` opt-in permits internal HTTP for the selected origin,
+including firewall-protected sites that use globally numbered IP addresses.
+Control destinations such as loopback, link-local and metadata remain blocked.
 
 A null group list preserves legacy model-only authorization; an empty list allows
 administrators only. Referenced groups and presets must exist. An omitted preset
@@ -299,12 +302,16 @@ Resolved backend secrets are excluded from all responses and revisions.
   failures return 400. A passing probe does not prove the upstream model exists.
 - `POST /portal/api/admin/endpoints/models` accepts
   `{"model":"chat-model","replicas":[{"url":"http://ollama:11434","bearer_token_env":""}]}`.
-  Returns `{models, complete, replicas:[{url, models, source?, error?}]}`. `models`
+  Returns `{models, complete, replicas:[{url, models, source?, provider?, health_path?, error?}]}`. `models`
   is the sorted intersection across every replica, empty if any catalog failed;
   per-replica lists are diagnostic. Uses `GET /v1/models`, with `/api/tags` fallback
   only on 404/405/501. Destinations and credential references use the same policy
   as inference, without browser credentials, environment proxies or redirects.
-  Authentication errors are not retried on the fallback path. Limits: 1–32 origins,
+  Authentication errors are not retried on the fallback path. A generic
+  OpenAI-compatible catalog may also be checked against `/api/tags` to identify
+  Ollama. The detected provider is returned per replica. Host inputs and common
+  `/v1` API URLs are normalized to HTTP(S) origins before any request or save.
+  Limits: 1–32 origins,
   1 MiB/2048 entries per catalog, 3 seconds per request, 8 seconds overall, at
   most 8 concurrent requests. Paginated catalogs require manual entry. Validation
   returns 400; backend failures return 200 with `complete:false` and safe errors.

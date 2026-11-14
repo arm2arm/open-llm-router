@@ -128,6 +128,52 @@ async function workspace(page: Page) {
   return { view, saved, detections }
 }
 
+test('firewall-protected HTTP endpoint detects SGLang and saves its canonical origin', async ({
+  page,
+}) => {
+  const { saved } = await workspace(page)
+  await page.route('**/portal/api/admin/backends/detect', async (route) => {
+    const request = route.request().postDataJSON()
+    expect(request.backend.private_network).toBe(true)
+    await route.fulfill({
+      json: {
+        url: 'http://141.33.4.201:8081',
+        models: ['deepseek-v4.1-flash-1017'],
+        provider: 'SGLang',
+        health_path: '/v1/models',
+      },
+    })
+  })
+  await page.goto('/portal/admin')
+  await page
+    .getByRole('button', { name: 'Add backend', exact: true })
+    .first()
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Add backend', exact: true })
+  await dialog.getByLabel('Backend name', { exact: true }).fill('AIP DeepSeek')
+  await dialog
+    .getByLabel('IP address or service URL')
+    .fill('http://141.33.4.201:8081/v1')
+  await expect(dialog.getByLabel('Backend detection')).toContainText('SGLang')
+  await expect(
+    dialog.getByLabel('deepseek-v4.1-flash-1017', { exact: true }),
+  ).toBeChecked()
+  await dialog
+    .getByRole('button', { name: 'Save backend', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  const backend = Object.values(saved[0].document.backends!)[0]
+  expect(backend).toMatchObject({
+    url: 'http://141.33.4.201:8081',
+    private_network: true,
+    provider: 'SGLang',
+    api_key: {},
+  })
+  expect(
+    saved[0].document.models['deepseek-v4.1-flash-1017'].pool,
+  ).toHaveLength(1)
+})
+
 test('backend-first CRUD, adjacent detection, optional key and group assignments', async ({
   page,
 }) => {
@@ -151,7 +197,7 @@ test('backend-first CRUD, adjacent detection, optional key and group assignments
   await expect(dialog.getByLabel('Backend detection')).toContainText('vLLM')
   await expect(dialog.getByText('2 models discovered')).toBeVisible()
   await expect(
-    dialog.getByLabel('Private network', { exact: false }),
+    dialog.getByLabel('Internal network', { exact: false }),
   ).toBeChecked()
   await expect(dialog.getByLabel('Backend preset')).toHaveValue('unlimited')
   await dialog.getByLabel('Backend access staff').check()

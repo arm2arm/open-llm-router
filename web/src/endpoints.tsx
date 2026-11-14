@@ -261,7 +261,6 @@ function Editor({
               Backend origin
               <Input
                 name={`url.${id}`}
-                type="url"
                 required
                 placeholder="http://ollama:11434"
                 value={value.url}
@@ -280,7 +279,7 @@ function Editor({
                     ),
                   )
                 }
-                maxLength={512}
+                maxLength={2048}
               />
             </label>
             {index === 0 && (
@@ -293,9 +292,32 @@ function Editor({
               />
             )}
             <p className="subtitle">
-              Origin only, without /v1. Ollama health path: /; vLLM usually:
-              /health.
+              Enter an IP address or service URL. HTTP, HTTPS and /v1 API URLs
+              are accepted; API paths are added automatically. Ollama health
+              path: /; vLLM usually: /health.
             </p>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value.private_network ?? false}
+                onChange={(event) =>
+                  setReplicas((current) =>
+                    current.map((replica) =>
+                      replica.id === id
+                        ? {
+                            ...replica,
+                            value: {
+                              ...replica.value,
+                              private_network: event.target.checked,
+                            },
+                          }
+                        : replica,
+                    ),
+                  )
+                }
+              />
+              Internal network · allow HTTP
+            </label>
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="grid gap-2 text-sm">
                 Health path

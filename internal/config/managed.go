@@ -55,11 +55,12 @@ func WithPolicies(base *Config, models map[string]Model, aliases map[string]stri
 		}
 		for i := range model.Pool {
 			r := &model.Pool[i]
-			if !isBackendURL(r.URL) {
-				problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: backend URL must be an HTTP(S) origin without credentials, path, query or fragment", name, i))
+			origin, err := NormalizeBackendURL(r.URL)
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: %s", name, i, err))
 				continue
 			}
-			r.URL = strings.TrimRight(r.URL, "/")
+			r.URL = origin
 			if r.Backend != "" {
 				token, ok := lookup("backend:" + r.Backend)
 				if !ok || r.BearerTokenEnv != "" {

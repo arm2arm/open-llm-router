@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
+	"github.com/arm2arm/open-llm-router/internal/config"
 )
 
 // ModelSource deliberately accepts credential references, never credentials.
@@ -53,7 +54,11 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 	// Validate all destinations before making any catalog request.
 	for i := range sources {
 		source := &sources[i]
-		source.URL = strings.TrimSuffix(strings.TrimSpace(source.URL), "/")
+		origin, err := config.NormalizeBackendURL(source.URL)
+		if err != nil {
+			return result, &ValidationError{err.Error()}
+		}
+		source.URL = origin
 		if err := s.Policy.CheckBackend(ctx, source.URL, source.PrivateNetwork); err != nil {
 			return result, &ValidationError{err.Error()}
 		}
@@ -89,7 +94,7 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 			if source.PrivateNetwork {
 				requestCtx = backendpolicy.WithPrivateNetwork(ctx, source.URL)
 			}
-			result.Replicas[i] = catalog(requestCtx, client, source.URL, token)
+			result.Replicas[i] = detectCatalog(requestCtx, client, source.URL, token)
 		})
 	}
 	wg.Wait()
@@ -206,6 +211,11 @@ func catalogPaths(ctx context.Context, client *http.Client, origin, token string
 func (s *Service) Detect(ctx context.Context, source ModelSource, token string) (Catalog, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	origin, err := config.NormalizeBackendURL(source.URL)
+	if err != nil {
+		return Catalog{}, &ValidationError{err.Error()}
+	}
+	source.URL = origin
 	if err := s.Policy.CheckBackend(ctx, source.URL, source.PrivateNetwork); err != nil {
 		return Catalog{}, &ValidationError{err.Error()}
 	}
@@ -216,15 +226,19 @@ func (s *Service) Detect(ctx context.Context, source ModelSource, token string) 
 	transport.Proxy, transport.DialContext = nil, s.Policy.DialContext
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	result := catalog(ctx, client, source.URL, token)
-	u, _ := url.Parse(source.URL)
+	return detectCatalog(ctx, client, source.URL, token), nil
+}
+
+func detectCatalog(ctx context.Context, client *http.Client, origin, token string) Catalog {
+	result := catalog(ctx, client, origin, token)
+	u, _ := url.Parse(origin)
 	if result.Error == "" && u.Hostname() == "api.deepseek.com" {
 		result.Provider = "DeepSeek"
 	}
 	if result.Error == "" && result.Provider == "OpenAI-compatible" {
-		if ollama := catalogPaths(ctx, client, source.URL, token, []string{"/api/tags"}); ollama.Error == "" && ollama.Source != "" {
+		if ollama := catalogPaths(ctx, client, origin, token, []string{"/api/tags"}); ollama.Error == "" && ollama.Source != "" {
 			result = ollama
 		}
 	}
-	return result, nil
+	return result
 }

@@ -5,7 +5,12 @@ import { api } from '@/lib/api'
 type Catalog = {
   models: string[]
   complete: boolean
-  replicas: { url: string; models: string[]; error?: string }[]
+  replicas: {
+    url: string
+    models: string[]
+    provider?: string
+    error?: string
+  }[]
 }
 
 // Remounted when sources change, so stale replies cannot fill a new draft.
@@ -119,13 +124,11 @@ export function UpstreamModels({
                   : `${catalog.models.length} model(s) available on every replica.`
               : 'Some catalogs could not be read. You can still enter a model name manually.')}
       </div>
-      {catalog?.replicas
-        .filter((r) => r.error)
-        .map((r) => (
-          <p className="subtitle break-all" key={r.url}>
-            {r.url}: {r.error}
-          </p>
-        ))}
+      {catalog?.replicas.map((r) => (
+        <p className="subtitle break-all" key={r.url}>
+          {r.url}: {r.error || r.provider || 'Compatible model catalog'}
+        </p>
+      ))}
       <p className="subtitle">
         A single detected model fills an empty name. Detection does not save
         changes or prove inference capabilities.

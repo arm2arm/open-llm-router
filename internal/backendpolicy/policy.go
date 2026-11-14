@@ -24,7 +24,8 @@ type Policy struct {
 type privateDestination struct{}
 
 // WithPrivateNetwork grants this request access to one administrator-selected
-// cluster origin. DNS is still checked and pinned on every new connection.
+// internal origin, including globally numbered hosts behind a site firewall.
+// DNS is still checked and pinned on every new connection.
 func WithPrivateNetwork(ctx context.Context, origin string) context.Context {
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -145,16 +146,17 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 	for _, ip := range ips {
 		private, _ := ctx.Value(privateDestination{}).(string)
 		cluster := private == destination
-		// An explicit cluster endpoint may use RFC1918 or IPv6 ULA addresses,
-		// but never loopback, link-local, metadata or public destinations.
+		// Internal networks can use RFC1918/ULA or globally numbered site
+		// addresses. The admin's HTTP opt-in is scoped to this origin; control
+		// destinations remain forbidden regardless of the address class.
 		permitted := p.allowed(ip)
 		if cluster {
 			ip = ip.Unmap()
-			permitted = ip.IsPrivate() && ip.IsGlobalUnicast() && ip != netip.MustParseAddr("fd00:ec2::254")
+			permitted = permitted || ip.IsPrivate() && ip.IsGlobalUnicast() && ip != netip.MustParseAddr("fd00:ec2::254")
 		}
 		if !permitted {
 			if cluster {
-				return nil, errors.New("private cluster endpoints must resolve to private network addresses; clear the private cluster option for a public host")
+				return nil, errors.New("internal backend destination is not permitted; loopback, link-local and metadata addresses are blocked")
 			}
 			return nil, errors.New("backend destination is not permitted; private GPU networks require OLR_BACKEND_ALLOWED_CIDRS")
 		}

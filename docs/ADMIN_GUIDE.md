@@ -719,8 +719,11 @@ You can add or remove replicas, change each origin, health path, weight,
 native protocols, header/idle/queue timeouts and session affinity. Each model
 must retain at least one replica; at most 32 replicas are accepted.
 
-1. Set each **Backend origin** without `/v1`. All replicas in a pool must serve
-   the same upstream model and native protocols.
+1. Set each **Backend origin** to an HTTP or HTTPS host, an IP address with a
+   port, or a `/v1` API URL. Common paths such as `/v1/models` are removed before
+   discovery and saving. For example, `http://141.33.4.201:8081/v1` becomes
+   `http://141.33.4.201:8081`. All replicas in a pool must serve the same upstream
+   model and native protocols.
 2. Choose a server-provided **Credential reference**, or **None** for an
    unauthenticated backend. Secret values cannot be entered or read in the UI.
 3. The editor automatically detects models after origins or credentials change.
@@ -728,6 +731,8 @@ must retain at least one replica; at most 32 replicas are accepted.
    available on every replica are offered. One detected name fills an empty
    **Upstream model name**; an existing/manual name is never replaced automatically.
    OpenAI-compatible `/v1/models` and Ollama `/api/tags` catalogs are supported.
+   The detected server type appears beside each catalog URL. For example,
+   `owned_by: "sglang"` identifies SGLang even when the model is named DeepSeek.
    Discovery failures leave manual entry available and do not save a revision.
 4. Click **Test connections**. This checks HTTP-200 health responses, not whether
    the named model is installed or supports tools. No revision is saved.
@@ -852,12 +857,14 @@ are detected. Existing file connections appear here and can be adopted with
 **Remove backend** confirms removal of its routes, aliases, and grants where no other
 replica remains. Existing streams can finish.
 
-Enable **Private network · allow internal HTTP** for RFC1918 or IPv6 ULA hosts behind your
-firewall. This explicitly permits that host's private addresses and HTTP,
-including when `security.require_tls` is enabled for the public router.
+Enable **Internal network · allow HTTP** for hosts behind your firewall. This
+explicitly permits HTTP to that origin, including when `security.require_tls` is
+enabled for the public router. Both RFC1918/IPv6 ULA and globally numbered site
+addresses such as `141.33.4.201` are supported; the address does not have to be in
+a standard private range.
 Loopback, link-local and metadata addresses remain refused unless the origin
-is already an operator-trusted file destination. Public hosts need this option
-cleared and must still satisfy the deployment's HTTPS policy. DNS is rechecked
+is already an operator-trusted file destination. Leave this option cleared for
+external services to retain the deployment's HTTPS policy. DNS is rechecked
 and pinned on new connections for discovery, health probes and inference.
 File-managed replicas can opt in with `private_network: true`.
 
