@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Settings2, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Settings2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { UpstreamModels } from './upstream-models'
@@ -70,6 +70,7 @@ function Editor({
     entry.configuration.pool.map((value, index) => ({ id: index, value })),
   )
   const nextID = useRef(replicas.length)
+  const [refresh, setRefresh] = useState(0)
   const [upstream, setUpstream] = useState(
     entry.configuration.upstream_model || '',
   )
@@ -153,103 +154,6 @@ function Editor({
         </Button>
       )}
       <fieldset disabled={pending} className="grid gap-4 min-w-0">
-        <label className="grid gap-2 text-sm">
-          Upstream model name
-          <Input
-            name="upstream_model"
-            aria-label="Upstream model name"
-            value={upstream}
-            onChange={(event) => setUpstream(event.target.value)}
-            placeholder={entry.model}
-            maxLength={256}
-          />
-          <span className="subtitle">
-            Use the name served by Ollama or vLLM. Empty forwards {entry.model}.
-          </span>
-        </label>
-        <fieldset className="grid gap-2 rounded-md border p-3">
-          <legend className="px-1 text-sm">Native backend protocols</legend>
-          {(['openai', 'anthropic'] as const).map((protocol) => (
-            <label key={protocol} className="flex gap-2 items-center text-sm">
-              <input
-                type="checkbox"
-                name="protocol"
-                value={protocol}
-                defaultChecked={entry.configuration.protocols.includes(
-                  protocol,
-                )}
-                className="h-4 w-4"
-              />
-              {protocol === 'openai' ? 'OpenAI' : 'Anthropic'}
-            </label>
-          ))}
-          <p className="subtitle">
-            The router forwards native APIs. Enable only protocols provided by
-            this backend.
-          </p>
-        </fieldset>
-        <div className="grid gap-3 sm:grid-cols-3">
-          {(
-            [
-              ['timeout_s', 'Header timeout (seconds)', 1],
-              ['idle_timeout_s', 'Idle timeout (seconds)', 1],
-              ['queue_timeout_s', 'Queue timeout (seconds)', 0],
-            ] as const
-          ).map(([key, label, min]) => (
-            <label key={key} className="grid gap-2 text-sm">
-              {label}
-              <Input
-                name={key}
-                type="number"
-                required
-                min={min}
-                step="1"
-                defaultValue={entry.configuration[key]}
-              />
-            </label>
-          ))}
-        </div>
-        <label className="flex gap-2 items-center text-sm">
-          <input
-            type="checkbox"
-            name="session_affinity"
-            defaultChecked={entry.configuration.session_affinity}
-            className="h-4 w-4"
-          />
-          Prefer the same replica for a session
-        </label>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-semibold">Pool replicas</h3>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={(event) => {
-              const form = event.currentTarget.form!
-              for (const { id } of replicas) {
-                ;(
-                  form.elements.namedItem(
-                    `health_path.${id}`,
-                  ) as HTMLInputElement
-                ).value = '/'
-                ;(
-                  form.elements.namedItem(
-                    `max_inflight.${id}`,
-                  ) as HTMLInputElement
-                ).value = '1'
-              }
-              ;(
-                form.elements.namedItem('idle_timeout_s') as HTMLInputElement
-              ).value = '120'
-              ;(
-                form.elements.namedItem('timeout_s') as HTMLInputElement
-              ).value = '900'
-              setResult(null)
-            }}
-          >
-            Use Ollama health and capacity defaults
-          </Button>
-        </div>
         {replicas.map(({ id, value }, index) => (
           <fieldset
             key={id}
@@ -257,102 +161,51 @@ function Editor({
             aria-label={`Replica ${index + 1}`}
           >
             <legend className="px-1 text-sm">Replica {index + 1}</legend>
-            <label className="grid gap-2 text-sm">
-              Backend origin
-              <Input
-                name={`url.${id}`}
-                required
-                placeholder="http://ollama:11434"
-                value={value.url}
-                onChange={(event) =>
-                  setReplicas((current) =>
-                    current.map((replica) =>
-                      replica.id === id
-                        ? {
-                            ...replica,
-                            value: {
-                              ...replica.value,
-                              url: event.target.value,
-                            },
-                          }
-                        : replica,
-                    ),
-                  )
-                }
-                maxLength={2048}
-              />
-            </label>
-            {index === 0 && (
-              <UpstreamModels
-                key={sources}
-                model={entry.model}
-                sources={sources}
-                value={upstream}
-                onChoose={setUpstream}
-              />
-            )}
-            <p className="subtitle">
-              Enter an IP address or service URL. HTTP, HTTPS and /v1 API URLs
-              are accepted; API paths are added automatically. Ollama health
-              path: /; vLLM usually: /health.
-            </p>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={value.private_network ?? false}
-                onChange={(event) =>
-                  setReplicas((current) =>
-                    current.map((replica) =>
-                      replica.id === id
-                        ? {
-                            ...replica,
-                            value: {
-                              ...replica.value,
-                              private_network: event.target.checked,
-                            },
-                          }
-                        : replica,
-                    ),
-                  )
-                }
-              />
-              Internal network · allow HTTP
-            </label>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="grid gap-2 text-sm">
-                Health path
+            <div className="grid gap-2 text-sm">
+              <label htmlFor={'endpoint-url-' + id}>URL</label>
+              <div className="endpoint-url-row">
                 <Input
-                  name={`health_path.${id}`}
-                  defaultValue={value.health_path}
-                  placeholder="/health"
-                  maxLength={256}
-                />
-              </label>
-              <label className="grid gap-2 text-sm">
-                Weight
-                <Input
-                  name={`weight.${id}`}
-                  type="number"
+                  id={'endpoint-url-' + id}
+                  aria-label="Backend origin"
+                  name={`url.${id}`}
                   required
-                  min="0.000001"
-                  step="any"
-                  defaultValue={value.weight}
+                  placeholder="http://ollama:11434"
+                  value={value.url}
+                  onChange={(event) =>
+                    setReplicas((current) =>
+                      current.map((replica) =>
+                        replica.id === id
+                          ? {
+                              ...replica,
+                              value: {
+                                ...replica.value,
+                                url: event.target.value,
+                              },
+                            }
+                          : replica,
+                      ),
+                    )
+                  }
+                  maxLength={2048}
                 />
-              </label>
-              <label className="grid gap-2 text-sm">
-                Maximum in-flight
-                <Input
-                  name={`max_inflight.${id}`}
-                  type="number"
-                  required
-                  min="1"
-                  step="1"
-                  defaultValue={value.max_inflight}
-                />
-              </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={
+                    index === 0
+                      ? 'Refresh models'
+                      : `Refresh models for replica ${index + 1}`
+                  }
+                  title="Refresh models"
+                  onClick={() => setRefresh((value) => value + 1)}
+                >
+                  <RefreshCw size={16} />
+                </Button>
+              </div>
             </div>
             <label className="grid gap-2 text-sm">
-              Backend credential reference
+              API key (optional)
               <select
                 name={`bearer_token_env.${id}`}
                 className="select"
@@ -381,6 +234,83 @@ function Editor({
                 ))}
               </select>
             </label>
+            {index === 0 && (
+              <UpstreamModels
+                key={sources}
+                model={entry.model}
+                sources={sources}
+                value={upstream}
+                onChoose={setUpstream}
+                refresh={refresh}
+              />
+            )}
+            <details>
+              <summary className="text-sm cursor-pointer">
+                Connection options
+              </summary>
+              <div className="grid gap-3 pt-3">
+                <p className="subtitle">
+                  Enter an IP address or service URL. HTTP, HTTPS and /v1 API
+                  URLs are accepted; API paths are added automatically. Ollama
+                  health path: /; vLLM usually: /health.
+                </p>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={value.private_network ?? false}
+                    onChange={(event) =>
+                      setReplicas((current) =>
+                        current.map((replica) =>
+                          replica.id === id
+                            ? {
+                                ...replica,
+                                value: {
+                                  ...replica.value,
+                                  private_network: event.target.checked,
+                                },
+                              }
+                            : replica,
+                        ),
+                      )
+                    }
+                  />
+                  Internal network · allow HTTP
+                </label>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label className="grid gap-2 text-sm">
+                    Health path
+                    <Input
+                      name={`health_path.${id}`}
+                      defaultValue={value.health_path}
+                      placeholder="/health"
+                      maxLength={256}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Weight
+                    <Input
+                      name={`weight.${id}`}
+                      type="number"
+                      required
+                      min="0.000001"
+                      step="any"
+                      defaultValue={value.weight}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm">
+                    Maximum in-flight
+                    <Input
+                      name={`max_inflight.${id}`}
+                      type="number"
+                      required
+                      min="1"
+                      step="1"
+                      defaultValue={value.max_inflight}
+                    />
+                  </label>
+                </div>
+              </div>
+            </details>
             <Button
               type="button"
               variant="outline"
@@ -400,31 +330,126 @@ function Editor({
             </Button>
           </fieldset>
         ))}
-        <Button
-          type="button"
-          variant="outline"
-          className="justify-self-start"
-          disabled={replicas.length >= 32}
-          onClick={() => {
-            setReplicas((current) => [
-              ...current,
-              {
-                id: nextID.current++,
-                value: {
-                  url: '',
-                  health_path: '/health',
-                  weight: 1,
-                  max_inflight: 1,
-                  bearer_token_env: '',
-                },
-              },
-            ])
-            setResult(null)
-          }}
-        >
-          <Plus />
-          Add replica
-        </Button>
+        <details>
+          <summary className="text-sm cursor-pointer">
+            Advanced settings
+          </summary>
+          <div className="grid gap-4 pt-3">
+            <fieldset className="grid gap-2 rounded-md border p-3">
+              <legend className="px-1 text-sm">Native backend protocols</legend>
+              {(['openai', 'anthropic'] as const).map((protocol) => (
+                <label
+                  key={protocol}
+                  className="flex gap-2 items-center text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    name="protocol"
+                    value={protocol}
+                    defaultChecked={entry.configuration.protocols.includes(
+                      protocol,
+                    )}
+                    className="h-4 w-4"
+                  />
+                  {protocol === 'openai' ? 'OpenAI' : 'Anthropic'}
+                </label>
+              ))}
+              <p className="subtitle">
+                The router forwards native APIs. Enable only protocols provided
+                by this backend.
+              </p>
+            </fieldset>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(
+                [
+                  ['timeout_s', 'Header timeout (seconds)', 1],
+                  ['idle_timeout_s', 'Idle timeout (seconds)', 1],
+                  ['queue_timeout_s', 'Queue timeout (seconds)', 0],
+                ] as const
+              ).map(([key, label, min]) => (
+                <label key={key} className="grid gap-2 text-sm">
+                  {label}
+                  <Input
+                    name={key}
+                    type="number"
+                    required
+                    min={min}
+                    step="1"
+                    defaultValue={entry.configuration[key]}
+                  />
+                </label>
+              ))}
+            </div>
+            <label className="flex gap-2 items-center text-sm">
+              <input
+                type="checkbox"
+                name="session_affinity"
+                defaultChecked={entry.configuration.session_affinity}
+                className="h-4 w-4"
+              />
+              Prefer the same replica for a session
+            </label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold">Pool replicas</h3>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={(event) => {
+                  const form = event.currentTarget.form!
+                  for (const { id } of replicas) {
+                    ;(
+                      form.elements.namedItem(
+                        `health_path.${id}`,
+                      ) as HTMLInputElement
+                    ).value = '/'
+                    ;(
+                      form.elements.namedItem(
+                        `max_inflight.${id}`,
+                      ) as HTMLInputElement
+                    ).value = '1'
+                  }
+                  ;(
+                    form.elements.namedItem(
+                      'idle_timeout_s',
+                    ) as HTMLInputElement
+                  ).value = '120'
+                  ;(
+                    form.elements.namedItem('timeout_s') as HTMLInputElement
+                  ).value = '900'
+                  setResult(null)
+                }}
+              >
+                Use Ollama health and capacity defaults
+              </Button>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-self-start"
+              disabled={replicas.length >= 32}
+              onClick={() => {
+                setReplicas((current) => [
+                  ...current,
+                  {
+                    id: nextID.current++,
+                    value: {
+                      url: '',
+                      health_path: '/health',
+                      weight: 1,
+                      max_inflight: 1,
+                      bearer_token_env: '',
+                    },
+                  },
+                ])
+                setResult(null)
+              }}
+            >
+              <Plus />
+              Add replica
+            </Button>
+          </div>
+        </details>
       </fieldset>
       {result && (
         <section
@@ -649,13 +674,11 @@ export function EndpointSettingsPanel() {
           if (!open && !editorPending) setSelected(null)
         }}
       >
-        <DialogContent className="sm:max-w-3xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogContent className="sm:max-w-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit endpoints: {selected?.model}</DialogTitle>
             <DialogDescription>
-              Save validates every replica and activates a complete model
-              configuration. Concurrent edits are rejected. Running streams and
-              user quotas continue.
+              Enter the URL, choose authentication, and select a model.
             </DialogDescription>
           </DialogHeader>
           {selected && (

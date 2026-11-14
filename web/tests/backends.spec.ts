@@ -128,6 +128,69 @@ async function workspace(page: Page) {
   return { view, saved, detections }
 }
 
+test('simple editor keeps URL refresh, optional key and models visible', async ({
+  page,
+}) => {
+  const { view, saved, detections } = await workspace(page)
+  await page.goto('/portal/admin')
+  await page
+    .getByRole('button', { name: 'Add backend', exact: true })
+    .first()
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Add backend', exact: true })
+  await expect(
+    dialog.getByLabel('Backend name', { exact: true }),
+  ).not.toBeVisible()
+  await expect(dialog.getByLabel('Backend preset')).not.toBeVisible()
+  await expect(dialog.getByLabel('Backend access staff')).not.toBeVisible()
+  await dialog
+    .getByLabel('IP address or service URL')
+    .fill('gpu.cluster:8000/v1')
+  await expect(dialog.getByLabel('Backend detection')).toContainText('vLLM')
+  const row = dialog.locator('.endpoint-url-row')
+  await expect(row.getByLabel('IP address or service URL')).toBeVisible()
+  await expect(
+    row.getByRole('button', { name: 'Refresh models', exact: true }),
+  ).toBeVisible()
+  await dialog.getByLabel('qwen', { exact: true }).uncheck()
+  const before = detections.length
+  await row.getByRole('button', { name: 'Refresh models', exact: true }).click()
+  await expect.poll(() => detections.length).toBeGreaterThan(before)
+  await expect(dialog.getByLabel('Backend detection')).toContainText('vLLM')
+  await expect(dialog.getByLabel('qwen', { exact: true })).not.toBeChecked()
+  await dialog
+    .getByRole('button', { name: 'Save backend', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  expect(Object.values(saved[0].document.backends!)[0]).toMatchObject({
+    name: 'gpu.cluster:8000',
+    groups: [],
+    preset: 'unlimited',
+    api_key: {},
+  })
+  const card = page.getByRole('article', {
+    name: 'gpu.cluster:8000',
+    exact: true,
+  })
+  await card.getByRole('button', { name: 'Edit backend' }).click()
+  const edit = page.getByRole('dialog', { name: 'Edit backend', exact: true })
+  await expect(
+    edit.getByLabel('Backend name', { exact: true }),
+  ).not.toBeVisible()
+  await edit.getByLabel('Use an API key').check()
+  await edit.getByLabel('Backend API key').fill('synthetic-optional-key')
+  await edit.getByRole('button', { name: 'Save backend', exact: true }).click()
+  await expect(edit).toHaveCount(0)
+  await card.getByRole('button', { name: 'Edit backend' }).click()
+  await expect(edit.getByLabel('Backend API key')).toHaveValue('')
+  await edit.getByRole('button', { name: 'Save backend', exact: true }).click()
+  await expect(edit).toHaveCount(0)
+  expect(
+    Object.values(view.settings.active!.document!.backends!)[0].api_key.stored,
+  ).toBeTruthy()
+  expect(saved[2].secrets).toEqual({})
+})
+
 test('firewall-protected HTTP endpoint detects SGLang and saves its canonical origin', async ({
   page,
 }) => {
@@ -150,6 +213,7 @@ test('firewall-protected HTTP endpoint detects SGLang and saves its canonical or
     .first()
     .click()
   const dialog = page.getByRole('dialog', { name: 'Add backend', exact: true })
+  await dialog.locator('.backend-advanced > summary').click()
   await dialog.getByLabel('Backend name', { exact: true }).fill('AIP DeepSeek')
   await dialog
     .getByLabel('IP address or service URL')
@@ -188,6 +252,7 @@ test('backend-first CRUD, adjacent detection, optional key and group assignments
     .first()
     .click()
   const dialog = page.getByRole('dialog', { name: 'Add backend', exact: true })
+  await dialog.locator('.backend-advanced > summary').click()
   await dialog
     .getByLabel('Backend name', { exact: true })
     .fill('Physics cluster')
@@ -229,6 +294,7 @@ test('backend-first CRUD, adjacent detection, optional key and group assignments
   await page.reload()
   await card.getByRole('button', { name: 'Edit backend' }).click()
   const edit = page.getByRole('dialog', { name: 'Edit backend', exact: true })
+  await edit.locator('.backend-advanced > summary').click()
   await expect(edit.getByLabel('Backend access staff')).toBeChecked()
   await edit.getByLabel('Use an API key').check()
   await edit.getByLabel('Backend API key').fill('synthetic-cluster-key')
@@ -292,6 +358,7 @@ test('separate editable presets and a usable narrow-screen connection dialog', a
     .first()
     .click()
   const dialog = page.getByRole('dialog', { name: 'Add backend', exact: true })
+  await dialog.locator('.backend-advanced > summary').click()
   await dialog.getByLabel('IP address or service URL').fill('10.0.0.12:8000')
   await expect(dialog.getByLabel('Backend detection')).toContainText('vLLM')
   const [id] = Object.entries(
@@ -314,6 +381,7 @@ test('separate editable presets and a usable narrow-screen connection dialog', a
     .getByRole('button', { name: 'Add backend', exact: true })
     .first()
     .click()
+  await page.getByRole('dialog').locator('.backend-advanced > summary').click()
   await page.getByLabel('Backend name', { exact: true }).fill('Unsaved')
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
   await expect(
@@ -344,6 +412,7 @@ test('group policies live in user management and become available to backends', 
     .getByRole('button', { name: 'Add backend', exact: true })
     .first()
     .click()
+  await page.getByRole('dialog').locator('.backend-advanced > summary').click()
   await expect(page.getByLabel('Backend access research')).toBeVisible()
 })
 
@@ -366,6 +435,7 @@ test('pending advanced drafts block direct edits and save errors preserve input'
     .first()
     .click()
   const dialog = page.getByRole('dialog', { name: 'Add backend', exact: true })
+  await dialog.locator('.backend-advanced > summary').click()
   await dialog.getByLabel('Backend name', { exact: true }).fill('Research')
   await dialog.getByLabel('IP address or service URL').fill('gpu.cluster:8000')
   await expect(dialog.getByLabel('Backend detection')).toContainText('vLLM')

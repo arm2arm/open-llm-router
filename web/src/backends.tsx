@@ -7,7 +7,6 @@ import {
   Trash2,
   Search,
   RefreshCw,
-  CheckCircle2,
   Globe,
   KeyRound,
   Users,
@@ -595,12 +594,12 @@ function BackendEditor({
           if (!open) close()
         }}
       >
-        <DialogContent className="backend-dialog sm:max-w-3xl">
+        <DialogContent className="backend-dialog sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{entry ? 'Edit backend' : 'Add backend'}</DialogTitle>
             <DialogDescription>
-              Connect a host, select models, and assign access. New backends
-              have unlimited shared rates by default.
+              Enter the URL, choose authentication, and select the models to
+              use.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -608,23 +607,15 @@ function BackendEditor({
             onChange={() => setDirty(true)}
             className="backend-form"
           >
-            <label className="field">
-              Backend name
-              <Input
-                aria-label="Backend name"
-                placeholder="e.g. Physics GPU cluster"
-                maxLength={128}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-            <div className="backend-connection">
-              <label className="field">
-                IP address or service URL
+            <div className="field">
+              <label htmlFor={'backend-url-' + id}>URL</label>
+              <div className="endpoint-url-row">
                 <Input
+                  id={'backend-url-' + id}
                   aria-label="IP address or service URL"
                   required
-                  placeholder="10.0.0.12:8000 or llm.cluster:8000"
+                  maxLength={2048}
+                  placeholder="http://llm.cluster:8000/v1"
                   value={host}
                   onChange={(event) => {
                     const raw = event.target.value
@@ -641,57 +632,33 @@ function BackendEditor({
                     }
                   }}
                 />
-                <span className="subtitle">
-                  Bare hosts use HTTP. You can also paste an HTTPS or /v1 URL.
-                </span>
-              </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Refresh models"
+                  title="Refresh models"
+                  disabled={!origin || busy || (useKey && !key && !stored)}
+                  onClick={() => setRefresh((value) => value + 1)}
+                >
+                  <RefreshCw size={16} className={busy ? 'animate-spin' : ''} />
+                </Button>
+              </div>
               <div
                 className="backend-detection"
                 aria-label="Backend detection"
                 aria-live="polite"
               >
-                <div>
-                  <Server size={16} />
-                  <strong>
-                    {busy
-                      ? 'Detecting…'
-                      : catalog?.provider || 'Automatic detection'}
-                  </strong>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Detect models again"
-                    disabled={!origin || busy}
-                    onClick={() => setRefresh(refresh + 1)}
-                  >
-                    <RefreshCw size={14} />
-                  </Button>
-                </div>
-                {catalog?.error ? (
-                  <p>{catalog.error} You can still add model IDs manually.</p>
-                ) : catalog ? (
-                  <p>
-                    <CheckCircle2 size={14} /> {catalog.models.length} model
-                    {catalog.models.length === 1 ? '' : 's'} discovered
-                  </p>
-                ) : (
-                  <p>
-                    Enter a host to detect vLLM, Ollama, DeepSeek, or a
-                    compatible API.
-                  </p>
-                )}
+                {busy
+                  ? 'Detecting models…'
+                  : catalog?.error
+                    ? catalog.error
+                    : catalog
+                      ? `${catalog.provider || 'Compatible API'} · ${catalog.models.length} model${catalog.models.length === 1 ? '' : 's'} discovered`
+                      : 'Enter a URL to load models. HTTP and HTTPS are supported.'}
               </div>
             </div>
             <div className="backend-options">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={privateNetwork}
-                  onChange={(event) => setPrivateNetwork(event.target.checked)}
-                />{' '}
-                Internal network · allow HTTP
-              </label>
               <label>
                 <input
                   type="checkbox"
@@ -720,12 +687,12 @@ function BackendEditor({
                 />
                 <span className="subtitle">
                   {!encryption
-                    ? 'The operator must configure OLR_SETTINGS_ENCRYPTION_KEY before saving API keys.'
+                    ? 'API key storage is not configured. Contact the server operator.'
                     : stored
                       ? 'Stored securely. Enter a new key to rotate it.'
                       : entry?.deploymentKey
                         ? 'Re-enter the deployment key to manage this backend here.'
-                        : 'Keys are encrypted and bound to this backend and host.'}
+                        : 'Leave authentication off for endpoints without a key.'}
                 </span>
               </label>
             )}
@@ -753,100 +720,129 @@ function BackendEditor({
                   ))}
                 </div>
               )}
-              <div className="backend-manual">
-                <Input
-                  aria-label="Manual model ID"
-                  placeholder="Add a model ID manually"
-                  maxLength={128}
-                  value={manual}
-                  onChange={(event) => setManual(event.target.value)}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!manual.trim()}
-                  onClick={() => {
-                    setModels([...new Set([...models, manual.trim()])])
-                    setManual('')
-                    setDirty(true)
-                  }}
-                >
-                  Add model
-                </Button>
-              </div>
-              <p className="subtitle">
-                You can save the connection before selecting models. Deselecting
-                a model removes this backend from its route.
-              </p>
+              <details className="backend-manual-entry">
+                <summary>Enter a model ID manually</summary>
+                <div className="backend-manual">
+                  <Input
+                    aria-label="Manual model ID"
+                    placeholder="Add a model ID manually"
+                    maxLength={128}
+                    value={manual}
+                    onChange={(event) => setManual(event.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!manual.trim()}
+                    onClick={() => {
+                      setModels([...new Set([...models, manual.trim()])])
+                      setManual('')
+                      setDirty(true)
+                    }}
+                  >
+                    Add model
+                  </Button>
+                </div>
+              </details>
             </fieldset>
-            <fieldset className="backend-fieldset">
-              <legend>Who can use this backend?</legend>
-              <div className="backend-groups">
-                {Object.entries(document.groups).map(([name, group]) => (
-                  <label key={name}>
-                    <input
-                      type="checkbox"
-                      aria-label={'Backend access ' + name}
-                      checked={group.admin || groups.includes(name)}
-                      disabled={group.admin}
-                      onChange={(event) =>
-                        setGroups(
-                          event.target.checked
-                            ? [...groups, name]
-                            : groups.filter((value) => value !== name),
-                        )
-                      }
-                    />
-                    <span>
-                      {name}
-                      {group.admin && <small>Administrator</small>}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <p className="subtitle">
-                Administrators always have access. With no groups selected, only
-                administrators can use this backend.
-              </p>
-            </fieldset>
-            <label className="field">
-              Shared backend limits
-              <select
-                aria-label="Backend preset"
-                value={preset}
-                onChange={(event) => setPreset(event.target.value)}
-              >
-                {entry && <option value="">Keep existing route limits</option>}
-                {Object.entries(document.backend_presets ?? {}).map(
-                  ([id, preset]) => (
-                    <option key={id} value={id}>
-                      {preset.name}
-                    </option>
-                  ),
-                )}
-              </select>
-              <span className="subtitle">
-                One budget across all users and router instances. Edit presets
-                in{' '}
-                <Link
-                  to="/admin/presets"
-                  onClick={(event) => {
-                    if (dirty) {
-                      event.preventDefault()
-                      setError(
-                        'Save or discard this backend before leaving to edit presets.',
-                      )
+            <details className="backend-advanced">
+              <summary>
+                Advanced settings{' '}
+                <span>
+                  {groups
+                    .filter((name) => !document.groups[name]?.admin)
+                    .join(', ') || 'Administrators only'}
+                </span>
+              </summary>
+              <div className="grid gap-4 pt-4">
+                <label className="field">
+                  Backend name
+                  <Input
+                    aria-label="Backend name"
+                    placeholder="e.g. Physics GPU cluster"
+                    maxLength={128}
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                </label>
+                <fieldset className="backend-fieldset">
+                  <legend>Who can use this backend?</legend>
+                  <div className="backend-groups">
+                    {Object.entries(document.groups).map(([name, group]) => (
+                      <label key={name}>
+                        <input
+                          type="checkbox"
+                          aria-label={'Backend access ' + name}
+                          checked={group.admin || groups.includes(name)}
+                          disabled={group.admin}
+                          onChange={(event) =>
+                            setGroups(
+                              event.target.checked
+                                ? [...groups, name]
+                                : groups.filter((value) => value !== name),
+                            )
+                          }
+                        />
+                        <span>
+                          {name}
+                          {group.admin && <small>Administrator</small>}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="subtitle">
+                    Administrators always have access. With no groups selected,
+                    only administrators can use this backend.
+                  </p>
+                </fieldset>
+                <label className="field">
+                  Shared backend limits
+                  <select
+                    aria-label="Backend preset"
+                    value={preset}
+                    onChange={(event) => setPreset(event.target.value)}
+                  >
+                    {entry && (
+                      <option value="">Keep existing route limits</option>
+                    )}
+                    {Object.entries(document.backend_presets ?? {}).map(
+                      ([id, preset]) => (
+                        <option key={id} value={id}>
+                          {preset.name}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                  <span className="subtitle">
+                    One budget across all users and router instances. Edit
+                    presets in{' '}
+                    <Link
+                      to="/admin/presets"
+                      onClick={(event) => {
+                        if (dirty) {
+                          event.preventDefault()
+                          setError(
+                            'Save or discard this backend before leaving to edit presets.',
+                          )
+                        }
+                      }}
+                    >
+                      Backend presets
+                    </Link>
+                    .
+                  </span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={privateNetwork}
+                    onChange={(event) =>
+                      setPrivateNetwork(event.target.checked)
                     }
-                  }}
-                >
-                  Backend presets
-                </Link>
-                .
-              </span>
-            </label>
-            <details>
-              <summary>Advanced connection options</summary>
-              <div className="grid gap-3 pt-3">
+                  />{' '}
+                  Internal network · allow HTTP
+                </label>
+
                 <label className="field">
                   Health path
                   <Input

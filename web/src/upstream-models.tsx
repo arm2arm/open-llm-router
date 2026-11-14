@@ -1,5 +1,11 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
-import { Button } from '@/components/ui/button'
+import {
+  useEffect,
+  useId,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
+import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 
 type Catalog = {
@@ -19,16 +25,18 @@ export function UpstreamModels({
   sources,
   value,
   onChoose,
+  refresh,
 }: {
   model: string
   sources: string
   value: string
   onChoose: Dispatch<SetStateAction<string>>
+  refresh: number
 }) {
+  const list = useId()
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(true)
-  const [refresh, setRefresh] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
     const timer = setTimeout(() => {
@@ -39,10 +47,7 @@ export function UpstreamModels({
           const result = await api<Catalog>(
             'admin/endpoints/models',
             'POST',
-            {
-              model,
-              replicas: JSON.parse(sources),
-            },
+            { model, replicas: JSON.parse(sources) },
             controller.signal,
           )
           if (controller.signal.aborted) return
@@ -70,69 +75,43 @@ export function UpstreamModels({
     }
   }, [model, sources, refresh, onChoose])
   return (
-    <section
-      aria-label="Upstream model discovery"
-      className="grid gap-2 rounded-md border p-3"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-medium">
-          Models detected on the backend
-        </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={() => {
-            setCatalog(null)
-            setBusy(true)
-            setRefresh((n) => n + 1)
-          }}
-        >
-          {busy ? 'Detecting models…' : 'Refresh models'}
-        </Button>
-      </div>
-      {catalog?.complete && catalog.models.length > 0 && (
-        <label className="grid gap-2 text-sm">
-          Detected upstream models
-          <select
-            className="select"
-            aria-label="Detected upstream models"
-            value={catalog.models.includes(value) ? value : ''}
-            onChange={(event) => {
-              if (event.target.value) onChoose(event.target.value)
-            }}
-          >
-            <option value="">Choose a model</option>
-            {catalog.models.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
+    <section aria-label="Upstream model discovery" className="grid gap-2">
+      <label className="grid gap-2 text-sm">
+        Model
+        <Input
+          name="upstream_model"
+          aria-label="Upstream model name"
+          list={list}
+          value={value}
+          onChange={(event) => onChoose(event.target.value)}
+          placeholder={model}
+          maxLength={256}
+        />
+      </label>
+      <datalist id={list}>
+        {catalog?.complete &&
+          catalog.models.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+      </datalist>
       <div role="status" className="subtitle">
         {busy
           ? 'Reading model catalogs…'
           : error ||
             (catalog?.complete
-              ? catalog.models.length === 0
-                ? 'No models are shared by all replicas. Enter a model name manually.'
-                : value && !catalog.models.includes(value)
-                  ? 'The current upstream name was not found on every replica. Choose a detected model or keep your manual entry.'
-                  : `${catalog.models.length} model(s) available on every replica.`
-              : 'Some catalogs could not be read. You can still enter a model name manually.')}
+              ? value && !catalog.models.includes(value)
+                ? 'The current upstream name was not found on every replica. Choose a detected model or keep your manual entry.'
+                : `${catalog.models.length} model(s) available. Choose a model or enter its ID.`
+              : 'Some catalogs could not be read. Enter the model ID manually.')}
       </div>
-      {catalog?.replicas.map((r) => (
-        <p className="subtitle break-all" key={r.url}>
-          {r.url}: {r.error || r.provider || 'Compatible model catalog'}
-        </p>
-      ))}
-      <p className="subtitle">
-        A single detected model fills an empty name. Detection does not save
-        changes or prove inference capabilities.
-      </p>
+      {!busy &&
+        catalog?.replicas.map((r) => (
+          <p className="subtitle break-all" key={r.url}>
+            {r.url}: {r.error || r.provider || 'Compatible model catalog'}
+          </p>
+        ))}
     </section>
   )
 }

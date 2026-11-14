@@ -179,7 +179,7 @@
 }
 .backend-form {
   display: grid;
-  gap: 22px;
+  gap: 18px;
   font-size: 13px;
 }
 .backend-dialog [data-slot='dialog-footer'] {
@@ -204,35 +204,30 @@
   border-radius: 6px;
   width: 100%;
 }
-.backend-connection {
+.endpoint-url-row {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 16px;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
 }
 .backend-detection {
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
   font-size: 12px;
-  min-width: 0;
-}
-.backend-detection > div {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.backend-detection button {
-  margin-left: auto;
-}
-.backend-detection p {
-  display: flex;
-  gap: 6px;
   line-height: 1.5;
-  margin-top: 6px;
-  overflow-wrap: anywhere;
   color: var(--muted-foreground);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.backend-advanced > summary,
+.backend-manual-entry > summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.backend-advanced > summary span {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.backend-manual-entry .backend-manual {
+  margin-top: 10px;
 }
 .backend-options {
   display: flex;
@@ -340,9 +335,6 @@
   }
   .backend-heading h2 {
     font-size: 25px;
-  }
-  .backend-connection {
-    grid-template-columns: 1fr;
   }
   .backend-dialog {
     padding: 20px;
