@@ -834,10 +834,20 @@ egress policy, source address or routing. For a Helm release named `olr` in name
 `olr`, inspect the applied router policy and attach a temporary curl container:
 
 ```sh
-kubectl -n olr get networkpolicy olr-open-llm-router-router -o yaml
-pod=$(kubectl -n olr get pods -l app.kubernetes.io/name=open-llm-router,app.kubernetes.io/instance=olr -o jsonpath='{.items[0].metadata.name}')
-kubectl -n olr debug "$pod" --image=curlimages/curl:latest --profile=restricted --attach=true -- \
-  curl -sv --connect-timeout 5 --max-time 15 http://BACKEND_HOST:PORT/v1/models
+olr_policy=olr-open-llm-router-router
+kubectl -n olr get netpol "$olr_policy" \
+  -o yaml
+olr_label=app.kubernetes.io/name
+olr_pod=$(kubectl -n olr get pods \
+  -l "$olr_label=open-llm-router" \
+  -o jsonpath='{.items[0].metadata.name}')
+olr_url=http://BACKEND_HOST:PORT/v1/models
+kubectl -n olr debug "$olr_pod" \
+  --image=curlimages/curl:latest \
+  --profile=restricted \
+  --attach=true -- \
+  curl -sv --connect-timeout 5 \
+  --max-time 15 "$olr_url"
 ```
 
 Use the actual backend URL and supply its API key only if required. The router image
