@@ -312,7 +312,7 @@ func (h *Handler) testCallback(w http.ResponseWriter, r *http.Request) bool {
 	if settingsError(w, h.Settings.RecordChecks(r.Context(), settings.DomainAuthentication, revision, nil, &result, portalActor(u))) {
 		return true
 	}
-	http.Redirect(w, r, "/portal/admin?authentication_test="+result.Status+"#authentication", http.StatusSeeOther)
+	http.Redirect(w, r, "/portal/admin/keycloak?authentication_test="+result.Status+"#authentication", http.StatusSeeOther)
 	return true
 }
 

@@ -6,6 +6,15 @@ Current setup and operation are documented in [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
 
 ## GitHub delivery tracking
 
+The backend workspace revision is tracked in
+[#266](https://github.com/arm2arm/open-llm-router/issues/266), with
+[#267](https://github.com/arm2arm/open-llm-router/issues/267) for admin sections,
+[#268](https://github.com/arm2arm/open-llm-router/issues/268) for named backend CRUD,
+discovery and group visibility, [#269](https://github.com/arm2arm/open-llm-router/issues/269)
+for editable shared presets, and [#270](https://github.com/arm2arm/open-llm-router/issues/270)
+for regression checks and documentation. Backends is the default admin section;
+ordinary edits activate directly while retaining version checks and audit history.
+
 Implementation is tracked in
 [#71](https://github.com/arm2arm/open-llm-router/issues/71), with native sub-issues
 and blocked-by dependencies. The milestone order expresses delivery dependencies;

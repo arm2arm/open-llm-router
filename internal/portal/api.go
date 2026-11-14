@@ -119,7 +119,7 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 		if canonical, ok := cfg.Aliases[name]; ok {
 			target = canonical
 		}
-		if access.AllowsModel(target) {
+		if policy.ModelAllowed(cfg, access, target, u.Groups, u.ProtectedAdmin) {
 			models = append(models, model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols})
 		}
 	}

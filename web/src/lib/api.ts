@@ -237,6 +237,7 @@ export type GroupTotals = {
   admin: boolean
 }
 export type Replica = {
+  backend?: string
   url: string
   in_flight: number
   healthy: boolean
@@ -390,6 +391,7 @@ export type PolicyPreview = {
   affected_users: { id: string; username: string }[]
 }
 export type RoutingDocument = {
+  backend_presets?: Record<string, BackendPreset>
   backends?: Record<string, Backend>
   models: Record<string, EndpointModel>
   groups: Record<string, GroupPolicy>
@@ -419,8 +421,19 @@ export type RoutingView = {
 }
 
 export type Backend = {
+  name?: string
+  provider?: string
+  groups?: string[] | null
+  preset?: string
   url: string
   api_key: SecretRef
   private_network: boolean
   health_path: string
+}
+
+export type BackendPreset = {
+  name: string
+  rpm: number | null
+  tpm: number | null
+  max_concurrent: number | null
 }

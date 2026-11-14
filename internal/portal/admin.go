@@ -141,12 +141,12 @@ func (h *Handler) adminUser(w http.ResponseWriter, r *http.Request, _ user) {
 	cfg := h.routingConfig()
 	models := []string{}
 	for name := range cfg.Models {
-		if access.AllowsModel(name) {
+		if policy.ModelAllowed(cfg, access, name, target.Groups, target.ProtectedAdmin) {
 			models = append(models, name)
 		}
 	}
 	for alias, model := range cfg.Aliases {
-		if access.AllowsModel(model) {
+		if policy.ModelAllowed(cfg, access, model, target.Groups, target.ProtectedAdmin) {
 			models = append(models, alias)
 		}
 	}

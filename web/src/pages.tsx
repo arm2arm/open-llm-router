@@ -1,6 +1,18 @@
 import { Fragment, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Server, ShieldCheck, Users } from 'lucide-react'
+import {
+  Server,
+  ShieldCheck,
+  Users,
+  SlidersHorizontal,
+  KeyRound,
+  Network,
+  History,
+} from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { BackendWorkspace } from '@/backends'
+import { BackendPresets } from '@/backend-presets'
+import { GroupManager } from '@/group-manager'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EndpointSettingsPanel } from '@/endpoints'
@@ -18,7 +30,6 @@ import {
   type AdminUserDetail,
   type DailyTotal,
   type GroupTotals,
-  type Replica,
 } from '@/lib/api'
 
 const number = (value: number) => new Intl.NumberFormat().format(value)
@@ -382,6 +393,68 @@ function UserDetail({
 }
 
 export function AdminPage({ self }: { self: string }) {
+  const section = useLocation().pathname.split('/')[2] ?? ''
+  const tabs = [
+    ['', 'Backends', Server],
+    ['users', 'Users & groups', Users],
+    ['presets', 'Backend presets', SlidersHorizontal],
+    ['keycloak', 'Keycloak', KeyRound],
+    ['advanced', 'Advanced routing', Network],
+    ['history', 'History', History],
+  ] as const
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">Administration</div>
+          <h1>Admin</h1>
+          <p className="subtitle">
+            Manage cluster backends, access, and capacity.
+          </p>
+        </div>
+      </div>
+      <nav aria-label="Admin sections" className="admin-sections">
+        {tabs.map(([path, label, Icon]) => (
+          <NavLink
+            key={path}
+            end
+            to={path ? `/admin/${path}` : '/admin'}
+            className={({ isActive }) =>
+              `admin-section ${isActive ? 'active' : ''}`
+            }
+          >
+            <Icon size={18} />
+            {label}
+          </NavLink>
+        ))}
+      </nav>
+      {!section && <BackendWorkspace />}
+      {section === 'users' && <UserManagement self={self} />}
+      {section === 'presets' && <BackendPresets />}
+      {section === 'keycloak' && (
+        <>
+          <div className="admin-intro">
+            <h2>Keycloak sign-in</h2>
+            <p className="subtitle">
+              Optional single sign-on. Local administrator sign-in is always
+              available.
+            </p>
+          </div>
+          <AuthenticationSettingsPanel />
+        </>
+      )}
+      {section === 'advanced' && (
+        <>
+          <RoutingSettingsPanel />
+          <EndpointSettingsPanel />
+        </>
+      )}
+      {section === 'history' && <AdministrationHistory />}
+    </>
+  )
+}
+
+function UserManagement({ self }: { self: string }) {
   const cache = useQueryClient()
   const [match, setMatch] = useState('')
   const [search, setSearch] = useState('')
@@ -397,22 +470,14 @@ export function AdminPage({ self }: { self: string }) {
     queryKey: ['admin-groups'],
     queryFn: () => api<{ groups: GroupTotals[] }>('admin/groups'),
   })
-  const replicas = useQuery({
-    queryKey: ['admin-replicas'],
-    queryFn: () =>
-      api<{ models: { model: string; replicas: Replica[] }[] }>(
-        'admin/replicas',
-      ),
-    refetchInterval: 10_000,
-  })
   return (
     <>
       <div className="page-head">
         <div>
           <div className="eyebrow">Operators</div>
-          <h1>Admin</h1>
+          <h2>Users & groups</h2>
           <p className="subtitle">
-            Users, per-user limits, group totals and replica health.
+            Manage accounts, memberships, and personal limits.
           </p>
         </div>
         <CreateLocalUser
@@ -427,56 +492,10 @@ export function AdminPage({ self }: { self: string }) {
           }}
         />
       </div>
-      <AuthenticationSettingsPanel />
-      <EndpointSettingsPanel />
-      <RoutingSettingsPanel />
-      <AdministrationHistory />
-      <section className="panel" aria-label="Replica health">
-        <div className="panel-head">
-          <h2 className="panel-title">Replicas</h2>
-          <Server size={20} className="text-muted-foreground" />
-        </div>
-        <Failure error={replicas.error} />
-        <div className="table-wrap">
-          <table data-testid="replicas-table">
-            <caption className="sr-only">Replica health</caption>
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Replica</th>
-                <th>Health</th>
-                <th>In flight</th>
-                <th>Weight</th>
-              </tr>
-            </thead>
-            <tbody>
-              {replicas.data?.models.flatMap((m) =>
-                m.replicas.map((r) => (
-                  <tr key={`${m.model}-${r.url}`}>
-                    <td className="font-medium">{m.model}</td>
-                    <td>
-                      <code className="text-xs">{r.url}</code>
-                    </td>
-                    <td>
-                      <span className={`badge ${r.healthy ? '' : 'inactive'}`}>
-                        {r.healthy ? '● healthy' : '✕ unavailable'}
-                      </span>
-                    </td>
-                    <td>
-                      {r.in_flight} / {r.max_inflight}
-                    </td>
-                    <td>{r.weight}</td>
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
       <section className="panel" aria-label="Group totals">
         <div className="panel-head">
           <h2 className="panel-title">Groups</h2>
-          <Activity size={20} className="text-muted-foreground" />
+          <GroupManager />
         </div>
         <Failure error={groups.error} />
         <div className="table-wrap">
