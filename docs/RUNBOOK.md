@@ -822,6 +822,12 @@ namespace to a backup job. NetworkPolicy cannot enforce DNS names: update approv
 ranges when endpoints change, or use your CNI's reviewed FQDN policy. NodeLocal DNS needs
 its own exact resolver allowance. Policy changes must track endpoints and CA rotation.
 
+For Helm deployments where administrators manage backend destinations dynamically,
+set `networkPolicy.egress: [{}]` to allow all router outbound destinations and ports.
+This uses the standard Kubernetes allow-all egress rule and avoids per-backend IP
+allowances. It preserves the configured router ingress and supporting-service policies.
+The default `networkPolicy.egress: []` adds no external outbound allowances.
+
 NetworkPolicy filters ports, not HTTP paths. The public inference ingress must deny
 `/portal` and `/metrics` unless intentionally published. Prefer a separate internal
 portal hostname/ingress with an internal load balancer or source restrictions, matching

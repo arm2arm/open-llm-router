@@ -342,6 +342,35 @@ class HelmChart(unittest.TestCase):
             self.assertEqual(policy["egress"], [])
             self.assertEqual(policy["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"], "open-llm-router")
 
+    def test_unrestricted_router_egress_preserves_other_policy_boundaries(self):
+        overlay = yaml.safe_load((CHART / "examples/unrestricted-egress.values.yaml").read_text())
+        production = yaml.safe_load((CHART / "examples/production.yaml").read_text())
+        for values in ({}, production):
+            with self.subTest(production=values.get("production", False)):
+                values.setdefault("networkPolicy", {})["egress"] = []
+                baseline = self.render(values)
+                values["networkPolicy"].update(overlay["networkPolicy"])
+                rendered = self.render(values)
+                router_key = ("NetworkPolicy", NAME + "-router")
+                original = baseline[router_key]["spec"]
+                router = rendered[router_key]["spec"]
+                self.assertEqual(router["egress"], original["egress"] + [{}])
+                self.assertEqual(router["ingress"], original["ingress"])
+                self.assertEqual(router["podSelector"], {
+                    "matchLabels": rendered["Deployment", NAME]["spec"]["selector"]["matchLabels"],
+                })
+                for key, resource in baseline.items():
+                    if key[0] == "NetworkPolicy" and key != router_key:
+                        self.assertEqual(rendered[key], resource)
+
+    def test_native_egress_rules_can_omit_destination_or_port_restrictions(self):
+        for rule in ({"ports": [{"protocol": "TCP", "port": 443}]},
+                     {"to": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]},
+                     {"to": [], "ports": []}):
+            with self.subTest(rule=rule):
+                resources = self.render({"networkPolicy": {"egress": [rule]}})
+                self.assertEqual(resources["NetworkPolicy", NAME + "-router"]["spec"]["egress"][-1], rule)
+
     def test_invalid_values_fail_before_install(self):
         invalid = [{"config": {"admin_api": {"enabled": "yes"}}},
                    {"config": {"admin_api": {"max_lifetime_days": 366}}},
@@ -354,7 +383,10 @@ class HelmChart(unittest.TestCase):
                    {"secrets": {"bootstrapAdminPassword": "short"}},
                    {"secrets": {"apiKeyEncryptionKey": "invalid"}},
                    {"secrets": {"env": {"POSTGRES_PASSWORD": "collision"}}},
-                   {"portal": {"cookieSecure": True}}, {"ingress": {"enabled": True}}]
+                   {"portal": {"cookieSecure": True}}, {"ingress": {"enabled": True}},
+                   {"networkPolicy": {"egress": ["all"]}},
+                   {"networkPolicy": {"egress": [{"to": "all"}]}},
+                   {"networkPolicy": {"egress": [{"ports": "all"}]}}]
         for values in invalid:
             with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "values.yaml"
@@ -363,7 +395,8 @@ class HelmChart(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
 
     def test_lint_examples_and_package(self):
-        for values in [None, "demo.values.yaml", "production.yaml", "traefik.values.yaml"]:
+        for values in [None, "demo.values.yaml", "production.yaml", "traefik.values.yaml",
+                       "unrestricted-egress.values.yaml"]:
             args = ["lint", CHART, "--strict"]
             if values:
                 args += ["-f", CHART / "examples" / values]
