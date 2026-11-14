@@ -690,7 +690,7 @@ function BackendEditor({
                   checked={privateNetwork}
                   onChange={(event) => setPrivateNetwork(event.target.checked)}
                 />{' '}
-                Private network · allow internal HTTP
+                Internal network · allow HTTP
               </label>
               <label>
                 <input

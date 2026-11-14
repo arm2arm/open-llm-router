@@ -86,7 +86,7 @@ func TestPrivateClusterHTTPIsScopedAndRechecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, origin := range []string{"http://10.1.2.3:8000", "http://192.168.1.2", "http://[fd12::1]:11434"} {
+	for _, origin := range []string{"http://10.1.2.3:8000", "http://192.168.1.2", "http://[fd12::1]:11434", "http://141.33.4.201:8081"} {
 		if err := p.CheckBackend(t.Context(), origin, true); err != nil {
 			t.Fatal("private cluster refused", err)
 		}
@@ -94,7 +94,7 @@ func TestPrivateClusterHTTPIsScopedAndRechecked(t *testing.T) {
 			t.Fatal("private exception leaked into normal policy")
 		}
 	}
-	for _, origin := range []string{"http://8.8.8.8", "http://127.0.0.1", "http://169.254.169.254", "http://[fd00:ec2::254]", "http://100.100.100.200", "http://[::1]"} {
+	for _, origin := range []string{"http://127.0.0.1", "http://169.254.169.254", "http://[fd00:ec2::254]", "http://100.100.100.200", "http://[::1]", "http://0.0.0.0", "http://240.0.0.1"} {
 		if err := p.CheckBackend(t.Context(), origin, true); err == nil {
 			t.Fatal("unsafe cluster origin accepted", origin)
 		}

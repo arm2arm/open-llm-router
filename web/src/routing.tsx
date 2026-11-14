@@ -231,7 +231,7 @@ function ReplicaFields({
               onChange({ ...replica, private_network: event.target.checked })
             }
           />
-          Private cluster endpoint (allows HTTP)
+          Internal network endpoint (allows HTTP)
         </label>
       )}
       {onRemove && (

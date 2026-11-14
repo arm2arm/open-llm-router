@@ -1,6 +1,7 @@
 package endpoints
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +38,7 @@ func TestDiscoveryIntersectsCatalogsWithoutActivating(t *testing.T) {
 		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer synthetic-secret" || r.Header.Get("Cookie") != "" {
 			t.Error("catalog request isolation failed")
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"z"},{"id":"a"},{"id":"a"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"z","owned_by":"vllm"},{"id":"a"},{"id":"a"}]}`))
 	}, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.WriteHeader(404)
@@ -54,6 +55,62 @@ func TestDiscoveryIntersectsCatalogsWithoutActivating(t *testing.T) {
 	}
 	if len(result.Replicas[0].Models) != 2 {
 		t.Fatal("not deduplicated")
+	}
+}
+
+func TestDiscoveryNormalizesAPIURLsAndIdentifiesSGLang(t *testing.T) {
+	s, sources := discoveryService(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("unexpected discovery path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"deepseek-v4.1-flash-1017","object":"model","created":1794684840,"owned_by":"sglang","root":"deepseek-v4.1-flash-1017","parent":null,"max_model_len":1000000}]}`))
+	})
+	origin := sources[0].URL
+	for _, suffix := range []string{"/v1", "/v1/models", "/v1/chat/completions/"} {
+		sources[0].URL = origin + suffix
+		result, err := s.Discover(t.Context(), "chat", sources)
+		if err != nil || !result.Complete || result.Replicas[0].Provider != "SGLang" || result.Replicas[0].URL != origin || !reflect.DeepEqual(result.Models, []string{"deepseek-v4.1-flash-1017"}) {
+			t.Fatalf("%s: %+v %v", suffix, result, err)
+		}
+		if sources[0].URL != origin+suffix {
+			t.Fatal("discovery mutated editor input")
+		}
+	}
+	if _, err := s.Discover(t.Context(), "chat", []ModelSource{{URL: origin}, {URL: origin + "/v1"}}); err == nil {
+		t.Fatal("equivalent replica origins were not rejected")
+	}
+}
+
+func TestDiscoveryHTTPSVerifiesCertificatesAndNormalizesAPIURL(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer tls-test-key" {
+			t.Error("HTTPS request lost its path or origin-bound key")
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen","owned_by":"sglang"}]}`))
+	}))
+	defer server.Close()
+	cfg := &config.Config{Models: map[string]config.Model{"chat": {Pool: []config.Replica{{URL: server.URL}}}}}
+	policy, err := backendpolicy.New(cfg, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{Base: cfg, Policy: policy}
+	source := ModelSource{URL: server.URL + "/v1/models"}
+	result, err := s.Detect(t.Context(), source, "tls-test-key")
+	if err != nil || result.Error == "" {
+		t.Fatal("untrusted TLS certificate accepted", result, err)
+	}
+	// Trust only this test CA; HTTPS verification must still remain enabled.
+	previous := http.DefaultTransport
+	transport := previous.(*http.Transport).Clone()
+	transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	transport.TLSClientConfig.RootCAs = x509.NewCertPool()
+	transport.TLSClientConfig.RootCAs.AddCert(server.Certificate())
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = previous; transport.CloseIdleConnections() })
+	result, err = s.Detect(t.Context(), source, "tls-test-key")
+	if err != nil || result.Error != "" || result.URL != server.URL || result.Provider != "SGLang" || !reflect.DeepEqual(result.Models, []string{"qwen"}) {
+		t.Fatal("verified HTTPS catalog was not detected", result, err)
 	}
 }
 

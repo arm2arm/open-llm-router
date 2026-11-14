@@ -47,6 +47,25 @@ func (r *Routing) decode(data []byte) error {
 	if doc.BackendPresets == nil {
 		doc.BackendPresets = config.DefaultBackendPresets()
 	}
+	// Persist the same origins used for discovery and activation. Invalid
+	// inputs are left intact for redacted validation errors below.
+	for _, backend := range doc.Backends {
+		if backend != nil {
+			if origin, err := NormalizeBackendURL(backend.URL); err == nil {
+				backend.URL = origin
+			}
+		}
+	}
+	for name, model := range doc.Models {
+		for i := range model.Pool {
+			if model.Pool[i].Backend == "" {
+				if origin, err := NormalizeBackendURL(model.Pool[i].URL); err == nil {
+					model.Pool[i].URL = origin
+				}
+			}
+		}
+		doc.Models[name] = model
+	}
 	*r = doc
 	return nil
 }

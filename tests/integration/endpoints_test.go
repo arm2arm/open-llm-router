@@ -158,7 +158,7 @@ func TestEndpointConfigurationLifecyclePersistenceAndGuards(t *testing.T) {
 			}
 		}
 	}
-	catalogData := adminCall(t, operator, "POST", "/portal/api/admin/endpoints/models", map[string]any{"model": "chat-model", "replicas": []endpoints.ModelSource{{URL: f.replacement.Pool[0].URL, BearerTokenEnv: "ENDPOINT_GPU_TOKEN"}}}, 200)
+	catalogData := adminCall(t, operator, "POST", "/portal/api/admin/endpoints/models", map[string]any{"model": "chat-model", "replicas": []endpoints.ModelSource{{URL: f.replacement.Pool[0].URL + "/v1/models", BearerTokenEnv: "ENDPOINT_GPU_TOKEN"}}}, 200)
 	var catalog endpoints.Discovery
 	if json.Unmarshal(catalogData, &catalog) != nil || !catalog.Complete || len(catalog.Models) != 1 || catalog.Models[0] != "backend-real" || strings.Contains(string(catalogData), endpointToken) {
 		t.Fatal("model detection failed or leaked secret")
@@ -172,9 +172,12 @@ func TestEndpointConfigurationLifecyclePersistenceAndGuards(t *testing.T) {
 	if entry := endpointEntry(t, operator, "chat-model"); entry.Revision != 0 {
 		t.Fatal("connection test changed active settings")
 	}
-	saveEndpoints(t, operator, "chat-model", 0, f.replacement, 200)
+	pasted := f.replacement
+	pasted.Pool = append([]config.Replica(nil), pasted.Pool...)
+	pasted.Pool[0].URL += "/v1"
+	saveEndpoints(t, operator, "chat-model", 0, pasted, 200)
 	first := endpointEntry(t, operator, "chat-model")
-	if first.Revision == 0 || first.Source != "database" || first.Configuration.UpstreamModel != "backend-real" {
+	if first.Revision == 0 || first.Source != "database" || first.Configuration.UpstreamModel != "backend-real" || first.Configuration.Pool[0].URL != f.replacement.Pool[0].URL {
 		t.Fatal("saved settings not activated")
 	}
 	if response := f.request(t, "/v1/chat/completions", ""); !strings.Contains(string(response), `"model":"backend-real"`) {
