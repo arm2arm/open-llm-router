@@ -1,13 +1,19 @@
 package endpoints
 
 import (
+	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
@@ -97,7 +103,7 @@ func TestDiscoveryHTTPSVerifiesCertificatesAndNormalizesAPIURL(t *testing.T) {
 	s := &Service{Base: cfg, Policy: policy}
 	source := ModelSource{URL: server.URL + "/v1/models"}
 	result, err := s.Detect(t.Context(), source, "tls-test-key")
-	if err != nil || result.Error == "" {
+	if err != nil || !strings.Contains(result.Error, "TLS certificate verification failed") {
 		t.Fatal("untrusted TLS certificate accepted", result, err)
 	}
 	// Trust only this test CA; HTTPS verification must still remain enabled.
@@ -111,6 +117,54 @@ func TestDiscoveryHTTPSVerifiesCertificatesAndNormalizesAPIURL(t *testing.T) {
 	result, err = s.Detect(t.Context(), source, "tls-test-key")
 	if err != nil || result.Error != "" || result.URL != server.URL || result.Provider != "SGLang" || !reflect.DeepEqual(result.Models, []string{"qwen"}) {
 		t.Fatal("verified HTTPS catalog was not detected", result, err)
+	}
+}
+
+func TestDiscoveryTransportDiagnosticsDoNotExposeRawErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"refused", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, "connection refused"},
+		{"unreachable", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ENETUNREACH}, "network is unreachable"},
+		{"dns", &net.DNSError{Err: "synthetic-secret", Name: "synthetic-secret", IsNotFound: true}, "hostname could not be resolved"},
+		{"timeout", context.DeadlineExceeded, "request timed out"},
+		{"socket timeout", fmt.Errorf("backend connection failed: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT}), "request timed out"},
+		{"tls", &tls.CertificateVerificationError{Err: errors.New("synthetic-secret")}, "TLS certificate verification failed"},
+		{"cancelled", context.Canceled, "discovery was cancelled"},
+		{"other", errors.New("synthetic-secret"), "before an HTTP response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, tc.err
+			}}
+			t.Cleanup(transport.CloseIdleConnections)
+			result := catalog(t.Context(), &http.Client{Transport: transport}, "http://backend.invalid", "synthetic-secret")
+			if !strings.Contains(result.Error, tc.want) || len(result.Models) != 0 {
+				t.Fatalf("failure was not classified: %+v", result)
+			}
+			encoded, err := json.Marshal(result)
+			if err != nil || strings.Contains(string(encoded), "synthetic-secret") {
+				t.Fatalf("raw transport data leaked: %s (%v)", encoded, err)
+			}
+		})
+	}
+}
+
+func TestDetectionReportsRefusedConnectionThroughDestinationPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	origin := server.URL
+	server.Close()
+	cfg := &config.Config{Models: map[string]config.Model{"m": {Pool: []config.Replica{{URL: origin}}}}}
+	policy, err := backendpolicy.New(cfg, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{Base: cfg, Policy: policy}
+	result, err := s.Detect(t.Context(), ModelSource{URL: origin}, "")
+	if err != nil || !strings.Contains(result.Error, "connection refused") || len(result.Models) != 0 {
+		t.Fatalf("connection cause was lost between policy and discovery: %+v %v", result, err)
 	}
 }
 

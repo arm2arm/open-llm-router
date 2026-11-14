@@ -2,14 +2,18 @@ package endpoints
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -135,7 +139,7 @@ func catalogPaths(ctx context.Context, client *http.Client, origin, token string
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			result.Error = "model catalog request failed or timed out"
+			result.Error = catalogRequestError(err)
 			return result
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
@@ -204,6 +208,33 @@ func catalogPaths(ctx context.Context, client *http.Client, origin, token string
 		return result
 	}
 	return result
+}
+
+// Report actionable failure categories without exposing raw transport errors,
+// which may contain backend URLs, response data or credential material.
+func catalogRequestError(err error) string {
+	var certificate *tls.CertificateVerificationError
+	if errors.As(err, &certificate) {
+		return "backend TLS certificate verification failed; check the certificate hostname and trusted CA"
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return "backend hostname could not be resolved from the OLR server; check cluster DNS"
+	}
+	var network net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, syscall.ETIMEDOUT) || errors.As(err, &network) && network.Timeout() {
+		return "model catalog request timed out from the OLR server; check pod connectivity, routing and the backend firewall"
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "backend connection refused; check that the service is listening on this address and port"
+	}
+	if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+		return "backend network is unreachable from the OLR server; check cluster routing and the backend firewall"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "model discovery was cancelled"
+	}
+	return "model catalog request failed before an HTTP response was received; check connectivity from the OLR server"
 }
 
 // Detect probes one new backend without requiring an existing logical model.

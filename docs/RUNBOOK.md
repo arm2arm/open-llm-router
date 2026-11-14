@@ -828,6 +828,23 @@ This uses the standard Kubernetes allow-all egress rule and avoids per-backend I
 allowances. It preserves the configured router ingress and supporting-service policies.
 The default `networkPolicy.egress: []` adds no external outbound allowances.
 
+If backend model discovery fails, test from the router pod's network namespace.
+A successful request from a workstation or an unrelated pod does not test the same
+egress policy, source address or routing. For a Helm release named `olr` in namespace
+`olr`, inspect the applied router policy and attach a temporary curl container:
+
+```sh
+kubectl -n olr get networkpolicy olr-open-llm-router-router -o yaml
+pod=$(kubectl -n olr get pods -l app.kubernetes.io/name=open-llm-router,app.kubernetes.io/instance=olr -o jsonpath='{.items[0].metadata.name}')
+kubectl -n olr debug "$pod" --image=curlimages/curl:latest --profile=restricted --attach=true -- \
+  curl -sv --connect-timeout 5 --max-time 15 http://BACKEND_HOST:PORT/v1/models
+```
+
+Use the actual backend URL and supply its API key only if required. The router image
+has no shell or curl. The temporary container shares its pod network without restarting
+the router. Discovery reports connection refusal, unreachable networks, DNS failures,
+TLS certificate failures and timeouts separately, without exposing raw transport errors.
+
 NetworkPolicy filters ports, not HTTP paths. The public inference ingress must deny
 `/portal` and `/metrics` unless intentionally published. Prefer a separate internal
 portal hostname/ingress with an internal load balancer or source restrictions, matching
