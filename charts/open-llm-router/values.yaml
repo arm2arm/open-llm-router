@@ -159,7 +159,7 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Enforced by a NetworkPolicy-capable CNI. External endpoints need explicit peers.
+# Enforced by a NetworkPolicy-capable CNI. Configure outbound access below.
 networkPolicy:
   enabled: true
   # Select your controller's actual namespace AND pod labels. No controller is
@@ -170,7 +170,8 @@ networkPolicy:
         matchLabels: {kubernetes.io/metadata.name: monitoring}
       podSelector:
         matchLabels: {app.kubernetes.io/name: prometheus}
-  # Complete Kubernetes egress rules (to + ports); never use unrestricted peers.
+  # Additional router egress rules. Default: only DNS and bundled dependencies.
+  # Set egress: [{}] to allow all destinations and ports for admin-managed backends.
   egress: []
 # Optional Secret with CA certificates, e.g. sslrootcert=/etc/olr/ca/ca.crt.
 tls:

@@ -1,0 +1,5 @@
+# Overlay for deployments where administrators can add arbitrary backend URLs.
+# Keep the existing networkPolicy ingressPeers and monitoringPeers in site values.
+networkPolicy:
+  egress:
+    - {}

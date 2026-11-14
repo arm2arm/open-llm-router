@@ -455,23 +455,18 @@
         },
         "egress": {
           "type": "array",
+          "description": "Additional router egress rules using Kubernetes NetworkPolicy semantics. A single empty rule allows all outbound destinations and ports.",
           "items": {
             "type": "object",
-            "required": [
-              "to",
-              "ports"
-            ],
             "properties": {
               "to": {
                 "type": "array",
-                "minItems": 1,
                 "items": {
                   "type": "object"
                 }
               },
               "ports": {
                 "type": "array",
-                "minItems": 1,
                 "items": {
                   "type": "object"
                 }

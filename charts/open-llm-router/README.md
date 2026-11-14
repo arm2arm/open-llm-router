@@ -219,6 +219,23 @@ it never selects the caller's cluster. Both checks run in CI. Override `HELM` an
 NetworkPolicies are enabled by default. Router ingress is limited to the configured
 `networkPolicy.ingressPeers` and `monitoringPeers`; DNS and enabled demo dependencies
 have explicit rules. Add external dependency peers and ports with `networkPolicy.egress`.
+
+For administrator-managed backends at arbitrary IP addresses or service names, allow
+all router egress without maintaining a destination list. Set this in the existing
+`networkPolicy` section of your site values:
+
+```yaml
+networkPolicy:
+  egress:
+    - {}
+```
+
+The empty rule follows Kubernetes NetworkPolicy semantics: all destinations and ports
+are allowed for router egress. Router ingress and supporting-service policies retain
+their configured restrictions. `egress: []` adds no allowances; `egress: [{}]` allows all.
+An equivalent overlay is provided in
+[`examples/unrestricted-egress.values.yaml`](examples/unrestricted-egress.values.yaml).
+
 Use a policy-capable CNI and maintain dependency-side ingress restrictions. In production,
 use the production example's `config.security.require_tls: true`, external TLS services,
 and `sslmode=verify-full` for PostgreSQL. The chart refuses bundled demo services or
