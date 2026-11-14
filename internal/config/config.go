@@ -213,6 +213,8 @@ type Priorities struct {
 
 // Replica is one backend server of a model.
 type Replica struct {
+	Backend        string  `yaml:"-" json:"backend,omitempty"` // managed backend reference
+	PrivateNetwork bool    `yaml:"private_network" json:"private_network,omitempty"`
 	URL            string  `yaml:"url" json:"url"`
 	HealthPath     string  `yaml:"health_path" json:"health_path"` // default /health; Ollama uses /
 	Weight         float64 `yaml:"weight" json:"weight"`           // relative throughput
@@ -558,7 +560,7 @@ func (c *Config) validate() Problems {
 		}
 		for _, m := range c.Models {
 			for _, r := range m.Pool {
-				if !strings.HasPrefix(r.URL, "https://") {
+				if !strings.HasPrefix(r.URL, "https://") && !r.PrivateNetwork {
 					add("security.require_tls: inference backends require HTTPS")
 				}
 			}

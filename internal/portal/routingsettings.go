@@ -42,9 +42,10 @@ type routingView struct {
 	AllowedPrivateNetworks []string `json:"allowed_private_networks"`
 	// GroupGrants maps each group policy to the models it grants ("*": all).
 	// Policies and routing are changed together; references must remain valid.
-	GroupGrants     map[string][]string `json:"group_grants"`
-	AffectedUsers   []policyImpact      `json:"affected_users"`
-	ImpactAvailable bool                `json:"impact_available"`
+	GroupGrants             map[string][]string `json:"group_grants"`
+	AffectedUsers           []policyImpact      `json:"affected_users"`
+	ImpactAvailable         bool                `json:"impact_available"`
+	EncryptionKeyConfigured bool                `json:"encryption_key_configured"`
 }
 
 func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user) {
@@ -53,6 +54,7 @@ func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user
 		return
 	}
 	out := routingView{Settings: view, CredentialReferences: []string{}, AllowedPrivateNetworks: []string{}, GroupGrants: map[string][]string{}}
+	out.EncryptionKeyConfigured = h.Routing.Cipher != nil
 	running, _ := h.RoutingRuntime.Snapshot()
 	for name, group := range running.Groups {
 		out.GroupGrants[name] = slices.Clone(group.Models)
@@ -96,8 +98,9 @@ func (h *Handler) importRouting(w http.ResponseWriter, r *http.Request, u user) 
 
 func (h *Handler) saveRoutingDraft(w http.ResponseWriter, r *http.Request, u user) {
 	var body struct {
-		Version  int64           `json:"version"`
-		Document json.RawMessage `json:"document"`
+		Version  int64             `json:"version"`
+		Document json.RawMessage   `json:"document"`
+		Secrets  map[string]string `json:"secrets"`
 	}
 	if !h.jsonBodyLimit(w, r, &body, 256<<10) {
 		return
@@ -106,7 +109,26 @@ func (h *Handler) saveRoutingDraft(w http.ResponseWriter, r *http.Request, u use
 		fail(w, 400, "invalid_request_error", "version and document are required")
 		return
 	}
-	_, err := h.Routing.SaveDraft(r.Context(), settings.DomainRouting, body.Version, body.Document, nil, portalActor(u))
+	var document settings.Routing
+	if err := json.Unmarshal(body.Document, &document); err != nil {
+		fail(w, 400, "invalid_request_error", "invalid routing document")
+		return
+	}
+	secrets := map[string][]byte{}
+	defer func() {
+		for _, value := range secrets {
+			clear(value)
+		}
+	}()
+	for id, value := range body.Secrets {
+		backend := document.Backends[id]
+		if backend == nil {
+			fail(w, 400, "invalid_request_error", "choose an existing backend for each API key")
+			return
+		}
+		secrets[backend.SecretName(id)] = []byte(value)
+	}
+	_, err := h.Routing.SaveDraft(r.Context(), settings.DomainRouting, body.Version, body.Document, secrets, portalActor(u))
 	if settingsError(w, err) {
 		return
 	}
@@ -132,7 +154,7 @@ func changedModels(running, next *config.Config) []string {
 	encode := func(m config.Model) string { data, _ := json.Marshal(m); return string(data) }
 	var models []string
 	for _, name := range slices.Sorted(maps.Keys(next.Models)) {
-		if old, ok := running.Models[name]; !ok || encode(old) != encode(next.Models[name]) {
+		if old, ok := running.Models[name]; !ok || encode(old) != encode(next.Models[name]) || !slices.Equal(old.Pool, next.Models[name].Pool) {
 			models = append(models, name)
 		}
 	}

@@ -60,6 +60,14 @@ func WithPolicies(base *Config, models map[string]Model, aliases map[string]stri
 				continue
 			}
 			r.URL = strings.TrimRight(r.URL, "/")
+			if r.Backend != "" {
+				token, ok := lookup("backend:" + r.Backend)
+				if !ok || r.BearerTokenEnv != "" {
+					problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: choose an available managed backend", name, i))
+				} else {
+					r.BearerToken = token
+				}
+			}
 			if r.BearerTokenEnv != "" {
 				token, ok := lookup(r.BearerTokenEnv)
 				if !isVarName(r.BearerTokenEnv) || !ok || token == "" || strings.ContainsAny(token, "\r\n") {

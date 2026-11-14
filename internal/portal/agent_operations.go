@@ -106,7 +106,7 @@ func (h *Handler) operations() []agentOperation {
 			if i == 2 {
 				schema = objectSchema(map[string]any{"version": field("integer")}, "version")
 			}
-			if domain == "authentication" && i == 1 {
+			if i == 1 {
 				schema = objectSchema(map[string]any{"version": field("integer"), "document": field("object"), "secrets": field("object")}, "version", "document")
 			}
 			if i == 3 && domain == "authentication" {

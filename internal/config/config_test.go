@@ -570,6 +570,10 @@ func TestProductionTransportPolicy(t *testing.T) {
 	if err != nil || !cfg.OIDC.RequireTLS {
 		t.Fatal("secure config rejected", err)
 	}
+	private := strings.Replace(secure, "https://backend-a:8000,", "http://10.1.2.3:8000, private_network: true,", 1)
+	if _, err := Parse([]byte(private), lookupIn(env)); err != nil {
+		t.Fatal("explicit private cluster HTTP refused", err)
+	}
 	for _, bad := range []string{strings.Replace(secure, "https://backend-a", "http://backend-a", 1)} {
 		if _, err := Parse([]byte(bad), lookupIn(env)); err == nil {
 			t.Fatal("plaintext config accepted")
