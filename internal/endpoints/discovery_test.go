@@ -110,3 +110,30 @@ func TestDiscoveryPartialFailureOffersNoSharedModels(t *testing.T) {
 		t.Fatal("partial catalog offered unsafe model", result, err)
 	}
 }
+
+func TestNewBackendDetection(t *testing.T) {
+	for _, provider := range []string{"vLLM", "SGLang", "Ollama", "OpenAI-compatible"} {
+		t.Run(provider, func(t *testing.T) {
+			s, sources := discoveryService(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer new-key" {
+					t.Error("key missing")
+				}
+				if r.URL.Path == "/api/tags" {
+					if provider == "Ollama" {
+						_, _ = w.Write([]byte(`{"models":[{"name":"deepseek-r1:8b"}]}`))
+						return
+					}
+					http.NotFound(w, r)
+					return
+				}
+				owner := strings.ToLower(provider)
+				_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-r1:8b","owned_by":"` + owner + `"}]}`))
+			})
+			delete(s.Base.Models, "chat") // detection must work before a route exists
+			result, err := s.Detect(t.Context(), sources[0], "new-key")
+			if err != nil || result.Error != "" || result.Provider != provider || len(result.Models) != 1 || result.HealthPath == "" {
+				t.Fatalf("%+v %v", result, err)
+			}
+		})
+	}
+}

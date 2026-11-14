@@ -785,7 +785,7 @@ to a version that requires the removed columns. Replace keys suspected of exposu
 #### Destination and credential setup
 
 File-defined host/port pairs are trusted operator destinations. New public
-HTTP(S) origins are allowed; new private destinations require an operator-set
+HTTP(S) origins are allowed; manual private destinations require an operator-set
 `OLR_BACKEND_ALLOWED_CIDRS`, for example `192.168.178.0/24`. Development Compose
 defaults to `192.168.0.0/16`, covering the Ollama example. Production defaults to
 no additional private networks. New loopback, link-local and cloud metadata
@@ -830,6 +830,39 @@ adapters remain planned work.
 
 ### Manage models, endpoints and aliases as routing revisions
 
+In **Admin → Routing**, import the current routing once, then use **Connect a
+backend** before configuring routes. Enter a backend name, host URL (a pasted
+`/v1` base is also accepted) and optional API key. Detection runs automatically
+beside the URL, from the router's network. It reads `/v1/models`, with Ollama's
+`/api/tags` fallback, and shows the available models. Select models and groups,
+then **Add selected models as routes**. You can also add the backend alone, or
+enter an upstream model manually when its catalog is unavailable. Existing
+routes can select a saved backend in each replica's **Backend** list.
+
+Enable **Private cluster endpoint** for RFC1918 or IPv6 ULA hosts behind your
+firewall. This explicitly permits that host's private addresses and HTTP,
+including when `security.require_tls` is enabled for the public router.
+Loopback, link-local and metadata addresses remain refused unless the origin
+is already an operator-trusted file destination. Public hosts need this option
+cleared and must still satisfy the deployment's HTTPS policy. DNS is rechecked
+and pinned on new connections for discovery, health probes and inference.
+File-managed replicas can opt in with `private_network: true`.
+
+API keys require `OLR_SETTINGS_ENCRYPTION_KEY` (base64-encoded 32 bytes). They
+are encrypted with the existing managed-settings secret store; routing history
+contains references only. Keep this encryption key stable and back it up
+separately from PostgreSQL. A stored backend key is bound to its backend name
+and URL; changing the host requires entering a new key or using no key. Keys
+stay in memory while editing and are never written to browser storage.
+
+Detection identifies vLLM or SGLang when advertised by the catalog, Ollama by
+its native API, and DeepSeek's public host. Other shared APIs are labelled
+**OpenAI-compatible** because they cannot reliably reveal their server software.
+This does not translate protocols: select the Anthropic option only for an
+endpoint that actually serves the Messages API. The detected catalog path is
+the default health check; it can be overridden. **Save routing draft**, then
+**Activate routing draft** to publish. Activation checks affected routes first.
+
 The **routing** settings domain holds the complete set of logical models (upstream
 name, native protocols, timeouts, affinity, priority and endpoint pools) and the
 aliases clients may use, as one revision. Like authentication settings it is
@@ -854,15 +887,16 @@ Credential values are never shown or stored in the browser.
 
 - **Import** copies the routing in use, including saved per-model endpoint
   revisions, without changing it. From then on the per-model endpoint editor is
-  closed (409); edit a routing draft instead. The file must still contain at
-  least one model to load; while routing is managed it is only the import
+  closed (409); edit a routing draft instead. The file may start with an empty
+  model catalog for backend-first setup; while routing is managed it is only the import
   baseline, and differences are reported, not applied.
 - **Drafts** are read strictly. A model removed while an alias or group policy
   still names it, an alias to an unknown model, an endpoint credential reference
   outside the allowed list (`OLR_BACKEND_TOKEN_ENVS` or the file's own
   `bearer_token_env` names) or a destination the outbound policy refuses (for
-  example metadata or link-local addresses, or private networks outside
-  `OLR_BACKEND_ALLOWED_CIDRS`) is recorded on the draft and blocks activation.
+  example metadata or link-local addresses, or private networks without an
+  explicit cluster selection or `OLR_BACKEND_ALLOWED_CIDRS`) is recorded on the
+  draft and blocks activation.
   A document that contains a resolved credential is refused outright.
 - **Checks** probe the replicas of models the draft changes, through the same
   destination policy as proxy traffic; refused destinations are reported
@@ -891,7 +925,8 @@ network.
   `/v1`, credentials, query or fragment. The router sends the supported incoming
   API path unchanged. A provider requiring a base path or deployment-specific URL
   cannot be described by the present schema.
-- `bearer_token_env` names a nonempty secret in the **router container's**
+- Saved backends use an optional encrypted API key. Alternatively,
+  `bearer_token_env` names a nonempty secret in the **router container's**
   environment. It is sent as `Authorization: Bearer ...` for requests and health
   probes. Client API keys/cookies are stripped. Arbitrary server-side headers,
   provider-specific API-key headers, request signing and per-endpoint mTLS settings

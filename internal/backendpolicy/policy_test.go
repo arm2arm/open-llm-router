@@ -80,3 +80,30 @@ func TestProductionPolicyRejectsPlaintextBackend(t *testing.T) {
 		t.Fatal("plaintext inference allowed")
 	}
 }
+
+func TestPrivateClusterHTTPIsScopedAndRechecked(t *testing.T) {
+	p, err := New(&config.Config{Security: config.Security{RequireTLS: true}}, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{"http://10.1.2.3:8000", "http://192.168.1.2", "http://[fd12::1]:11434"} {
+		if err := p.CheckBackend(t.Context(), origin, true); err != nil {
+			t.Fatal("private cluster refused", err)
+		}
+		if err := p.Check(t.Context(), origin); err == nil {
+			t.Fatal("private exception leaked into normal policy")
+		}
+	}
+	for _, origin := range []string{"http://8.8.8.8", "http://127.0.0.1", "http://169.254.169.254", "http://[fd00:ec2::254]", "http://100.100.100.200", "http://[::1]"} {
+		if err := p.CheckBackend(t.Context(), origin, true); err == nil {
+			t.Fatal("unsafe cluster origin accepted", origin)
+		}
+	}
+	ctx := WithPrivateNetwork(t.Context(), "http://10.1.2.3:8000")
+	if _, err := p.addresses(ctx, "10.1.2.3:8000"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.addresses(ctx, "10.1.2.4:8000"); err == nil {
+		t.Fatal("private grant escaped its host")
+	}
+}

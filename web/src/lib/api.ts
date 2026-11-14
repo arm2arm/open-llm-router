@@ -245,6 +245,8 @@ export type Replica = {
 }
 
 export type EndpointReplica = {
+  backend?: string
+  private_network?: boolean
   url: string
   health_path: string
   weight: number
@@ -388,6 +390,7 @@ export type PolicyPreview = {
   affected_users: { id: string; username: string }[]
 }
 export type RoutingDocument = {
+  backends?: Record<string, Backend>
   models: Record<string, EndpointModel>
   groups: Record<string, GroupPolicy>
   aliases: Record<string, string>
@@ -396,6 +399,7 @@ export type RoutingRevision = Omit<SettingsRevision, 'document'> & {
   document?: RoutingDocument
 }
 export type RoutingView = {
+  encryption_key_configured: boolean
   settings: {
     domain: string
     managed: boolean
@@ -412,4 +416,11 @@ export type RoutingView = {
   group_grants: Record<string, string[]>
   affected_users: { id: string; username: string }[]
   impact_available: boolean
+}
+
+export type Backend = {
+  url: string
+  api_key: SecretRef
+  private_network: boolean
+  health_path: string
 }

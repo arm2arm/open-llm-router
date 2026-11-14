@@ -109,6 +109,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("PUT /portal/api/admin/endpoints", h.admin(h.endpointSave))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/test", h.admin(h.endpointTest))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/models", h.admin(h.endpointModels))
+	h.mux.HandleFunc("POST /portal/api/admin/backends/detect", h.routingAdmin(h.detectBackend))
 	h.mux.HandleFunc("POST /portal/api/admin/endpoints/restore", h.admin(h.endpointRestore))
 	h.mux.HandleFunc("GET /portal/api/admin/settings/authentication", h.admin(h.authenticationSettings))
 	h.mux.HandleFunc("POST /portal/api/admin/settings/authentication/import", h.settingsAdmin(h.importAuthentication))

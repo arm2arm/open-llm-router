@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
 
@@ -398,7 +399,11 @@ func (m *Manager) Check(ctx context.Context) map[string][]bool {
 				if path == "" {
 					path = "/health"
 				}
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(r.URL, "/")+path, nil)
+				probeCtx := ctx
+				if r.PrivateNetwork {
+					probeCtx = backendpolicy.WithPrivateNetwork(ctx, r.URL)
+				}
+				req, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, strings.TrimRight(r.URL, "/")+path, nil)
 				if r.BearerToken != "" {
 					req.Header.Set("Authorization", "Bearer "+r.BearerToken)
 				}

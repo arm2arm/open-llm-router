@@ -77,6 +77,7 @@ function Editor({
     replicas.map(({ value }) => ({
       url: value.url,
       bearer_token_env: value.bearer_token_env || '',
+      private_network: value.private_network ?? false,
     })),
   )
   const [pending, setPending] = useState(false)
@@ -94,12 +95,13 @@ function Editor({
       idle_timeout_s: number('idle_timeout_s'),
       queue_timeout_s: number('queue_timeout_s'),
       session_affinity: fields.has('session_affinity'),
-      pool: replicas.map(({ id }) => ({
+      pool: replicas.map(({ id, value }) => ({
         url: text(`url.${id}`),
         health_path: text(`health_path.${id}`),
         weight: number(`weight.${id}`),
         max_inflight: number(`max_inflight.${id}`),
         bearer_token_env: text(`bearer_token_env.${id}`),
+        private_network: value.private_network ?? false,
       })),
     }
   }
@@ -165,13 +167,6 @@ function Editor({
             Use the name served by Ollama or vLLM. Empty forwards {entry.model}.
           </span>
         </label>
-        <UpstreamModels
-          key={sources}
-          model={entry.model}
-          sources={sources}
-          value={upstream}
-          onChoose={setUpstream}
-        />
         <fieldset className="grid gap-2 rounded-md border p-3">
           <legend className="px-1 text-sm">Native backend protocols</legend>
           {(['openai', 'anthropic'] as const).map((protocol) => (
@@ -288,6 +283,15 @@ function Editor({
                 maxLength={512}
               />
             </label>
+            {index === 0 && (
+              <UpstreamModels
+                key={sources}
+                model={entry.model}
+                sources={sources}
+                value={upstream}
+                onChoose={setUpstream}
+              />
+            )}
             <p className="subtitle">
               Origin only, without /v1. Ollama health path: /; vLLM usually:
               /health.

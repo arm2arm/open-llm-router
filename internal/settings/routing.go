@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
@@ -18,13 +19,15 @@ const (
 )
 
 // Routing is the managed set of logical models with their endpoint pools, and
-// the aliases clients may use for them. Endpoint credentials are references to
-// allowed environment variables (bearer_token_env); resolved tokens are never
-// part of the document. Group policies activate in the same revision.
+// the aliases clients may use for them. Backends carry encrypted API key
+// references; legacy endpoints may reference allowed environment variables.
+// Resolved tokens are never part of the document. Group policies activate in
+// the same revision.
 type Routing struct {
-	Models  map[string]config.Model `json:"models"`
-	Aliases map[string]string       `json:"aliases"`
-	Groups  map[string]config.Group `json:"groups"`
+	Models   map[string]config.Model `json:"models"`
+	Aliases  map[string]string       `json:"aliases"`
+	Groups   map[string]config.Group `json:"groups"`
+	Backends map[string]*Backend     `json:"backends,omitempty"`
 }
 
 func (*Routing) domainName() string { return DomainRouting }
@@ -61,8 +64,9 @@ func (r *Routing) baseline(current *config.Config) {
 func (r *Routing) problems() []string {
 	var p []string
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
-	if len(r.Models) == 0 || len(r.Models) > maxModels {
-		add("models: list between 1 and %d models", maxModels)
+	p = append(p, r.backendProblems()...)
+	if len(r.Models) > maxModels {
+		add("models: list at most %d models", maxModels)
 	}
 	for _, name := range slices.Sorted(maps.Keys(r.Models)) {
 		if name == "" || name == "*" || !plainText(name, 128) {
@@ -95,7 +99,15 @@ func (r *Routing) problems() []string {
 	return p
 }
 
-func (*Routing) secrets() []secretBinding { return nil }
+func (r *Routing) secrets() []secretBinding {
+	var bindings []secretBinding
+	for _, id := range slices.Sorted(maps.Keys(r.Backends)) {
+		if backend := r.Backends[id]; backend != nil {
+			bindings = append(bindings, secretBinding{name: backend.SecretName(id), ref: &backend.APIKey})
+		}
+	}
+	return bindings
+}
 
 // apply validates the routing against base's group policies and resolves
 // endpoint credentials; config problems name keys, never credential values.
@@ -104,7 +116,39 @@ func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, err
 	if groups == nil { // pre-policy revisions used deployment policies
 		groups = base.Groups
 	}
-	cfg, err := config.WithPolicies(base, r.Models, r.Aliases, groups, in.tokens)
+	models := maps.Clone(r.Models)
+	for name, model := range models {
+		model.Pool = slices.Clone(model.Pool)
+		for i := range model.Pool {
+			replica := &model.Pool[i]
+			if replica.Backend == "" {
+				continue
+			}
+			backend := r.Backends[replica.Backend]
+			if backend == nil {
+				return nil, &ValidationError{[]string{"models." + name + ": choose an existing backend"}}
+			}
+			replica.URL, replica.PrivateNetwork = backend.URL, backend.PrivateNetwork
+			if replica.HealthPath == "" {
+				replica.HealthPath = backend.HealthPath
+			}
+		}
+		models[name] = model
+	}
+	lookup := func(name string) (string, bool) {
+		if id, ok := strings.CutPrefix(name, "backend:"); ok {
+			backend := r.Backends[id]
+			if backend == nil {
+				return "", false
+			}
+			return in.secrets[backend.SecretName(id)], true
+		}
+		if in.tokens == nil {
+			return "", false
+		}
+		return in.tokens(name)
+	}
+	cfg, err := config.WithPolicies(base, models, r.Aliases, groups, lookup)
 	if err != nil {
 		var problems config.Problems
 		if errors.As(err, &problems) {
@@ -150,13 +194,17 @@ func (r *Routing) values() map[string]string {
 		data, _ := json.Marshal(group)
 		values["groups."+name] = string(data)
 	}
+	for id, backend := range r.Backends {
+		data, _ := json.Marshal(backend)
+		values["backends."+id] = string(data)
+	}
 	return values
 }
 
-func (*Routing) settingNames() []string { return []string{"models", "aliases", "groups"} }
+func (*Routing) settingNames() []string { return []string{"models", "aliases", "groups", "backends"} }
 
 func (*Routing) fileSources(*config.Config) map[string]string {
-	return map[string]string{"models": config.SourceFile, "aliases": config.SourceFile, "groups": config.SourceFile}
+	return map[string]string{"models": config.SourceFile, "aliases": config.SourceFile, "groups": config.SourceFile, "backends": config.SourceDefault}
 }
 
 // checksPassed: activation probes the changed endpoints itself.

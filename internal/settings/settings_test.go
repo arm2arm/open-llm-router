@@ -224,7 +224,7 @@ func TestRoutingDocument(t *testing.T) {
 		t.Fatal("routing conflicts are informational", conflicts)
 	}
 	empty := Routing{Models: map[string]config.Model{}}
-	if len(empty.problems()) != 1 {
-		t.Fatal("a routing document needs a model")
+	if len(empty.problems()) != 0 {
+		t.Fatal("empty routing must allow backend-first setup")
 	}
 }

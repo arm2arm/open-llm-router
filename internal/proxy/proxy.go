@@ -22,6 +22,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/apierr"
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
@@ -338,6 +339,9 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		}
 	}()
 	ctx, cancel := context.WithCancelCause(r.Context())
+	if lease.Replica.PrivateNetwork {
+		ctx = backendpolicy.WithPrivateNetwork(ctx, lease.Replica.URL)
+	}
 	defer cancel(nil)
 	defer func() {
 		// Keep the timer's cause for the trace's attempt classification.

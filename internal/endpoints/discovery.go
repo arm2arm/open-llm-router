@@ -6,23 +6,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 )
 
 // ModelSource deliberately accepts credential references, never credentials.
 type ModelSource struct {
 	URL            string `json:"url"`
 	BearerTokenEnv string `json:"bearer_token_env"`
+	PrivateNetwork bool   `json:"private_network,omitempty"`
 }
 type Catalog struct {
-	URL    string   `json:"url"`
-	Models []string `json:"models"`
-	Source string   `json:"source,omitempty"`
-	Error  string   `json:"error,omitempty"`
+	URL        string   `json:"url"`
+	Models     []string `json:"models"`
+	Source     string   `json:"source,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	Provider   string   `json:"provider,omitempty"`
+	HealthPath string   `json:"health_path,omitempty"`
 }
 type Discovery struct {
 	Models   []string  `json:"models"`
@@ -48,7 +54,7 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 	for i := range sources {
 		source := &sources[i]
 		source.URL = strings.TrimSuffix(strings.TrimSpace(source.URL), "/")
-		if err := s.Policy.Check(ctx, source.URL); err != nil {
+		if err := s.Policy.CheckBackend(ctx, source.URL, source.PrivateNetwork); err != nil {
 			return result, &ValidationError{err.Error()}
 		}
 		if seen[source.URL] {
@@ -79,7 +85,11 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 				return
 			}
 			token, _ := s.Policy.Token(source.BearerTokenEnv)
-			result.Replicas[i] = catalog(ctx, client, source.URL, token)
+			requestCtx := ctx
+			if source.PrivateNetwork {
+				requestCtx = backendpolicy.WithPrivateNetwork(ctx, source.URL)
+			}
+			result.Replicas[i] = catalog(requestCtx, client, source.URL, token)
 		})
 	}
 	wg.Wait()
@@ -102,8 +112,12 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 }
 
 func catalog(ctx context.Context, client *http.Client, origin, token string) Catalog {
+	return catalogPaths(ctx, client, origin, token, []string{"/v1/models", "/api/tags"})
+}
+
+func catalogPaths(ctx context.Context, client *http.Client, origin, token string, paths []string) Catalog {
 	result := Catalog{URL: origin, Models: []string{}}
-	for _, path := range []string{"/v1/models", "/api/tags"} {
+	for _, path := range paths {
 		req, err := http.NewRequestWithContext(ctx, "GET", origin+path, nil)
 		if err != nil {
 			result.Error = "invalid backend origin"
@@ -134,7 +148,8 @@ func catalog(ctx context.Context, client *http.Client, origin, token string) Cat
 		}
 		var body struct {
 			Data *[]struct {
-				ID string `json:"id"`
+				ID      string `json:"id"`
+				OwnedBy string `json:"owned_by"`
 			} `json:"data"`
 			Models *[]struct {
 				Name  string `json:"name"`
@@ -148,10 +163,18 @@ func catalog(ctx context.Context, client *http.Client, origin, token string) Cat
 		}
 		ids := []string{}
 		if path == "/v1/models" {
+			result.Provider = "OpenAI-compatible"
 			for _, model := range *body.Data {
 				ids = append(ids, model.ID)
+				switch strings.ToLower(model.OwnedBy) {
+				case "vllm":
+					result.Provider = "vLLM"
+				case "sglang":
+					result.Provider = "SGLang"
+				}
 			}
 		} else {
+			result.Provider = "Ollama"
 			for _, model := range *body.Models {
 				id := model.Name
 				if id == "" {
@@ -172,7 +195,36 @@ func catalog(ctx context.Context, client *http.Client, origin, token string) Cat
 		}
 		slices.Sort(ids)
 		result.Models, result.Source = slices.Compact(ids), path
+		result.HealthPath = path
 		return result
 	}
 	return result
+}
+
+// Detect probes one new backend without requiring an existing logical model.
+// Redirects are refused and only the explicitly selected origin receives a key.
+func (s *Service) Detect(ctx context.Context, source ModelSource, token string) (Catalog, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	if err := s.Policy.CheckBackend(ctx, source.URL, source.PrivateNetwork); err != nil {
+		return Catalog{}, &ValidationError{err.Error()}
+	}
+	if source.PrivateNetwork {
+		ctx = backendpolicy.WithPrivateNetwork(ctx, source.URL)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy, transport.DialContext = nil, s.Policy.DialContext
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	result := catalog(ctx, client, source.URL, token)
+	u, _ := url.Parse(source.URL)
+	if result.Error == "" && u.Hostname() == "api.deepseek.com" {
+		result.Provider = "DeepSeek"
+	}
+	if result.Error == "" && result.Provider == "OpenAI-compatible" {
+		if ollama := catalogPaths(ctx, client, source.URL, token, []string{"/api/tags"}); ollama.Error == "" && ollama.Source != "" {
+			result = ollama
+		}
+	}
+	return result, nil
 }

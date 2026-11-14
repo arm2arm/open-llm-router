@@ -21,6 +21,18 @@ type Policy struct {
 	tokens     map[string]string
 }
 
+type privateDestination struct{}
+
+// WithPrivateNetwork grants this request access to one administrator-selected
+// cluster origin. DNS is still checked and pinned on every new connection.
+func WithPrivateNetwork(ctx context.Context, origin string) context.Context {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, privateDestination{}, address(u))
+}
+
 func New(cfg *config.Config, lookup func(string) (string, bool)) (*Policy, error) {
 	p := &Policy{requireTLS: cfg.Security.RequireTLS, trusted: map[string]bool{}, tokens: map[string]string{}}
 	for _, model := range cfg.Models {
@@ -131,7 +143,19 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 	}
 	out := []string{}
 	for _, ip := range ips {
-		if !p.allowed(ip) {
+		private, _ := ctx.Value(privateDestination{}).(string)
+		cluster := private == destination
+		// An explicit cluster endpoint may use RFC1918 or IPv6 ULA addresses,
+		// but never loopback, link-local, metadata or public destinations.
+		permitted := p.allowed(ip)
+		if cluster {
+			ip = ip.Unmap()
+			permitted = ip.IsPrivate() && ip.IsGlobalUnicast() && ip != netip.MustParseAddr("fd00:ec2::254")
+		}
+		if !permitted {
+			if cluster {
+				return nil, errors.New("private cluster endpoints must resolve to private network addresses; clear the private cluster option for a public host")
+			}
 			return nil, errors.New("backend destination is not permitted; private GPU networks require OLR_BACKEND_ALLOWED_CIDRS")
 		}
 		out = append(out, net.JoinHostPort(ip.String(), port))
@@ -140,12 +164,19 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 }
 
 func (p *Policy) Check(ctx context.Context, origin string) error {
+	return p.CheckBackend(ctx, origin, false)
+}
+
+func (p *Policy) CheckBackend(ctx context.Context, origin string, private bool) error {
 	u, err := url.Parse(origin)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("backend URL must be an HTTP(S) origin without credentials, path, query or fragment")
 	}
-	if p.requireTLS && u.Scheme != "https" {
+	if p.requireTLS && u.Scheme != "https" && !private {
 		return errors.New("production backend requires HTTPS")
+	}
+	if private {
+		ctx = WithPrivateNetwork(ctx, origin)
 	}
 	_, err = p.addresses(ctx, address(u))
 	return err

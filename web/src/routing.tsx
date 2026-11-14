@@ -4,6 +4,7 @@ import { Network, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { GroupPolicies, AccessPreview } from '@/policies'
+import { Backends } from '@/backends'
 import {
   api,
   type CheckResult,
@@ -13,6 +14,7 @@ import {
   type RoutingDocument,
   type RoutingRevision,
   type RoutingView,
+  type Backend,
 } from '@/lib/api'
 
 const queryKey = ['admin-routing']
@@ -93,6 +95,7 @@ function ReplicaFields({
   index,
   model,
   references,
+  backends,
   onChange,
   onRemove,
 }: {
@@ -100,6 +103,7 @@ function ReplicaFields({
   index: number
   model: string
   references: string[]
+  backends: Record<string, Backend>
   onChange: (replica: EndpointReplica) => void
   onRemove?: () => void
 }) {
@@ -109,24 +113,59 @@ function ReplicaFields({
       className="grid gap-2 sm:grid-cols-6 items-end rounded-md border p-3"
       aria-label={label}
     >
-      <label className="grid gap-1 text-sm sm:col-span-2">
-        Origin URL
-        <Input
-          aria-label={`${label} origin`}
-          value={replica.url}
-          required
-          maxLength={2048}
-          placeholder="http://gpu-node:8000"
+      <label className="grid gap-1 text-sm sm:col-span-6">
+        Backend
+        <select
+          className="select"
+          aria-label={`${label} backend`}
+          value={replica.backend ?? ''}
           onChange={(event) =>
-            onChange({ ...replica, url: event.target.value })
+            onChange({
+              ...replica,
+              backend: event.target.value,
+              url: '',
+              health_path: '',
+              bearer_token_env: '',
+              private_network: false,
+            })
           }
-        />
+        >
+          <option value="">Enter an origin manually</option>
+          {Object.entries(backends).map(([id, backend]) => (
+            <option key={id} value={id}>
+              {id} — {backend.url}
+            </option>
+          ))}
+        </select>
       </label>
+      {replica.backend ? (
+        <p className="subtitle sm:col-span-2">
+          {backends[replica.backend]?.url ?? 'Missing backend'} · uses the
+          backend’s API key and network setting
+        </p>
+      ) : (
+        <label className="grid gap-1 text-sm sm:col-span-2">
+          Origin URL
+          <Input
+            aria-label={`${label} origin`}
+            value={replica.url}
+            required
+            maxLength={2048}
+            placeholder="http://gpu-node:8000"
+            onChange={(event) =>
+              onChange({ ...replica, url: event.target.value })
+            }
+          />
+        </label>
+      )}
       <label className="grid gap-1 text-sm">
         Health path
         <Input
           aria-label={`${label} health path`}
           value={replica.health_path}
+          placeholder={
+            replica.backend ? backends[replica.backend]?.health_path : '/health'
+          }
           maxLength={256}
           onChange={(event) =>
             onChange({ ...replica, health_path: event.target.value })
@@ -158,30 +197,44 @@ function ReplicaFields({
           }
         />
       </label>
-      <label className="grid gap-1 text-sm">
-        Credential
-        <select
-          className="select"
-          aria-label={`${label} credential reference`}
-          value={replica.bearer_token_env}
-          onChange={(event) =>
-            onChange({ ...replica, bearer_token_env: event.target.value })
-          }
-        >
-          <option value="">None</option>
-          {references.map((reference) => (
-            <option key={reference} value={reference}>
-              {reference}
-            </option>
-          ))}
-          {replica.bearer_token_env &&
-            !references.includes(replica.bearer_token_env) && (
-              <option value={replica.bearer_token_env}>
-                {replica.bearer_token_env} (not allowed)
+      {!replica.backend && (
+        <label className="grid gap-1 text-sm">
+          Credential
+          <select
+            className="select"
+            aria-label={`${label} credential reference`}
+            value={replica.bearer_token_env}
+            onChange={(event) =>
+              onChange({ ...replica, bearer_token_env: event.target.value })
+            }
+          >
+            <option value="">None</option>
+            {references.map((reference) => (
+              <option key={reference} value={reference}>
+                {reference}
               </option>
-            )}
-        </select>
-      </label>
+            ))}
+            {replica.bearer_token_env &&
+              !references.includes(replica.bearer_token_env) && (
+                <option value={replica.bearer_token_env}>
+                  {replica.bearer_token_env} (not allowed)
+                </option>
+              )}
+          </select>
+        </label>
+      )}
+      {!replica.backend && (
+        <label className="flex items-center gap-2 text-sm sm:col-span-6">
+          <input
+            type="checkbox"
+            checked={replica.private_network ?? false}
+            onChange={(event) =>
+              onChange({ ...replica, private_network: event.target.checked })
+            }
+          />
+          Private cluster endpoint (allows HTTP)
+        </label>
+      )}
       {onRemove && (
         <Button
           type="button"
@@ -200,6 +253,7 @@ function ModelEditor({
   name,
   model,
   references,
+  backends,
   blockers,
   onChange,
   onRemove,
@@ -207,6 +261,7 @@ function ModelEditor({
   name: string
   model: EndpointModel
   references: string[]
+  backends: Record<string, Backend>
   blockers: string[]
   onChange: (model: EndpointModel) => void
   onRemove: () => void
@@ -311,6 +366,7 @@ function ModelEditor({
           index={index}
           model={name}
           references={references}
+          backends={backends}
           onChange={(next) =>
             onChange({
               ...model,
@@ -357,6 +413,7 @@ function DraftEditor({
     copyDocument(base.document as RoutingDocument),
   )
   const [modelName, setModelName] = useState('')
+  const [secrets, setSecrets] = useState<Record<string, string>>({})
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const blockers = (name: string) => {
@@ -382,6 +439,7 @@ function DraftEditor({
       await api('admin/settings/routing/draft', 'PUT', {
         version: view.settings.version,
         document,
+        secrets,
       })
       await onSaved()
     } catch (error) {
@@ -407,16 +465,27 @@ function DraftEditor({
       </h3>
       <p className="subtitle">
         Saving creates a draft; it does not change routing until activated.
-        Credentials are chosen by reference; their values are never shown.
+        Backend API keys are encrypted when saved.
       </p>
       <Failure error={error} />
       <fieldset disabled={pending} className="grid gap-4 min-w-0">
+        <Backends
+          document={document}
+          secrets={secrets}
+          encryption={view.encryption_key_configured}
+          onChange={(next, keys) => {
+            setDocument(next)
+            setSecrets(keys)
+          }}
+        />
+        <h4 className="font-medium">Route settings</h4>
         {models.map((name) => (
           <ModelEditor
             key={name}
             name={name}
             model={document.models[name]}
             references={view.credential_references}
+            backends={document.backends ?? {}}
             blockers={blockers(name)}
             onChange={(model) =>
               setDocument({
@@ -646,10 +715,10 @@ export function RoutingSettingsPanel() {
       {data && settings && (
         <div className="grid gap-6">
           <p className="subtitle">
-            A request names a model or alias. Group policies (in the YAML) grant
-            models; each model forwards its native OpenAI or Anthropic API to a
-            pool of compatible endpoints. Endpoints are generic HTTP origins,
-            not named cloud providers.
+            A request names a model or alias. Group policies grant models; each
+            model forwards its native OpenAI or Anthropic API to a pool of
+            compatible backends. Connect a backend to discover models and create
+            routes.
           </p>
           <dl className="grid gap-2 sm:grid-cols-2 text-sm">
             <div>
@@ -705,10 +774,17 @@ export function RoutingSettingsPanel() {
                       <td>
                         <ul className="grid gap-1">
                           {model.pool.map((replica) => {
-                            const state = replicaHealth(name, replica.url)
+                            const url = replica.backend
+                              ? (effective.backends?.[replica.backend]?.url ??
+                                replica.url)
+                              : replica.url
+                            const state = replicaHealth(name, url)
                             return (
-                              <li key={replica.url} className="text-xs">
-                                <code>{replica.url}</code>{' '}
+                              <li
+                                key={replica.backend || replica.url}
+                                className="text-xs"
+                              >
+                                <code>{url}</code>{' '}
                                 {state
                                   ? `${state.healthy ? '● healthy' : '✕ unavailable'} · ${state.in_flight}/${state.max_inflight} in flight`
                                   : '· not running'}

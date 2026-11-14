@@ -76,7 +76,7 @@ func VerifyDestinations(policy *backendpolicy.Policy) func(context.Context, *con
 		var problems []string
 		for _, name := range slices.Sorted(maps.Keys(cfg.Models)) {
 			for i, r := range cfg.Models[name].Pool {
-				if err := policy.Check(ctx, r.URL); err != nil {
+				if err := policy.CheckBackend(ctx, r.URL, r.PrivateNetwork); err != nil {
 					problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: %s", name, i, err))
 				}
 			}
@@ -196,7 +196,7 @@ func (s *Service) candidate(ctx context.Context, base *config.Config, name strin
 		return nil, err
 	}
 	for _, r := range cfg.Models[name].Pool {
-		if err := s.Policy.Check(ctx, r.URL); err != nil {
+		if err := s.Policy.CheckBackend(ctx, r.URL, r.PrivateNetwork); err != nil {
 			return nil, &ValidationError{err.Error()}
 		}
 	}
