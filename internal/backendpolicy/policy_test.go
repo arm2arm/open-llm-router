@@ -2,6 +2,7 @@ package backendpolicy
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"strings"
 	"testing"
@@ -78,6 +79,19 @@ func TestProductionPolicyRejectsPlaintextBackend(t *testing.T) {
 	}
 	if err := p.Check(t.Context(), "http://example.org"); err == nil {
 		t.Fatal("plaintext inference allowed")
+	}
+}
+
+func TestDialPreservesContextFailure(t *testing.T) {
+	cfg := &config.Config{Models: map[string]config.Model{"m": {Pool: []config.Replica{{URL: "http://127.0.0.1:1"}}}}}
+	p, err := New(cfg, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := p.DialContext(ctx, "tcp", "127.0.0.1:1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("connection error lost its cause: %v", err)
 	}
 }
 

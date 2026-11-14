@@ -4,6 +4,7 @@ package backendpolicy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
@@ -192,11 +193,16 @@ func (p *Policy) DialContext(ctx context.Context, network, destination string) (
 		return nil, err
 	}
 	dialer := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	var failures []error
 	for _, target := range addresses {
 		conn, err := dialer.DialContext(ctx, network, target)
 		if err == nil {
 			return conn, nil
 		}
+		failures = append(failures, err)
+		if ctx.Err() != nil {
+			break
+		}
 	}
-	return nil, errors.New("backend connection failed")
+	return nil, fmt.Errorf("backend connection failed: %w", errors.Join(failures...))
 }
