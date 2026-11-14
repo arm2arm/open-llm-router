@@ -965,12 +965,12 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
     name: 'Edit model endpoints',
     exact: true,
   })
-  const detected = form.getByLabel('Detected upstream models', { exact: true })
+  const detected = form.getByLabel('Upstream model name', { exact: true })
   await expect(detected).toBeVisible()
-  await expect(detected.locator('option')).toContainText([
-    'Choose a model',
-    'chat-model',
-  ])
+  await expect(
+    form.getByLabel('Header timeout (seconds)', { exact: true }),
+  ).not.toBeVisible()
+  await expect(form.locator('datalist option')).toHaveText(['chat-model'])
   await form
     .getByLabel('Upstream model name', { exact: true })
     .fill('missing-model')
@@ -983,7 +983,7 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
   await expect(
     form.getByLabel('Upstream model name', { exact: true }),
   ).toHaveValue('missing-model')
-  await detected.selectOption('chat-model')
+  await detected.fill('chat-model')
   await form.getByLabel('Upstream model name', { exact: true }).fill('')
   await form
     .getByRole('button', { name: 'Refresh models', exact: true })
@@ -991,11 +991,13 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
   await expect(
     form.getByLabel('Upstream model name', { exact: true }),
   ).toHaveValue('chat-model')
+  await form.getByText('Advanced settings', { exact: true }).click()
   await form.getByRole('button', { name: 'Add replica', exact: true }).click()
   const second = form.getByRole('group', { name: 'Replica 2', exact: true })
   await second
     .getByLabel('Backend origin', { exact: true })
     .fill('http://mock-llm-b:8000/v1/models')
+  await second.getByText('Connection options', { exact: true }).click()
   await second.getByLabel('Internal network · allow HTTP').check()
   await second.getByLabel('Weight', { exact: true }).fill('2')
   await form
@@ -1053,6 +1055,7 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
       })
     ).status(),
   ).toBe(200)
+  await form.getByText('Connection options', { exact: true }).click()
   await form.getByLabel('Weight', { exact: true }).fill('4')
   await form
     .getByRole('button', { name: 'Save and apply', exact: true })
@@ -1064,6 +1067,7 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
       exact: true,
     })
     .click()
+  await form.getByText('Connection options', { exact: true }).click()
   await expect(form.getByLabel('Weight', { exact: true })).toHaveValue('3')
   await form
     .getByLabel('Health path', { exact: true })

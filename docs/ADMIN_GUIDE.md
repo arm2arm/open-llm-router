@@ -714,22 +714,24 @@ uses `models: ["*"]` and omits limits, intentionally granting unrestricted acces
 
 Sign in with a full local or Keycloak admin session and open **Admin → Endpoint
 configuration**. Select **Edit endpoints** for the public model your clients use.
-You can add or remove replicas, change each origin, health path, weight,
-`max_inflight` and credential reference, and edit the model's upstream name,
-native protocols, header/idle/queue timeouts and session affinity. Each model
-must retain at least one replica; at most 32 replicas are accepted.
+The editor starts with URL, optional authentication, and Model. The refresh icon
+beside the URL reloads model detection. Connection options contain health paths,
+weights and capacity; Advanced settings contain native protocols, timeouts,
+session affinity and additional replicas. Each model must retain at least one
+replica; at most 32 replicas are accepted.
 
-1. Set each **Backend origin** to an HTTP or HTTPS host, an IP address with a
+1. Set each **URL** to an HTTP or HTTPS host, an IP address with a
    port, or a `/v1` API URL. Common paths such as `/v1/models` are removed before
    discovery and saving. For example, `http://141.33.4.201:8081/v1` becomes
    `http://141.33.4.201:8081`. All replicas in a pool must serve the same upstream
    model and native protocols.
-2. Choose a server-provided **Credential reference**, or **None** for an
-   unauthenticated backend. Secret values cannot be entered or read in the UI.
+2. Choose a saved credential under **API key (optional)**, or **No backend
+   authentication**. Use the main Backends editor to enter a new encrypted key.
 3. The editor automatically detects models after origins or credentials change.
-   Choose **Detected upstream models** or click **Refresh models**. Only names
-   available on every replica are offered. One detected name fills an empty
-   **Upstream model name**; an existing/manual name is never replaced automatically.
+   Choose a suggestion in **Model**, enter a model ID, or click the refresh icon
+   beside the URL. Only names available on every replica are suggested. One
+   detected name fills an empty model field; an existing/manual name is never
+   replaced automatically.
    OpenAI-compatible `/v1/models` and Ollama `/api/tags` catalogs are supported.
    The detected server type appears beside each catalog URL. For example,
    `owned_by: "sglang"` identifies SGLang even when the model is named DeepSeek.
@@ -840,12 +842,16 @@ adapters remain planned work.
 Use **Users & groups → Manage group policies** to create groups and set per-user
 defaults. Detailed route drafts, activation, and rollback remain in Advanced routing.
 
-Choose **Add backend**, enter a friendly name and an IP address or service name
+Choose **Add backend**, enter an IP address or service name
 such as **10.0.0.12:8000** or **llm.cluster:8000**. Bare hosts use HTTP; explicit
 HTTPS URLs and pasted /v1 bases are accepted. Detection runs beside the host
-field, from the router's network. It reads /v1/models with an Ollama /api/tags
-fallback. Select models, access groups, and a shared preset, then **Save backend**.
-You can save a connection without models, or enter model IDs manually.
+field, from the router's network; the adjacent refresh icon reloads it. It reads
+/v1/models with an Ollama /api/tags fallback. Choose whether to use an API key,
+select models, then **Save backend**. **Advanced settings** contains the optional
+friendly name, access groups, shared preset, internal HTTP setting, and health
+options. With no name supplied, the host is used. New connections default to
+administrator-only access and unlimited shared rates. You can save a connection
+without models, or expand **Enter a model ID manually**.
 
 Saving imports file-managed routing automatically, validates the complete document,
 and probes changed routes before activation. A failed activation preserves the
