@@ -85,6 +85,7 @@ type Lease struct {
 
 // Request describes what a caller wants from a pool.
 type Request struct {
+	Allowed func(config.Replica) bool
 	// Exclude is the failed lease of a first attempt, or nil.
 	Exclude *Lease
 	// Session, if not empty, prefers one replica per session (rendezvous
@@ -194,7 +195,7 @@ func (p *Pool) dispatch() {
 
 func (p *Pool) eligible(i int, r Request, now time.Time) bool {
 	rep := &p.replicas[i]
-	return !(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight
+	return (r.Allowed == nil || r.Allowed(rep.config)) && !(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight
 }
 
 // reserve picks a replica for r: the session's preferred replica if it is
@@ -299,6 +300,7 @@ func (l *Lease) Failed() {
 
 // State contains operational metadata only, including no backend credentials.
 type State struct {
+	Backend     string  `json:"backend,omitempty"`
 	URL         string  `json:"url"`
 	Inflight    int     `json:"in_flight"`
 	Healthy     bool    `json:"healthy"`
@@ -311,7 +313,7 @@ func (p *Pool) Snapshot() []State {
 	defer p.mu.Unlock()
 	out := make([]State, len(p.replicas))
 	for i, r := range p.replicas {
-		out[i] = State{URL: r.config.URL, Inflight: r.count(), Healthy: r.healthy && !time.Now().Before(r.coolUntil),
+		out[i] = State{Backend: r.config.Backend, URL: r.config.URL, Inflight: r.count(), Healthy: r.healthy && !time.Now().Before(r.coolUntil),
 			Weight: r.config.Weight, MaxInflight: r.config.MaxInflight}
 	}
 	return out

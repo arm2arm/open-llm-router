@@ -47,17 +47,18 @@ const (
 // Config is the content of the config file plus the secrets from the
 // environment.
 type Config struct {
-	AdminAPI       AdminAPI          `yaml:"admin_api"`
-	Security       Security          `yaml:"security"`
-	ContentTracing ContentTracing    `yaml:"content_tracing"`
-	Auth           Auth              `yaml:"auth"`
-	Limits         Limits            `yaml:"limits"`
-	Retention      Retention         `yaml:"retention"`
-	OIDC           *OIDC             `yaml:"oidc"` // nil: local portal login only
-	Portal         Portal            `yaml:"-"`
-	Models         map[string]Model  `yaml:"models"`
-	Groups         map[string]Group  `yaml:"groups"`
-	Aliases        map[string]string `yaml:"aliases"` // client model name -> model
+	Backends       map[string]BackendPolicy `yaml:"-"`
+	AdminAPI       AdminAPI                 `yaml:"admin_api"`
+	Security       Security                 `yaml:"security"`
+	ContentTracing ContentTracing           `yaml:"content_tracing"`
+	Auth           Auth                     `yaml:"auth"`
+	Limits         Limits                   `yaml:"limits"`
+	Retention      Retention                `yaml:"retention"`
+	OIDC           *OIDC                    `yaml:"oidc"` // nil: local portal login only
+	Portal         Portal                   `yaml:"-"`
+	Models         map[string]Model         `yaml:"models"`
+	Groups         map[string]Group         `yaml:"groups"`
+	Aliases        map[string]string        `yaml:"aliases"` // client model name -> model
 	// Forwarders configures end-user attribution for trusted forwarder keys.
 	Forwarders Forwarders `yaml:"forwarders"`
 

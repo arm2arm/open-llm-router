@@ -55,6 +55,25 @@ func TestWeightedSelection(t *testing.T) {
 	}
 }
 
+func TestReplicaAccessFilterAlsoAppliesToAffinityAndRetry(t *testing.T) {
+	p := testPool()
+	p.replicas[0].config.Backend = "staff"
+	p.replicas[1].config.Backend = "students"
+	allowed := func(replica config.Replica) bool { return replica.Backend == "students" }
+	for range 30 {
+		lease := p.AcquireRequest(t.Context(), Request{Session: "same-session", Allowed: allowed})
+		if lease == nil || lease.Replica.Backend != "students" {
+			t.Fatal("selected unauthorized backend")
+		}
+		retry := p.AcquireRequest(t.Context(), Request{Exclude: lease, Allowed: allowed})
+		if retry != nil {
+			retry.Release()
+			t.Fatal("retry bypassed backend access")
+		}
+		lease.Release()
+	}
+}
+
 func TestConcurrentCapsAndExclusion(t *testing.T) {
 	p := testPool()
 	for i := range p.replicas {

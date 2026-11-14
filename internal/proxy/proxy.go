@@ -22,6 +22,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/apierr"
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/backendlimits"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
@@ -45,13 +46,14 @@ type Handler struct {
 	Usage     usage.Recorder // installed before serving; nil disables persistence
 	Traces    *requesttrace.Service
 	// Activity streams live request metadata to the portal; nil disables it.
-	Activity *activity.Broker
-	Limits   *limits.Manager   // installed before serving
-	Metrics  *metrics.Observer // installed before serving
-	active   sync.WaitGroup
-	bodies   *bodyAdmission
-	maxBody  int64
-	routing  atomic.Pointer[routingSnapshot]
+	Activity      *activity.Broker
+	Limits        *limits.Manager // installed before serving
+	BackendLimits *backendlimits.Manager
+	Metrics       *metrics.Observer // installed before serving
+	active        sync.WaitGroup
+	bodies        *bodyAdmission
+	maxBody       int64
+	routing       atomic.Pointer[routingSnapshot]
 }
 
 func New(cfg *config.Config) *Handler {
@@ -131,7 +133,8 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 		if model, ok := cfg.Aliases[name]; ok {
 			target = model
 		}
-		if !access.AllowsModel(target) {
+		principal, _ := auth.FromContext(r.Context())
+		if !policy.ModelAllowed(cfg, access, target, principal.Groups, principal.ProtectedAdmin) {
 			continue
 		}
 		data = append(data, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router"})
@@ -216,7 +219,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		return
 	}
 	account.record.Model = name
-	if !access.AllowsModel(name) {
+	if !policy.ModelAllowed(cfg, access, name, principal.Groups, principal.ProtectedAdmin) {
 		apierr.Write(w, protocol, 403, "permission_error", "access to this model is forbidden")
 		return
 	}
@@ -305,6 +308,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		selectionStarted := time.Now()
 		request := pool.Request{Exclude: previous, Priority: priority, Wait: time.Duration(model.QueueTimeoutS) * time.Second}
+		request.Allowed = func(replica config.Replica) bool {
+			return policy.BackendAllowed(cfg, replica.Backend, principal.Groups, principal.ProtectedAdmin)
+		}
 		if model.SessionAffinity {
 			request.Session = r.Header.Get("X-Session-Id")
 		}
@@ -318,8 +324,26 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			return
 		}
 		account.record.Replica = lease.Replica.URL
+		estimate := max(0, meta.MaxTokens)
+		// Saturate untrusted output limits instead of overflowing the reservation.
+		if estimate > 1<<63-1-int64(len(body)) {
+			estimate = 1<<63 - 1
+		} else {
+			estimate += int64(len(body))
+		}
+		budget, err := h.BackendLimits.Acquire(r.Context(), lease.Replica.Backend, cfg.Backends[lease.Replica.Backend].Rate, estimate)
+		if err != nil {
+			lease.Release()
+			limits.WriteError(w, protocol, err)
+			return
+		}
 		exchanged := time.Now()
+		account.backendLease = budget
 		committed, err := h.attempt(w, r, body, model, lease, account, hideUsage)
+		if err != nil && !committed {
+			_ = budget.Complete(0)
+			account.backendLease = nil
+		}
 		account.capture.Attempt(requesttrace.Attempt{Replica: replicaLabel(model, lease.Replica.URL), QueueMS: queued.Milliseconds(), MS: time.Since(exchanged).Milliseconds(), Status: account.writer.status, Error: attemptError(r, err, committed)})
 		if err == nil || committed || r.Context().Err() != nil {
 			return

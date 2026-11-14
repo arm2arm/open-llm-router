@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/backendlimits"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
@@ -18,19 +20,20 @@ import (
 )
 
 type accounting struct {
-	writer    *statusWriter
-	sink      usage.Recorder
-	record    usage.Record
-	json      *usage.JSON
-	stream    *usage.Stream
-	aborted   bool
-	lease     *limits.Lease
-	began     time.Time
-	observer  *metrics.Observer
-	span      trace.Span
-	selection time.Duration
-	capture   *requesttrace.Capture
-	live      *live
+	writer       *statusWriter
+	sink         usage.Recorder
+	record       usage.Record
+	json         *usage.JSON
+	stream       *usage.Stream
+	aborted      bool
+	lease        *limits.Lease
+	backendLease *backendlimits.Lease
+	began        time.Time
+	observer     *metrics.Observer
+	span         trace.Span
+	selection    time.Duration
+	capture      *requesttrace.Capture
+	live         *live
 }
 
 // live publishes metadata-only progress of one request to its user's portal.
@@ -130,6 +133,11 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 		a.record.Status = "aborted"
 	}
 	a.record.InputTokens, a.record.OutputTokens = totals.InputTokens, totals.Output()
+	input, output := max(0, totals.InputTokens), max(0, totals.Output())
+	backendTokens := min(input, 1<<63-1-output) + output
+	if err := a.backendLease.Complete(backendTokens); err != nil {
+		slog.Error("backend budget completion failed")
+	}
 	a.capture.Finish(a.record)
 	if a.live != nil {
 		r := a.record

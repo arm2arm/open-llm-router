@@ -17,6 +17,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/activity"
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/backendlimits"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
@@ -205,6 +206,7 @@ func serve(args []string) error {
 	defer func() { stopLive(); live.Wait() }()
 	traces.Activity = live
 	forwarder := proxy.New(cfg)
+	forwarder.BackendLimits = &backendlimits.Manager{DB: database}
 	forwarder.Traces = traces
 	forwarder.Activity = live
 	forwarder.ConfigureDestinations(destinations)

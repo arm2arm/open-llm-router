@@ -254,6 +254,7 @@ test('development realm admin is identified as a Keycloak account', async ({
     page.getByText('Protected local administrator', { exact: true }),
   ).toHaveCount(0)
   await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  await page.getByRole('link', { name: 'Users & groups', exact: true }).click()
   await page.getByLabel('Find users').fill('admin')
   await page.getByRole('button', { name: 'Find', exact: true }).click()
   const self = (await (await context.request.get('/portal/api/me')).json()).user

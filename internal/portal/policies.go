@@ -64,13 +64,13 @@ func (h *Handler) previewPolicies(w http.ResponseWriter, r *http.Request, _ user
 	access := policy.ForUser(cfg.Groups, target.Groups, target.Overrides, target.ProtectedAdmin)
 	models := []string{}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Models)) {
-		if access.AllowsModel(name) {
+		if policy.ModelAllowed(cfg, access, name, target.Groups, target.ProtectedAdmin) {
 			models = append(models, name)
 		}
 	}
 	aliases := map[string]string{}
 	for alias, name := range cfg.Aliases {
-		if access.AllowsModel(name) {
+		if policy.ModelAllowed(cfg, access, name, target.Groups, target.ProtectedAdmin) {
 			aliases[alias] = name
 		}
 	}
@@ -113,17 +113,25 @@ func (h *Handler) policyImpact(r *http.Request, next *config.Config) ([]policyIm
 		after := policy.ForUser(next.Groups, u.Groups, u.Overrides, false)
 		changed := !reflect.DeepEqual(limits.Effective(before), limits.Effective(after)) || before.Admin != after.Admin || before.Priority != after.Priority
 		for name := range current.Models {
-			changed = changed || before.AllowsModel(name) != after.AllowsModel(name) || before.AllowsModel(name) && !reflect.DeepEqual(current.Models[name], next.Models[name])
+			allowedBefore := policy.ModelAllowed(current, before, name, u.Groups, false)
+			allowedAfter := policy.ModelAllowed(next, after, name, u.Groups, false)
+			backendChanged := false
+			for _, replica := range current.Models[name].Pool {
+				if replica.Backend != "" && !reflect.DeepEqual(current.Backends[replica.Backend], next.Backends[replica.Backend]) {
+					backendChanged = true
+				}
+			}
+			changed = changed || allowedBefore != allowedAfter || allowedBefore && (!reflect.DeepEqual(current.Models[name], next.Models[name]) || backendChanged)
 		}
 		for name := range next.Models {
 			_, existed := current.Models[name]
-			changed = changed || after.AllowsModel(name) && !existed
+			changed = changed || policy.ModelAllowed(next, after, name, u.Groups, false) && !existed
 		}
 		for alias, model := range current.Aliases {
-			changed = changed || before.AllowsModel(model) && next.Aliases[alias] != model
+			changed = changed || policy.ModelAllowed(current, before, model, u.Groups, false) && next.Aliases[alias] != model
 		}
 		for alias, model := range next.Aliases {
-			changed = changed || after.AllowsModel(model) && current.Aliases[alias] != model
+			changed = changed || policy.ModelAllowed(next, after, model, u.Groups, false) && current.Aliases[alias] != model
 		}
 		if changed {
 			affected = append(affected, policyImpact{u.ID, u.Username})

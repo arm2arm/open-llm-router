@@ -1,13 +1,45 @@
-import { useEffect, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  Server,
+  Plus,
+  Pencil,
+  Trash2,
+  Search,
+  RefreshCw,
+  CheckCircle2,
+  Globe,
+  KeyRound,
+  Users,
+  Infinity as InfinityIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
-  api,
-  type Backend,
-  type EndpointModel,
-  type RoutingDocument,
-} from '@/lib/api'
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog'
+import { api, type Backend, type RoutingDocument } from '@/lib/api'
+import {
+  useBackendWorkspace,
+  backendOrigin,
+  addBackendModels,
+  removeBackendModels,
+} from '@/backend-workspace'
 
 type Catalog = {
   url: string
@@ -16,175 +48,453 @@ type Catalog = {
   health_path?: string
   error?: string
 }
-type Props = {
-  document: RoutingDocument
-  secrets: Record<string, string>
-  encryption: boolean
-  onChange: (document: RoutingDocument, secrets: Record<string, string>) => void
+type Entry = {
+  id: string
+  backend: Backend
+  models: string[]
+  legacy?: boolean
+  deploymentKey?: boolean
 }
 
-function backendOrigin(raw: string) {
-  const parsed = new URL(raw.trim())
-  if (
-    !['http:', 'https:'].includes(parsed.protocol) ||
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash ||
-    ![
-      '',
-      '/v1',
-      '/v1/models',
-      '/v1/chat/completions',
-      '/v1/messages',
-      '/api/tags',
-    ].includes(parsed.pathname.replace(/\/+$/, ''))
+function entries(document: RoutingDocument): Entry[] {
+  const result: Entry[] = Object.entries(document.backends ?? {}).map(
+    ([id, backend]) => ({
+      id,
+      backend,
+      models: [
+        ...new Set(
+          Object.entries(document.models)
+            .filter(([, model]) =>
+              model.pool.some((replica) => replica.backend === id),
+            )
+            .map(([name, model]) => model.upstream_model || name),
+        ),
+      ],
+    }),
   )
-    throw new Error('Enter the host URL or its /v1 API base.')
-  return parsed.origin
+  const legacy = new Map<string, Entry>()
+  for (const [name, model] of Object.entries(document.models))
+    for (const replica of model.pool) {
+      if (replica.backend || !replica.url) continue
+      let entry = legacy.get(replica.url)
+      if (!entry) {
+        const hostname = new URL(replica.url).host
+        const base =
+          hostname
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '-')
+            .slice(0, 50) || 'backend'
+        let id = base
+        let suffix = 1
+        while (
+          result.some((entry) => entry.id === id) ||
+          [...legacy.values()].some((entry) => entry.id === id)
+        )
+          id = base + '-' + suffix++
+        entry = {
+          id,
+          backend: {
+            name: hostname,
+            url: replica.url,
+            api_key: {},
+            private_network:
+              replica.private_network ?? replica.url.startsWith('http:'),
+            health_path: replica.health_path || '/health',
+            groups: [],
+            preset: '',
+          },
+          models: [],
+          legacy: true,
+          deploymentKey: !!replica.bearer_token_env,
+        }
+        legacy.set(replica.url, entry)
+      }
+      entry.models = [
+        ...new Set([...entry.models, model.upstream_model || name]),
+      ]
+      entry.backend.groups = [
+        ...new Set([
+          ...(entry.backend.groups ?? []),
+          ...Object.entries(document.groups)
+            .filter(
+              ([, group]) =>
+                group.models.includes('*') || group.models.includes(name),
+            )
+            .map(([name]) => name),
+        ]),
+      ]
+      entry.deploymentKey ||= !!replica.bearer_token_env
+    }
+  return [...result, ...legacy.values()]
 }
 
-export function Backends({ document, secrets, encryption, onChange }: Props) {
-  const [editing, setEditing] = useState('')
+export function BackendWorkspace() {
+  const { query, document, health, saving, save } = useBackendWorkspace()
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState<Entry | 'new' | null>(null)
+  const [removing, setRemoving] = useState<Entry | null>(null)
   const [notice, setNotice] = useState('')
-  const backends = document.backends ?? {}
+  const [error, setError] = useState('')
+  const pending = !!query.data?.settings.draft
+  const backends = document ? entries(document) : []
+  const filtered = backends.filter(({ id, backend, models }) =>
+    [id, backend.name, backend.url, ...models]
+      .join(' ')
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  )
+  async function remove() {
+    if (!document || !removing) return
+    setError('')
+    try {
+      const base = structuredClone(document)
+      if (removing.legacy)
+        for (const model of Object.values(base.models))
+          model.pool = model.pool.map((replica) =>
+            !replica.backend && replica.url === removing.backend.url
+              ? { ...replica, backend: removing.id }
+              : replica,
+          )
+      const next = removeBackendModels(base, removing.id)
+      delete next.backends![removing.id]
+      await save(next, {}, query.data?.settings.version)
+      setNotice('Backend removed.')
+      setRemoving(null)
+    } catch (error) {
+      setError((error as Error).message)
+    }
+  }
   return (
-    <section aria-label="Backends" className="grid gap-4 rounded-md border p-4">
-      <h4 className="font-medium">1. Connect a backend</h4>
-      <p className="subtitle">
-        Add your cluster host first, then choose its models to create routes.
-        Changes are saved with the routing draft.
-      </p>
-      {Object.entries(backends).map(([id, backend]) => {
-        const used = Object.values(document.models).some((model) =>
-          model.pool.some((replica) => replica.backend === id),
-        )
-        return (
-          <div key={id} className="flex flex-wrap items-center gap-2 text-sm">
-            <strong>{id}</strong>
-            <code className="break-all">{backend.url}</code>
-            <span className="subtitle">
-              {secrets[id]
-                ? 'New key pending save'
-                : backend.api_key.stored
-                  ? 'API key configured'
-                  : 'No API key'}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setEditing(id)}
-            >
-              Edit / discover models
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={used}
-              title={
-                used
-                  ? 'Remove its routes or select another backend first'
-                  : undefined
-              }
-              aria-label={`Remove backend ${id}`}
-              onClick={() => {
-                const next = { ...backends }
-                delete next[id]
-                const keys = { ...secrets }
-                delete keys[id]
-                onChange({ ...document, backends: next }, keys)
-                if (editing === id) setEditing('')
-              }}
-            >
-              <Trash2 />
-            </Button>
-          </div>
-        )
-      })}
-      {editing && (
-        <Button type="button" variant="outline" onClick={() => setEditing('')}>
-          Connect another backend
+    <section aria-label="Backend management" className="backend-workspace">
+      <div className="backend-heading">
+        <div>
+          <h2>Backends</h2>
+          <p className="subtitle">
+            Connect your cluster, choose its models, and control who can use it.
+          </p>
+        </div>
+        <Button
+          onClick={() => setEditing('new')}
+          disabled={!document || pending || saving}
+        >
+          <Plus size={16} /> Add backend
         </Button>
+      </div>
+      {(query.error || error) && (
+        <div role="alert" className="error">
+          {error || query.error?.message}
+        </div>
       )}
-      <BackendForm
-        key={editing}
-        {...{ document, secrets, encryption, onChange }}
-        editing={editing}
-        onAdded={(id, message) => {
-          setEditing(id)
-          setNotice(message)
-        }}
-      />
       {notice && (
-        <p role="status" className="subtitle">
+        <p role="status" className="notice">
           {notice}
         </p>
       )}
+      {pending && (
+        <p className="notice">
+          Advanced routing has pending changes.{' '}
+          <Link to="/admin/advanced">Review or discard them</Link> before
+          editing backends.
+        </p>
+      )}
+      <div className="backend-toolbar">
+        <div className="backend-search">
+          <Search size={16} />
+          <Input
+            aria-label="Search backends"
+            placeholder="Search by name, host, or model…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+        <span className="subtitle">
+          {backends.length} backend{backends.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      {!document && !query.error && <p role="status">Loading backends…</p>}
+      {document && filtered.length === 0 && (
+        <div className="backend-empty">
+          <Server size={36} />
+          <h2>
+            {backends.length
+              ? 'No matching backends'
+              : 'Connect your first backend'}
+          </h2>
+          <p>
+            Enter an IP address or service name. HTTP, HTTPS, and optional API
+            keys are supported.
+          </p>
+          {!backends.length && (
+            <Button onClick={() => setEditing('new')} disabled={pending}>
+              <Plus size={16} /> Add backend
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="backend-grid">
+        {filtered.map((entry) => {
+          const states =
+            health.data?.models
+              .flatMap((model) => model.replicas)
+              .filter((replica) =>
+                entry.legacy
+                  ? !replica.backend && replica.url === entry.backend.url
+                  : replica.backend === entry.id,
+              ) ?? []
+          const status = !states.length
+            ? 'Not serving models'
+            : states.every((replica) => replica.healthy)
+              ? 'Healthy'
+              : states.some((replica) => replica.healthy)
+                ? 'Degraded'
+                : 'Unavailable'
+          const preset = entry.backend.preset
+            ? document?.backend_presets?.[entry.backend.preset]
+            : undefined
+          return (
+            <article
+              key={entry.id}
+              className="backend-card"
+              aria-label={entry.backend.name || entry.id}
+            >
+              <div className="backend-card-head">
+                <span className="backend-icon">
+                  <Server size={22} />
+                </span>
+                <span
+                  className={
+                    'backend-status ' + (status === 'Healthy' ? 'healthy' : '')
+                  }
+                >
+                  <span />
+                  {status}
+                </span>
+              </div>
+              <h2>{entry.backend.name || entry.id}</h2>
+              <code className="backend-host">{entry.backend.url}</code>
+              <div className="backend-tags">
+                <span>
+                  {entry.backend.provider ||
+                    (entry.legacy ? 'Existing connection' : 'Custom endpoint')}
+                </span>
+                <span>
+                  <Globe size={12} />
+                  {entry.backend.url.startsWith('https:') ? 'HTTPS' : 'HTTP'}
+                </span>
+                <span>
+                  <KeyRound size={12} />
+                  {entry.backend.api_key.stored || entry.deploymentKey
+                    ? 'API key'
+                    : 'No key'}
+                </span>
+              </div>
+              <dl className="backend-details">
+                <div>
+                  <dt>Models</dt>
+                  <dd>
+                    {entry.models.length
+                      ? entry.models.slice(0, 3).join(', ') +
+                        (entry.models.length > 3
+                          ? ' +' + (entry.models.length - 3)
+                          : '')
+                      : 'None selected'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>
+                    <Users size={14} /> Access
+                  </dt>
+                  <dd>
+                    {entry.backend.groups == null
+                      ? 'Existing model permissions'
+                      : entry.backend.groups.length
+                        ? entry.backend.groups.join(', ')
+                        : 'Administrators only'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>
+                    <InfinityIcon size={14} /> Limits
+                  </dt>
+                  <dd>{preset?.name || 'Existing route limits'}</dd>
+                </div>
+              </dl>
+              <div className="backend-card-actions">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pending || saving}
+                  onClick={() => setEditing(entry)}
+                >
+                  <Pencil size={14} />
+                  {entry.legacy ? 'Manage backend' : 'Edit backend'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={'Remove ' + (entry.backend.name || entry.id)}
+                  disabled={pending || saving}
+                  onClick={() => {
+                    setError('')
+                    setRemoving(entry)
+                  }}
+                >
+                  <Trash2 size={15} />
+                </Button>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+      {editing && document && query.data && (
+        <BackendEditor
+          key={editing === 'new' ? 'new' : editing.id}
+          entry={editing === 'new' ? undefined : editing}
+          document={document}
+          version={query.data.settings.version}
+          encryption={query.data.encryption_key_configured}
+          saving={saving}
+          save={save}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null)
+            setNotice('Backend saved and active.')
+          }}
+        />
+      )}
+      <AlertDialog
+        open={!!removing}
+        onOpenChange={(open) => {
+          if (!open && !saving) setRemoving(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {removing?.backend.name || removing?.id}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes this backend from its routes. Routes without another
+              backend, their aliases, and their group grants will also be
+              removed. Existing streams can finish.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
+            <Button variant="destructive" disabled={saving} onClick={remove}>
+              {saving ? 'Removing…' : 'Remove backend'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }
 
-function BackendForm({
+type EditorProps = {
+  entry?: Entry
+  document: RoutingDocument
+  version: number
+  encryption: boolean
+  saving: boolean
+  save: (
+    document: RoutingDocument,
+    secrets: Record<string, string>,
+    expected: number,
+  ) => Promise<void>
+  onClose: () => void
+  onSaved: () => void
+}
+
+function BackendEditor({
+  entry,
   document,
-  secrets,
+  version,
   encryption,
-  onChange,
-  editing,
-  onAdded,
-}: Props & {
-  editing: string
-  onAdded: (id: string, message: string) => void
-}) {
-  const original = document.backends?.[editing]
-  const [id, setID] = useState(editing)
-  const [url, setURL] = useState(original?.url ?? '')
-  const [key, setKey] = useState(secrets[editing] ?? '')
-  const [removeKey, setRemoveKey] = useState(false)
-  const [privateNetwork, setPrivateNetwork] = useState(
-    original?.private_network ?? true,
+  saving,
+  save,
+  onClose,
+  onSaved,
+}: EditorProps) {
+  const [expected] = useState(version)
+  const [id] = useState(
+    entry?.id ?? 'backend-' + crypto.randomUUID().slice(0, 8),
   )
-  const [healthPath, setHealthPath] = useState(original?.health_path ?? '')
-  const [refresh, setRefresh] = useState(0)
-  const [catalog, setCatalog] = useState<{
-    source: string
-    result: Catalog
-  } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [selected, setSelected] = useState<string[]>([])
+  const [name, setName] = useState(entry?.backend.name ?? '')
+  const [host, setHost] = useState(entry?.backend.url ?? '')
+  const [privateNetwork, setPrivateNetwork] = useState(
+    entry?.backend.private_network ?? true,
+  )
+  const [useKey, setUseKey] = useState(
+    !!(entry?.backend.api_key.stored || entry?.deploymentKey),
+  )
+  const [key, setKey] = useState('')
+  const [groups, setGroups] = useState(
+    entry?.backend.groups ??
+      (entry
+        ? Object.entries(document.groups)
+            .filter(
+              ([, group]) =>
+                group.models.includes('*') ||
+                Object.entries(document.models).some(
+                  ([name, model]) =>
+                    group.models.includes(name) &&
+                    model.pool.some((replica) => replica.backend === entry.id),
+                ),
+            )
+            .map(([name]) => name)
+        : []),
+  )
+  const [preset, setPreset] = useState(
+    entry ? entry.backend.preset || '' : 'unlimited',
+  )
+  const [models, setModels] = useState(entry?.models ?? [])
   const [manual, setManual] = useState('')
-  const [groups, setGroups] = useState<string[]>([])
+  const [healthPath, setHealthPath] = useState(entry?.backend.health_path || '')
   const [anthropic, setAnthropic] = useState(false)
-  let changedHost = !!original
+  const [detected, setDetected] = useState<{
+    source: string
+    catalog: Catalog
+  } | null>(null)
+  const [detecting, setDetecting] = useState<string | null>(null)
+  const autoSelected = useRef('')
+  const lastOrigin = useRef(entry?.backend.url ?? '')
+  const [refresh, setRefresh] = useState(0)
+  const [error, setError] = useState('')
+  const [dirty, setDirty] = useState(false)
+  const [discard, setDiscard] = useState(false)
+  let origin = ''
   try {
-    changedHost = !!original && backendOrigin(url) !== original.url
+    if (host.trim()) origin = backendOrigin(host)
   } catch {
-    /* Incomplete URLs never inherit a stored key. */
+    /* allow partial input */
   }
-  const stored = !changedHost && !removeKey ? (original?.api_key ?? {}) : {}
+  const stored =
+    useKey && entry?.backend.url === origin
+      ? entry.backend.api_key.stored
+      : undefined
   const source = JSON.stringify({
-    id: id || 'new-backend',
+    id,
     backend: {
-      url,
-      api_key: stored,
+      url: host,
+      api_key: stored ? { stored } : {},
       private_network: privateNetwork,
       health_path: '/v1/models',
     },
-    ...(key || removeKey ? { api_key: key } : {}),
+    ...(useKey && key ? { api_key: key } : {}),
   })
+  const catalog = detected?.source === source ? detected.catalog : null
+  const busy = detecting === source
   useEffect(() => {
+    if (!origin || (useKey && !key && !stored)) return
     const controller = new AbortController()
     const timer = setTimeout(async () => {
-      setCatalog(null)
-      setSelected([])
-      setError('')
-      if (!url.trim()) {
-        setBusy(false)
-        return
-      }
-      setBusy(true)
+      setDetecting(source)
       try {
         const result = await api<Catalog>(
           'admin/backends/detect',
@@ -192,316 +502,414 @@ function BackendForm({
           JSON.parse(source),
           controller.signal,
         )
-        if (!controller.signal.aborted) {
-          setCatalog({ source, result })
-          if (!result.error && result.models.length === 1)
-            setSelected(result.models)
+        if (controller.signal.aborted) return
+        setDetected({ source, catalog: result })
+        if (!entry && !result.error && autoSelected.current !== origin) {
+          setModels(result.models)
+          autoSelected.current = origin
         }
       } catch (error) {
         if (!controller.signal.aborted)
-          setError(error instanceof Error ? error.message : 'Detection failed.')
+          setDetected({
+            source,
+            catalog: {
+              url: origin,
+              models: [],
+              error: (error as Error).message,
+            },
+          })
       } finally {
-        if (!controller.signal.aborted) setBusy(false)
+        if (!controller.signal.aborted) setDetecting(null)
       }
     }, 500)
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [source, refresh, url])
-  // A response belongs to its exact request, so stale catalogs cannot create routes.
-  const current = catalog?.source === source ? catalog.result : null
-  const validID =
-    /^[a-zA-Z0-9_-]{1,64}$/.test(id) && (!!editing || !document.backends?.[id])
-  function add(withRoutes: boolean) {
-    setError('')
-    let origin: string
-    try {
-      origin = backendOrigin(url)
-    } catch {
-      setError('Enter the host URL or its /v1 API base.')
-      return
+  }, [source, refresh, origin, useKey, key, stored, entry])
+  useEffect(() => {
+    const prevent = (event: BeforeUnloadEvent) => {
+      if (dirty) event.preventDefault()
     }
-    const backend: Backend = {
-      url: origin,
-      api_key: key || removeKey ? {} : stored,
-      private_network: privateNetwork,
-      health_path: healthPath || current?.health_path || '/v1/models',
+    window.addEventListener('beforeunload', prevent)
+    return () => window.removeEventListener('beforeunload', prevent)
+  }, [dirty])
+  function close() {
+    if (!saving) {
+      if (dirty) setDiscard(true)
+      else onClose()
     }
-    const next = {
-      ...document,
-      backends: { ...document.backends, [id]: backend },
-      models: { ...document.models },
-      groups: { ...document.groups },
-    }
-    const keys = { ...secrets }
-    delete keys[id]
-    if (key) keys[id] = key
-    const names = withRoutes
-      ? [
-          ...new Set([
-            ...(current ? selected : []),
-            ...(manual.trim() ? [manual.trim()] : []),
-          ]),
-        ]
-      : []
-    if (names.some((name) => name.length > 128 || name === '*')) {
-      setError(
-        'Route names must be at most 128 characters and cannot be *. Add a shorter logical name in the route editor.',
-      )
-      return
-    }
-    if (names.some((name) => name in next.models)) {
-      setError(
-        'A selected route already exists. Add this backend as a replica in its route editor.',
-      )
-      return
-    }
-    for (const name of names) {
-      const model: EndpointModel = {
-        upstream_model: name,
-        protocols: anthropic ? ['anthropic'] : ['openai'],
-        timeout_s: 120,
-        idle_timeout_s: 30,
-        queue_timeout_s: 0,
-        session_affinity: false,
-        priority: null,
-        pool: [
-          {
-            backend: id,
-            url: '',
-            health_path: '',
-            bearer_token_env: '',
-            weight: 1,
-            max_inflight: 8,
-          },
-        ],
-      }
-      next.models[name] = model
-      for (const group of groups) {
-        const policy = next.groups[group]
-        next.groups[group] = {
-          ...policy,
-          models: [...new Set([...policy.models, name])],
-        }
-      }
-    }
-    onChange(next, keys)
-    onAdded(
-      id,
-      names.length
-        ? `Added ${names.length} route(s) to the editor. Save and activate the routing draft to publish them.`
-        : 'Backend added to the editor. Choose models now or save the routing draft.',
-    )
   }
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setError('')
+    try {
+      if (!origin) throw new Error('Enter a valid IP address or service host.')
+      if (useKey && !key && !stored)
+        throw new Error(
+          'Enter an API key for this host, or turn off Use an API key.',
+        )
+      const next = addBackendModels(
+        document,
+        id,
+        models,
+        groups,
+        entry?.legacy ? entry.backend.url : undefined,
+      )
+      next.backends![id] = {
+        name: name.trim() || new URL(origin).host,
+        provider: catalog?.provider || entry?.backend.provider,
+        url: origin,
+        api_key: stored ? { stored } : {},
+        private_network: privateNetwork,
+        health_path: healthPath.trim() || catalog?.health_path || '/v1/models',
+        groups,
+        preset: preset || undefined,
+      }
+      if (preset)
+        for (const model of Object.values(next.models))
+          model.pool = model.pool.map((replica) =>
+            replica.backend === id
+              ? { ...replica, max_inflight: 2147483647 }
+              : replica,
+          )
+      if (anthropic)
+        for (const model of Object.values(next.models))
+          if (
+            model.pool.some((replica) => replica.backend === id) &&
+            !model.protocols.includes('anthropic')
+          )
+            model.protocols.push('anthropic')
+      await save(next, useKey && key ? { [id]: key } : {}, expected)
+      onSaved()
+    } catch (error) {
+      setError((error as Error).message)
+    }
+  }
+  const available = [...new Set([...(catalog?.models ?? []), ...models])]
   return (
-    <div className="grid gap-3" aria-label="Connect backend">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="grid gap-1 text-sm">
-          Backend name
-          <Input
-            aria-label="Backend name"
-            value={id}
-            disabled={!!editing}
-            maxLength={64}
-            placeholder="gpu-cluster"
-            onChange={(event) => setID(event.target.value)}
-          />
-        </label>
-        <label className="grid gap-1 text-sm">
-          Host URL
-          <Input
-            aria-label="Backend host URL"
-            value={url}
-            maxLength={2048}
-            placeholder="http://gpu-node.cluster:8000"
-            onChange={(event) => setURL(event.target.value)}
-          />
-        </label>
-      </div>
-      <div
-        className="grid gap-2 rounded-md bg-muted/30 p-3"
-        aria-label="Backend detection"
+    <>
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) close()
+        }}
       >
-        <div className="flex flex-wrap items-center gap-3">
-          <strong className="text-sm">
-            {busy
-              ? 'Detecting API and models…'
-              : (current?.provider ?? 'Automatic API and model detection')}
-          </strong>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy || !url.trim()}
-            onClick={() => setRefresh((value) => value + 1)}
+        <DialogContent className="backend-dialog sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{entry ? 'Edit backend' : 'Add backend'}</DialogTitle>
+            <DialogDescription>
+              Connect a host, select models, and assign access. New backends
+              have unlimited shared rates by default.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={submit}
+            onChange={() => setDirty(true)}
+            className="backend-form"
           >
-            Detect again
-          </Button>
-        </div>
-        <p className="subtitle" role="status">
-          {error ||
-            current?.error ||
-            (current
-              ? `${current.models.length} model(s) detected at ${current.url}${current.health_path ?? ''}`
-              : 'Enter a host URL. Detection runs automatically from the router.')}
-        </p>
-        <p className="subtitle">
-          Shared OpenAI APIs do not always identify their server. vLLM and
-          SGLang are identified when advertised; Ollama is detected through its
-          native catalog.
-        </p>
-      </div>
-      <label className="grid gap-1 text-sm">
-        API key (optional)
-        <Input
-          aria-label="Backend API key"
-          type="password"
-          autoComplete="new-password"
-          maxLength={4096}
-          value={key}
-          disabled={!encryption}
-          placeholder={
-            stored.stored
-              ? 'Stored key — enter a replacement'
-              : 'Leave empty for an unauthenticated backend'
-          }
-          onChange={(event) => setKey(event.target.value)}
-        />
-      </label>
-      {!encryption && (
-        <p className="subtitle">
-          To save API keys, configure OLR_SETTINGS_ENCRYPTION_KEY on the router.
-          Backends without a key can be added now.
-        </p>
-      )}
-      {original?.api_key.stored && (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={removeKey}
-            onChange={(event) => setRemoveKey(event.target.checked)}
-          />
-          Remove saved API key
-        </label>
-      )}
-      {changedHost && original?.api_key.stored && (
-        <p className="subtitle">
-          Changing the host clears its saved key. Enter a new key for this host
-          if required.
-        </p>
-      )}
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={privateNetwork}
-          onChange={(event) => setPrivateNetwork(event.target.checked)}
-        />
-        Private cluster endpoint (allows HTTP on private networks)
-      </label>
-      <label className="grid gap-1 text-sm">
-        Health check path
-        <Input
-          aria-label="Backend health path"
-          value={healthPath}
-          placeholder={current?.health_path ?? '/v1/models'}
-          maxLength={256}
-          onChange={(event) => setHealthPath(event.target.value)}
-        />
-      </label>
-      <div>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!validID || !url.trim() || (!!key && !encryption)}
-          onClick={() => add(false)}
-        >
-          {editing ? 'Update backend in draft' : 'Add backend to draft'}
-        </Button>
-      </div>
-      <h4 className="font-medium">2. Choose models and create routes</h4>
-      {!!current?.models.length && (
-        <div
-          className="grid gap-2 max-h-64 overflow-auto"
-          aria-label="Detected backend models"
-        >
-          {current.models.map((name) => (
-            <label
-              key={name}
-              className="flex items-center gap-2 text-sm break-all"
-            >
-              <input
-                type="checkbox"
-                aria-label={`Route ${name}`}
-                checked={selected.includes(name)}
-                onChange={(event) =>
-                  setSelected(
-                    event.target.checked
-                      ? [...selected, name]
-                      : selected.filter((model) => model !== name),
-                  )
-                }
+            <label className="field">
+              Backend name
+              <Input
+                aria-label="Backend name"
+                placeholder="e.g. Physics GPU cluster"
+                maxLength={128}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
               />
-              {name}
             </label>
-          ))}
-        </div>
-      )}
-      <label className="grid gap-1 text-sm">
-        Manual upstream model (if detection is unavailable)
-        <Input
-          aria-label="Manual backend model"
-          value={manual}
-          maxLength={128}
-          onChange={(event) => setManual(event.target.value)}
-        />
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={anthropic}
-          onChange={(event) => setAnthropic(event.target.checked)}
-        />
-        This endpoint serves the Anthropic Messages API
-      </label>
-      <fieldset className="grid gap-2">
-        <legend className="text-sm">Grant these routes to groups</legend>
-        {Object.keys(document.groups)
-          .sort()
-          .map((name) => (
-            <label key={name} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={groups.includes(name)}
-                onChange={(event) =>
-                  setGroups(
-                    event.target.checked
-                      ? [...groups, name]
-                      : groups.filter((group) => group !== name),
-                  )
+            <div className="backend-connection">
+              <label className="field">
+                IP address or service URL
+                <Input
+                  aria-label="IP address or service URL"
+                  required
+                  placeholder="10.0.0.12:8000 or llm.cluster:8000"
+                  value={host}
+                  onChange={(event) => {
+                    const raw = event.target.value
+                    setHost(raw)
+                    try {
+                      const nextOrigin = backendOrigin(raw)
+                      if (nextOrigin !== lastOrigin.current) {
+                        setModels([])
+                        autoSelected.current = ''
+                        lastOrigin.current = nextOrigin
+                      }
+                    } catch {
+                      /* preserve selections while an API path is partially typed */
+                    }
+                  }}
+                />
+                <span className="subtitle">
+                  Bare hosts use HTTP. You can also paste an HTTPS or /v1 URL.
+                </span>
+              </label>
+              <div
+                className="backend-detection"
+                aria-label="Backend detection"
+                aria-live="polite"
+              >
+                <div>
+                  <Server size={16} />
+                  <strong>
+                    {busy
+                      ? 'Detecting…'
+                      : catalog?.provider || 'Automatic detection'}
+                  </strong>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Detect models again"
+                    disabled={!origin || busy}
+                    onClick={() => setRefresh(refresh + 1)}
+                  >
+                    <RefreshCw size={14} />
+                  </Button>
+                </div>
+                {catalog?.error ? (
+                  <p>{catalog.error} You can still add model IDs manually.</p>
+                ) : catalog ? (
+                  <p>
+                    <CheckCircle2 size={14} /> {catalog.models.length} model
+                    {catalog.models.length === 1 ? '' : 's'} discovered
+                  </p>
+                ) : (
+                  <p>
+                    Enter a host to detect vLLM, Ollama, DeepSeek, or a
+                    compatible API.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="backend-options">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={privateNetwork}
+                  onChange={(event) => setPrivateNetwork(event.target.checked)}
+                />{' '}
+                Private network · allow internal HTTP
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={useKey}
+                  onChange={(event) => {
+                    setUseKey(event.target.checked)
+                    setKey('')
+                  }}
+                />{' '}
+                Use an API key
+              </label>
+            </div>
+            {useKey && (
+              <label className="field">
+                API key
+                <Input
+                  aria-label="Backend API key"
+                  type="password"
+                  autoComplete="new-password"
+                  disabled={!encryption}
+                  placeholder={
+                    stored ? 'Configured — leave blank to keep' : 'Enter key'
+                  }
+                  value={key}
+                  onChange={(event) => setKey(event.target.value)}
+                />
+                <span className="subtitle">
+                  {!encryption
+                    ? 'The operator must configure OLR_SETTINGS_ENCRYPTION_KEY before saving API keys.'
+                    : stored
+                      ? 'Stored securely. Enter a new key to rotate it.'
+                      : entry?.deploymentKey
+                        ? 'Re-enter the deployment key to manage this backend here.'
+                        : 'Keys are encrypted and bound to this backend and host.'}
+                </span>
+              </label>
+            )}
+            <fieldset className="backend-fieldset">
+              <legend>
+                Models <span>{models.length} selected</span>
+              </legend>
+              {available.length > 0 && (
+                <div className="backend-models">
+                  {available.map((model) => (
+                    <label key={model}>
+                      <input
+                        type="checkbox"
+                        checked={models.includes(model)}
+                        onChange={(event) =>
+                          setModels(
+                            event.target.checked
+                              ? [...models, model]
+                              : models.filter((value) => value !== model),
+                          )
+                        }
+                      />
+                      <span>{model}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="backend-manual">
+                <Input
+                  aria-label="Manual model ID"
+                  placeholder="Add a model ID manually"
+                  maxLength={128}
+                  value={manual}
+                  onChange={(event) => setManual(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!manual.trim()}
+                  onClick={() => {
+                    setModels([...new Set([...models, manual.trim()])])
+                    setManual('')
+                    setDirty(true)
+                  }}
+                >
+                  Add model
+                </Button>
+              </div>
+              <p className="subtitle">
+                You can save the connection before selecting models. Deselecting
+                a model removes this backend from its route.
+              </p>
+            </fieldset>
+            <fieldset className="backend-fieldset">
+              <legend>Who can use this backend?</legend>
+              <div className="backend-groups">
+                {Object.entries(document.groups).map(([name, group]) => (
+                  <label key={name}>
+                    <input
+                      type="checkbox"
+                      aria-label={'Backend access ' + name}
+                      checked={group.admin || groups.includes(name)}
+                      disabled={group.admin}
+                      onChange={(event) =>
+                        setGroups(
+                          event.target.checked
+                            ? [...groups, name]
+                            : groups.filter((value) => value !== name),
+                        )
+                      }
+                    />
+                    <span>
+                      {name}
+                      {group.admin && <small>Administrator</small>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="subtitle">
+                Administrators always have access. With no groups selected, only
+                administrators can use this backend.
+              </p>
+            </fieldset>
+            <label className="field">
+              Shared backend limits
+              <select
+                aria-label="Backend preset"
+                value={preset}
+                onChange={(event) => setPreset(event.target.value)}
+              >
+                {entry && <option value="">Keep existing route limits</option>}
+                {Object.entries(document.backend_presets ?? {}).map(
+                  ([id, preset]) => (
+                    <option key={id} value={id}>
+                      {preset.name}
+                    </option>
+                  ),
+                )}
+              </select>
+              <span className="subtitle">
+                One budget across all users and router instances. Edit presets
+                in{' '}
+                <Link
+                  to="/admin/presets"
+                  onClick={(event) => {
+                    if (dirty) {
+                      event.preventDefault()
+                      setError(
+                        'Save or discard this backend before leaving to edit presets.',
+                      )
+                    }
+                  }}
+                >
+                  Backend presets
+                </Link>
+                .
+              </span>
+            </label>
+            <details>
+              <summary>Advanced connection options</summary>
+              <div className="grid gap-3 pt-3">
+                <label className="field">
+                  Health path
+                  <Input
+                    aria-label="Backend health path"
+                    placeholder={catalog?.health_path || '/v1/models'}
+                    value={healthPath}
+                    onChange={(event) => setHealthPath(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={anthropic}
+                    onChange={(event) => setAnthropic(event.target.checked)}
+                  />{' '}
+                  Also expose the Anthropic protocol
+                </label>
+              </div>
+            </details>
+            {error && (
+              <div className="error whitespace-pre-line" role="alert">
+                {error}
+              </div>
+            )}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={close}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  saving ||
+                  !origin ||
+                  (useKey && !stored && (!encryption || !key))
                 }
-              />
-              {name}
-            </label>
-          ))}
-      </fieldset>
-      <p className="subtitle">
-        Groups with a wildcard grant already have access to new routes.
-      </p>
-      <div>
-        <Button
-          type="button"
-          disabled={
-            !validID ||
-            !url.trim() ||
-            (!(current && selected.length) && !manual.trim()) ||
-            (!!key && !encryption)
-          }
-          onClick={() => add(true)}
-        >
-          <Plus /> Add selected models as routes
-        </Button>
-      </div>
-    </div>
+              >
+                {saving ? 'Saving…' : 'Save backend'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={discard} onOpenChange={setDiscard}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard backend changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unsaved changes will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction onClick={onClose}>
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

@@ -3,7 +3,7 @@
 For a fresh installation, follow [Docker Compose or Kubernetes/Helm setup](INSTALL.md)
 before continuing with administration below.
 
-This guide describes local administration and the endpoint editor (13 November 2026). Start here
+This guide describes local administration and the backend workspace (14 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
 The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
@@ -23,8 +23,8 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Task | Current interface | When it applies |
 |---|---|---|
 | Add/edit/remove replicas for an existing model; change upstream model, protocols, timeouts, affinity, credential reference, weight or capacity | **Admin → Endpoint configuration** or portal API | Live after validation and health checks; saved in PostgreSQL |
-| Add/remove logical model names or aliases | **Admin → Routing**, settings API/CLI, or private YAML | Live on activation; file changes need restart |
-| Grant a group access to models; set group default limits | **Admin → Routing** group policies, settings API/CLI, or private YAML | Next request after activation; file changes need restart |
+| Add/remove logical model names or aliases | **Admin → Advanced routing**, settings API/CLI, or private YAML | Live on activation; file changes need restart |
+| Grant a group access to models; set group default limits | **Admin → Advanced routing** group policies, settings API/CLI, or private YAML | Next request after activation; file changes need restart |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
 | View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
 | Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next request, for API keys, sessions and OIDC access tokens alike |
@@ -32,9 +32,9 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
 | Create a password-enabled local user; assign existing groups; reset an ordinary local password | Portal **Admin** or portal API | No restart; temporary passwords require replacement |
 | Issue/revoke a user's API key as an operator | CLI create/revoke; **Admin** metadata listing/revoke | No restart; revoked keys stay revoked |
-| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database): **Admin → Authentication** or `olr admin settings` | At once on the router where Admin activates it; other routers on restart or **Apply** |
-| Test a Keycloak connection and sign-in before using it | **Admin → Authentication** connection checks and test sign-in | Immediately; nothing changes until activation |
-| Preview effective access with stored overrides; inspect affected users | **Admin → Routing** | Before activation; preview changes no state |
+| Change Keycloak issuer, client IDs, claim names or secrets | YAML/environment, or [managed settings](#manage-authentication-settings-in-the-database): **Admin → Keycloak** or `olr admin settings` | At once on the router where Admin activates it; other routers on restart or **Apply** |
+| Test a Keycloak connection and sign-in before using it | **Admin → Keycloak** connection checks and test sign-in | Immediately; nothing changes until activation |
+| Preview effective access with stored overrides; inspect affected users | **Admin → Advanced routing** | Before activation; preview changes no state |
 | Search account, credential and configuration history | **Admin → History**, API or `olr admin history` | Append-only events; no usage-retention purge |
 | Log in with a local administrator password, including without Keycloak | Portal sign-in page or JSON API | Direct local route: `/portal/login/local` |
 | Bootstrap a protected local administrator; rotate its password | CLI, optional startup secret; password change also through the portal API | No restart after CLI bootstrap |
@@ -182,7 +182,7 @@ hashes; protect them as secrets.
 The SSO connection (issuer, back-channel URL, portal client ID and secret, API
 audience, claim names, required claim, sync client ID/secret and interval) can
 move from YAML/environment into PostgreSQL revisions with `olr admin settings`.
-Use **Admin → Authentication** in the portal (activation applies at once) or
+Use **Admin → Keycloak** in the portal (activation applies at once) or
 the CLI below (routers apply its activations when they restart or on **Apply**).
 `OLR_DATABASE_URL`, bootstrap and encryption keys, the listener, `PORTAL_BASE_URL`,
 cookie settings, models and groups are never managed here.
@@ -264,7 +264,7 @@ guarantee, as for the protected administrator. A searchable history view is
 
 ### Configure and test Keycloak in Admin
 
-**Admin → Authentication** shows the configuration authority (file or database
+**Admin → Keycloak** shows the configuration authority (file or database
 revision), the revision this router is running, whether Keycloak is reachable,
 every effective value with its source, and the exact URLs to register on the
 Keycloak portal client: **Valid redirect URI** `<origin>/portal/callback`,
@@ -830,16 +830,29 @@ adapters remain planned work.
 
 ### Manage models, endpoints and aliases as routing revisions
 
-In **Admin → Routing**, import the current routing once, then use **Connect a
-backend** before configuring routes. Enter a backend name, host URL (a pasted
-`/v1` base is also accepted) and optional API key. Detection runs automatically
-beside the URL, from the router's network. It reads `/v1/models`, with Ollama's
-`/api/tags` fallback, and shows the available models. Select models and groups,
-then **Add selected models as routes**. You can also add the backend alone, or
-enter an upstream model manually when its catalog is unavailable. Existing
-routes can select a saved backend in each replica's **Backend** list.
+**Admin** opens **Backends**, with separate sections for **Users & groups**,
+**Backend presets**, optional **Keycloak**, **Advanced routing**, and **History**.
+Use **Users & groups → Manage group policies** to create groups and set per-user
+defaults. Detailed route drafts, activation, and rollback remain in Advanced routing.
 
-Enable **Private cluster endpoint** for RFC1918 or IPv6 ULA hosts behind your
+Choose **Add backend**, enter a friendly name and an IP address or service name
+such as **10.0.0.12:8000** or **llm.cluster:8000**. Bare hosts use HTTP; explicit
+HTTPS URLs and pasted /v1 bases are accepted. Detection runs beside the host
+field, from the router's network. It reads /v1/models with an Ollama /api/tags
+fallback. Select models, access groups, and a shared preset, then **Save backend**.
+You can save a connection without models, or enter model IDs manually.
+
+Saving imports file-managed routing automatically, validates the complete document,
+and probes changed routes before activation. A failed activation preserves the
+working configuration and leaves a draft in Advanced routing for review. Resolve
+an existing advanced draft before editing backends or presets. Concurrent edits
+are detected. Existing file connections appear here and can be adopted with
+**Manage backend**. Re-enter any deployment key when adopting into encrypted storage.
+**Edit backend** supports renaming, changing the host/key, models, groups, and preset.
+**Remove backend** confirms removal of its routes, aliases, and grants where no other
+replica remains. Existing streams can finish.
+
+Enable **Private network · allow internal HTTP** for RFC1918 or IPv6 ULA hosts behind your
 firewall. This explicitly permits that host's private addresses and HTTP,
 including when `security.require_tls` is enabled for the public router.
 Loopback, link-local and metadata addresses remain refused unless the origin
@@ -851,7 +864,7 @@ File-managed replicas can opt in with `private_network: true`.
 API keys require `OLR_SETTINGS_ENCRYPTION_KEY` (base64-encoded 32 bytes). They
 are encrypted with the existing managed-settings secret store; routing history
 contains references only. Keep this encryption key stable and back it up
-separately from PostgreSQL. A stored backend key is bound to its backend name
+separately from PostgreSQL. A stored backend key is bound to its backend identity
 and URL; changing the host requires entering a new key or using no key. Keys
 stay in memory while editing and are never written to browser storage.
 
@@ -860,17 +873,42 @@ its native API, and DeepSeek's public host. Other shared APIs are labelled
 **OpenAI-compatible** because they cannot reliably reveal their server software.
 This does not translate protocols: select the Anthropic option only for an
 endpoint that actually serves the Messages API. The detected catalog path is
-the default health check; it can be overridden. **Save routing draft**, then
-**Activate routing draft** to publish. Activation checks affected routes first.
+the default health check; it can be overridden in Advanced connection options.
+
+Backend group visibility applies to the model catalogs and inference, including
+aliases, wildcard model grants, mixed pools, affinity, and retries. A caller needs
+a model grant and membership in a selected backend group; administrators can access
+every backend and model. No groups selected means administrators only. Older backends
+without a group list retain existing model permissions until edited.
+
+New backends use **Unlimited**. **Standard** starts at 60 requests and 60,000 tokens
+per minute with 8 concurrent requests; **Small cluster** starts at 20 requests,
+20,000 tokens, and 2 concurrent requests. Create/edit presets in **Backend presets**;
+blank fields mean unlimited. Each backend has its own budget, shared across users,
+model routes, and router processes through PostgreSQL. User/group limits still
+apply in addition. Reassign attached backends before deleting a preset. Existing
+connections retain their route limits until a preset is explicitly chosen; choosing
+a preset removes their old replica capacity cap.
+
+RPM and reported TPM use fixed UTC minute windows. TPM temporarily reserves request
+body bytes plus the declared maximum output tokens, then replaces that estimate with
+reported usage on completion. Without a declared maximum, output cannot be fully
+reserved. This is admission control: streams are not cut off mid-response, and
+upstreams that omit usage cannot provide exact token accounting. Exhaustion returns
+HTTP 429 with Retry-After. Concurrency releases on completion or cancellation;
+crashed-process leases expire. Unlimited backends add no budget database calls.
+Changing a limited preset preserves its recorded usage within the current minute.
+New limits apply to new admissions; existing streams retain their admission policy.
+Calls admitted while unlimited are not retroactively added to a later budget.
 
 The **routing** settings domain holds the complete set of logical models (upstream
 name, native protocols, timeouts, affinity, priority and endpoint pools) and the
 aliases clients may use, as one revision. Like authentication settings it is
 file-managed until imported, then versioned with drafts, activation and rollback
-in **Admin → Routing** (or `/portal/api/admin/settings/routing`, or
+in **Admin → Advanced routing** (or `/portal/api/admin/settings/routing`, or
 `olr admin settings -domain routing`). Group grants and per-user policy defaults are included in the same revision.
 
-**Admin → Routing** shows how a request is routed: the groups that grant each
+**Admin → Advanced routing** shows how a request is routed: the groups that grant each
 model (`*` grants all), its aliases, native protocols, upstream name and each
 endpoint with its credential reference, health and in-flight count. After
 **Import current routing**, edit a draft: add a logical model, set its upstream

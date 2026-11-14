@@ -261,6 +261,27 @@ authorization remains enforced on the server regardless of browser navigation.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
   `max_inflight` and weight.
 
+## Backend management and shared presets
+
+The backend workspace uses the routing draft/activation API, preserving audit events
+and optimistic version checks. Each entry in the routing document's **backends** map
+supports name, detected provider, canonical URL, encrypted api_key reference,
+private_network, health_path, groups, and preset.
+
+A null group list preserves legacy model-only authorization; an empty list allows
+administrators only. Referenced groups and presets must exist. An omitted preset
+preserves existing route limits. The **backend_presets** map contains entries with
+name, rpm, tpm, and max_concurrent. Caps are positive integers or null for unlimited,
+shared per backend across users and router instances. Older documents without this
+map receive built-in presets. The reserved unlimited preset must have no caps.
+
+POST /portal/api/admin/backends/detect accepts an identity, backend connection fields,
+and an optional transient API key. Bare IP/service names use HTTP. Stored documents
+use canonical HTTP(S) origins. Replacement keys are submitted separately in the
+routing draft's secrets map; documents and responses carry encrypted references only.
+The workspace saves a draft and activates it, and refuses to replace an unrelated
+pending draft. See the administrator guide for token reservation and window semantics.
+
 ## Admin endpoint configuration
 
 These routes require a full admin browser session. Mutation requests use the

@@ -217,7 +217,7 @@ func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 		code := f.provider.authorize(t, q, "test-signin-user", []string{"staff", "not-configured-here"}, alter)
 		resp, _ := admin.call(t, "GET", "/portal/callback?"+url.Values{"state": {q.Get("state")}, "code": {code}}.Encode(), "", "")
 		location, _ := resp.Location()
-		if resp.StatusCode != 303 || location == nil || location.Path != "/portal/admin" {
+		if resp.StatusCode != 303 || location == nil || location.Path != "/portal/admin/keycloak" {
 			t.Fatal("test callback", resp.StatusCode, location)
 		}
 		for _, c := range resp.Cookies() {

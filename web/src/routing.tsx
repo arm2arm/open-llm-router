@@ -4,7 +4,6 @@ import { Network, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { GroupPolicies, AccessPreview } from '@/policies'
-import { Backends } from '@/backends'
 import {
   api,
   type CheckResult,
@@ -413,7 +412,6 @@ function DraftEditor({
     copyDocument(base.document as RoutingDocument),
   )
   const [modelName, setModelName] = useState('')
-  const [secrets, setSecrets] = useState<Record<string, string>>({})
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const blockers = (name: string) => {
@@ -439,7 +437,6 @@ function DraftEditor({
       await api('admin/settings/routing/draft', 'PUT', {
         version: view.settings.version,
         document,
-        secrets,
       })
       await onSaved()
     } catch (error) {
@@ -469,15 +466,6 @@ function DraftEditor({
       </p>
       <Failure error={error} />
       <fieldset disabled={pending} className="grid gap-4 min-w-0">
-        <Backends
-          document={document}
-          secrets={secrets}
-          encryption={view.encryption_key_configured}
-          onChange={(next, keys) => {
-            setDocument(next)
-            setSecrets(keys)
-          }}
-        />
         <h4 className="font-medium">Route settings</h4>
         {models.map((name) => (
           <ModelEditor

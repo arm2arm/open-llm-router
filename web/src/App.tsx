@@ -369,7 +369,7 @@ function Workspace({
                 />
                 {me.data.admin && (
                   <Route
-                    path="/admin"
+                    path="/admin/:section?"
                     element={<AdminPage self={me.data.user.id} />}
                   />
                 )}

@@ -684,6 +684,9 @@ test('administrator creates a local user and manages memberships, keys, disablem
     await passwordFields(page, initial, changed)
     await signIn(page, changed)
     await page.getByRole('link', { name: 'Admin', exact: true }).click()
+    await page
+      .getByRole('link', { name: 'Users & groups', exact: true })
+      .click()
     const root = page
       .getByTestId('users-table')
       .getByRole('row')
@@ -942,6 +945,9 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
   await passwordFields(page, initial, changed)
   await signIn(page, changed)
   await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  await page
+    .getByRole('link', { name: 'Advanced routing', exact: true })
+    .click()
   const panel = page.getByRole('region', {
     name: 'Endpoint configuration',
     exact: true,
@@ -1150,6 +1156,7 @@ test('administrator imports, checks and drafts Keycloak connection settings', as
   await passwordFields(page, initial, changed)
   await signIn(page, changed)
   await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  await page.getByRole('link', { name: 'Keycloak', exact: true }).click()
   const panel = page.getByRole('region', {
     name: 'Authentication settings',
     exact: true,
@@ -1239,6 +1246,7 @@ test('administrator applies and rolls back authentication settings without a res
   await passwordFields(page, initial, changed)
   await signIn(page, changed)
   await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  await page.getByRole('link', { name: 'Keycloak', exact: true }).click()
   const panel = page.getByRole('region', {
     name: 'Authentication settings',
     exact: true,
@@ -1363,6 +1371,9 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   await passwordFields(page, initial, changed)
   await signIn(page, changed)
   await page.getByRole('link', { name: 'Admin', exact: true }).click()
+  await page
+    .getByRole('link', { name: 'Advanced routing', exact: true })
+    .click()
   const panel = page.getByRole('region', {
     name: 'Routing settings',
     exact: true,
@@ -1484,7 +1495,7 @@ test('administrator edits group defaults and previews overrides before activatio
       )
     ).status(),
   ).toBe(204)
-  await page.goto(`${base}/portal/admin`)
+  await page.goto(`${base}/portal/admin/advanced`)
   const panel = page.getByRole('region', { name: 'Routing settings' })
   await panel.getByRole('button', { name: 'Import current routing' }).click()
   const form = panel.getByRole('form', { name: 'Edit routing draft' })
@@ -1568,7 +1579,7 @@ test('administration history shows searchable immutable events without credentia
       )
     ).status(),
   ).toBe(204)
-  await page.goto(`${base}/portal/admin`)
+  await page.goto(`${base}/portal/admin/history`)
   const history = page.getByRole('region', { name: 'Administration history' })
   await history.getByLabel('History target', { exact: true }).fill(id)
   await history
@@ -1775,7 +1786,7 @@ test('isolated external Keycloak checks, dual login, issuer switch, outage, rest
   await page.getByLabel('Password', { exact: true }).fill('staff-dev-only')
   await page.getByRole('button', { name: 'Sign In', exact: true }).click()
   await expect(page).toHaveURL(
-    `${base}/portal/admin?authentication_test=passed#authentication`,
+    `${base}/portal/admin/keycloak?authentication_test=passed#authentication`,
   )
   const checked = await call('GET', '')
   expect(checked.settings.draft.checks.test_sign_in.status).toBe('passed')

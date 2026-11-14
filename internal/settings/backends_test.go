@@ -12,7 +12,7 @@ func TestBackendOriginAndCredentialBinding(t *testing.T) {
 	if origin, err := NormalizeBackendURL("https://GPU.EXAMPLE:443/v1"); err != nil || origin != "https://gpu.example" {
 		t.Fatal("default port not canonicalized", origin, err)
 	}
-	for _, raw := range []string{"HTTP://GPU.EXAMPLE:8000/v1/", "http://gpu.example:8000/v1/models", "http://gpu.example:8000"} {
+	for _, raw := range []string{"HTTP://GPU.EXAMPLE:8000/v1/", "http://gpu.example:8000/v1/models", "http://gpu.example:8000", "gpu.example:8000", "gpu.example:8000/v1"} {
 		origin, err := NormalizeBackendURL(raw)
 		if err != nil || origin != "http://gpu.example:8000" {
 			t.Fatalf("normalize %s: %s %v", raw, origin, err)
@@ -32,6 +32,35 @@ func TestBackendOriginAndCredentialBinding(t *testing.T) {
 	backend.APIKey.Env = "DATABASE_PASSWORD"
 	if len((&Routing{Backends: map[string]*Backend{"gpu": backend}}).backendProblems()) == 0 {
 		t.Fatal("arbitrary environment credential accepted")
+	}
+}
+
+func TestBackendGroupsAndPresetValidation(t *testing.T) {
+	file := parse(t, "", nil)
+	var doc Routing
+	doc.baseline(file)
+	doc.Groups = map[string]config.Group{"staff": {Models: []string{"*"}}}
+	doc.Backends = map[string]*Backend{"gpu": {Name: "Research cluster", URL: "http://10.1.2.3:8000", HealthPath: "/health", Groups: []string{"staff"}, Preset: "small"}}
+	if problems := doc.problems(); len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	cfg, err := doc.apply(file, applyInput{})
+	if err != nil || cfg.Backends["gpu"].Rate.RPM == nil || *cfg.Backends["gpu"].Rate.RPM != 20 || len(cfg.Backends["gpu"].Groups) != 1 {
+		t.Fatal("backend policy not applied", err)
+	}
+	doc.Backends["gpu"].Groups = []string{"unknown"}
+	if len(doc.problems()) == 0 {
+		t.Fatal("unknown group accepted")
+	}
+	doc.Backends["gpu"].Groups = []string{}
+	doc.Backends["gpu"].Preset = "missing"
+	if len(doc.problems()) == 0 {
+		t.Fatal("missing preset accepted")
+	}
+	doc.Backends["gpu"].Preset = "unlimited"
+	doc.BackendPresets["unlimited"] = config.BackendRate{Name: "Unlimited", RPM: new(int64(1))}
+	if len(doc.problems()) == 0 {
+		t.Fatal("limited unlimited preset accepted")
 	}
 }
 

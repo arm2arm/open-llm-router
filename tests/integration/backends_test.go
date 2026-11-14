@@ -9,7 +9,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/backendlimits"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
@@ -63,6 +66,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 		h.Routing, h.RoutingRuntime = service, forwarder
 		h.Endpoints = &endpoints.Service{DB: db, Base: cfg, Policy: policy, Runtime: forwarder}
 		forwarder.ConfigureDestinations(policy)
+		forwarder.BackendLimits = &backendlimits.Manager{DB: db}
 	}})
 	admin := f.browser(t)
 	admin.login(t, "backend-admin", []string{"admins"})
@@ -94,7 +98,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 		}
 		return out.Settings
 	}
-	b := &settings.Backend{URL: backend.URL, PrivateNetwork: true, HealthPath: "/v1/models"}
+	b := &settings.Backend{Name: "Physics cluster", URL: backend.URL, PrivateNetwork: true, HealthPath: "/v1/models", Groups: []string{"staff"}, Preset: "unlimited"}
 	detect := map[string]any{"id": "gpu", "backend": b, "api_key": key}
 	encoded, _ := json.Marshal(detect)
 	if resp, _ := student.call(t, "POST", "/portal/api/admin/backends/detect", string(encoded), f.cfg.Portal.BaseURL); resp.StatusCode != 403 {
@@ -128,6 +132,9 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 	group := doc.Groups["staff"]
 	group.Models = append(group.Models, "cluster-route")
 	doc.Groups["staff"] = group
+	students := doc.Groups["students"]
+	students.Models = []string{"*"}
+	doc.Groups["students"] = students
 	v = view(call("PUT", path+"/draft", map[string]any{"version": v.Version, "document": doc}, 200))
 	if !v.Draft.Validation.Valid {
 		t.Fatal(v.Draft.Validation.Problems)
@@ -139,10 +146,65 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 	if resp.StatusCode != 200 || inference.Load() != 1 {
 		t.Fatal("cluster inference failed", resp.StatusCode)
 	}
+	response, data := student.call(t, "GET", "/portal/api/models", "", "")
+	if response.StatusCode != 200 || strings.Contains(string(data), "cluster-route") {
+		t.Fatal("restricted backend exposed in portal catalog", string(data))
+	}
+	accounts := auth.Admin{Pool: f.pool}
+	studentID, err := accounts.AddUser(t.Context(), "student-api", "", []string{"students"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	studentKey, err := accounts.CreateKey(t.Context(), studentID, "test", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{"/v1/chat/completions", "/v1/models"} {
+		method := "POST"
+		if endpoint == "/v1/models" {
+			method = "GET"
+		}
+		response := f.call(t, studentKey, method, endpoint, "{\"model\":\"cluster-route\",\"messages\":[]}")
+		data, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if endpoint == "/v1/models" {
+			if strings.Contains(string(data), "cluster-route") {
+				t.Fatal("restricted backend exposed by API models")
+			}
+		} else if response.StatusCode != 403 {
+			t.Fatal("restricted inference allowed", response.StatusCode, string(data))
+		}
+	}
 	// Active configuration resolves encrypted credentials again on restart.
 	reloaded, _, err := service.Candidate(t.Context(), settings.DomainRouting, v.Active.ID)
 	if err != nil || reloaded.Models["cluster-route"].Pool[0].BearerToken != key {
 		t.Fatal("stored backend did not reload", err)
+	}
+	// A backend preset applies to requests from different users, beyond group limits.
+	doc = *v.Active.Document
+	doc.BackendPresets["one"] = config.BackendRate{Name: "One request", RPM: new(int64(1))}
+	doc.Backends["gpu"].Preset = "one"
+	v = view(call("PUT", path+"/draft", map[string]any{"version": v.Version, "document": doc}, 200))
+	v = view(call("POST", path+"/activate", revisionBody(v.Version, v.Draft.ID), 200))
+	anotherID, err := accounts.AddUser(t.Context(), "other-staff", "", []string{"staff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	anotherKey, err := accounts.CreateKey(t.Context(), anotherID, "test", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, callerKey := range []string{f.key, anotherKey} {
+		response := f.call(t, callerKey, "POST", "/v1/chat/completions", "{\"model\":\"cluster-route\",\"messages\":[]}")
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		want := 200
+		if index == 1 {
+			want = 429
+		}
+		if response.StatusCode != want {
+			t.Fatalf("shared backend RPM: %d want %d", response.StatusCode, want)
+		}
 	}
 	// Rotating only the key still probes the affected route. A rejected key
 	// must not silently replace a working route.

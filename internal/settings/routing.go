@@ -24,10 +24,11 @@ const (
 // Resolved tokens are never part of the document. Group policies activate in
 // the same revision.
 type Routing struct {
-	Models   map[string]config.Model `json:"models"`
-	Aliases  map[string]string       `json:"aliases"`
-	Groups   map[string]config.Group `json:"groups"`
-	Backends map[string]*Backend     `json:"backends,omitempty"`
+	Models         map[string]config.Model       `json:"models"`
+	Aliases        map[string]string             `json:"aliases"`
+	Groups         map[string]config.Group       `json:"groups"`
+	Backends       map[string]*Backend           `json:"backends,omitempty"`
+	BackendPresets map[string]config.BackendRate `json:"backend_presets,omitempty"`
 }
 
 func (*Routing) domainName() string { return DomainRouting }
@@ -43,6 +44,9 @@ func (r *Routing) decode(data []byte) error {
 	if doc.Aliases == nil {
 		doc.Aliases = map[string]string{}
 	}
+	if doc.BackendPresets == nil {
+		doc.BackendPresets = config.DefaultBackendPresets()
+	}
 	*r = doc
 	return nil
 }
@@ -55,7 +59,7 @@ func (r *Routing) baseline(current *config.Config) {
 	groupData, _ := json.Marshal(current.Groups)
 	groups := map[string]config.Group{}
 	_ = json.Unmarshal(groupData, &groups)
-	*r = Routing{Models: models, Aliases: maps.Clone(current.Aliases), Groups: groups}
+	*r = Routing{Models: models, Aliases: maps.Clone(current.Aliases), Groups: groups, BackendPresets: config.DefaultBackendPresets()}
 	if r.Aliases == nil {
 		r.Aliases = map[string]string{}
 	}
@@ -156,6 +160,14 @@ func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, err
 		}
 		return nil, &ValidationError{[]string{"the routing does not form a valid configuration"}}
 	}
+	cfg.Backends = map[string]config.BackendPolicy{}
+	for id, backend := range r.Backends {
+		if backend == nil {
+			return nil, &ValidationError{[]string{"backends: missing backend"}}
+		}
+		preset := r.BackendPresets[backend.Preset]
+		cfg.Backends[id] = config.BackendPolicy{Groups: slices.Clone(backend.Groups), Rate: preset}
+	}
 	return cfg, nil
 }
 
@@ -198,13 +210,19 @@ func (r *Routing) values() map[string]string {
 		data, _ := json.Marshal(backend)
 		values["backends."+id] = string(data)
 	}
+	for id, preset := range r.BackendPresets {
+		data, _ := json.Marshal(preset)
+		values["backend_presets."+id] = string(data)
+	}
 	return values
 }
 
-func (*Routing) settingNames() []string { return []string{"models", "aliases", "groups", "backends"} }
+func (*Routing) settingNames() []string {
+	return []string{"models", "aliases", "groups", "backends", "backend_presets"}
+}
 
 func (*Routing) fileSources(*config.Config) map[string]string {
-	return map[string]string{"models": config.SourceFile, "aliases": config.SourceFile, "groups": config.SourceFile, "backends": config.SourceDefault}
+	return map[string]string{"models": config.SourceFile, "aliases": config.SourceFile, "groups": config.SourceFile, "backends": config.SourceDefault, "backend_presets": config.SourceDefault}
 }
 
 // checksPassed: activation probes the changed endpoints itself.
