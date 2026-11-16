@@ -896,6 +896,18 @@ options. With no name supplied, the host is used. New connections default to
 administrator-only access and unlimited shared rates. You can save a connection
 without models, or expand **Enter a model ID manually**.
 
+Use **Test connection** on a backend card to check its model catalog from the
+OLR server and send a small generation request through the active router. Choose
+the logical model and its native Chat Completions, Responses or Anthropic Messages
+API. The generation test targets only that backend, uses normal permissions,
+quotas and usage accounting, requests at most 16 output tokens, and stops after
+15 seconds. Closing the dialog cancels the request. Results show HTTP status,
+latency, token counts and a request ID without exposing provider response text.
+A successful catalog check alone does not prove generation works. A connection
+with no selected models displays **Needs model selection**; select a model before
+testing generation. The card's periodic health status and the router's readiness
+probe do not perform this generation test.
+
 Saving imports file-managed routing automatically, validates the complete document,
 and probes changed routes before activation. A failed activation preserves the
 working configuration and leaves a draft in Advanced routing for review. Resolve
