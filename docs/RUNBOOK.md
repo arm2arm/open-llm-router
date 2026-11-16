@@ -492,6 +492,15 @@ Users see their own limits and use in the portal and at `/v1/me/usage`.
   prompt charge. Ensure compatible backends honor `include_usage` for exact counts.
 - Anthropic input includes uncached, cache-read and cache-creation tokens. Final
   delta components replace earlier components; output-only deltas retain input.
+- Responses uses `input_tokens`/`output_tokens` in JSON or the terminal Responses
+  SSE event. No `include_usage` option is injected. It shares the interrupted
+  stream input estimate and output-event fallback. Configure Open WebUI with
+  API Type **Responses**, OLR's `/v1` base URL and stateless mode; each selected
+  backend must natively serve `/v1/responses`. Keep
+  `ENABLE_RESPONSES_API_STATEFUL=false` (Open WebUI's default). A backend 404 on
+  this path means that backend needs Responses support; changing OLR's protocol
+  flag does not translate it. Stored/background/conversation requests receive a
+  clear 400 until the router can own and account for their lifecycle.
 - Per-request records are one table; monthly partitions are not used (see Usage retention).
 - Exported traces and shipped logs are outside the router's erasure and retention.
 - Users are re-enabled by an operator only, never by the group sync.

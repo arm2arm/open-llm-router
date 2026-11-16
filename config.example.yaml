@@ -78,9 +78,10 @@ models:
 #   rpm, tpm                          requests and tokens per minute
 #   max_concurrent                    calls at once with interactive keys
 #   max_concurrent_batch              ... with batch keys (default: max_concurrent)
-#   strict_quota: true                reserve max_tokens + request size before a
+#   strict_quota: true                reserve output limit + request size before a
 #                                     call, so the quota cannot be overshot; such
-#                                     calls must set max_tokens. Strict only if
+#                                     calls must set max_tokens (Responses:
+#                                     max_output_tokens). Strict only if
 #                                     every matching group is strict.
 # `olr admin override set` replaces one of these for one user.
 groups:

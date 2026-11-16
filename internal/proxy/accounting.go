@@ -23,8 +23,9 @@ type accounting struct {
 	writer        *statusWriter
 	sink          usage.Recorder
 	record        usage.Record
-	inputEstimate int64 // serialized OpenAI streaming request bytes, once dispatched
-	inputRejected bool  // an upstream HTTP refusal must not receive an estimate
+	format        string // wire usage format; Responses still uses the openai protocol
+	inputEstimate int64  // serialized OpenAI streaming request bytes, once dispatched
+	inputRejected bool   // an upstream HTTP refusal must not receive an estimate
 	json          *usage.JSON
 	stream        *usage.Stream
 	aborted       bool
@@ -68,6 +69,10 @@ func (l *live) write(n int) {
 
 func (h *Handler) account(w http.ResponseWriter, r *http.Request, protocol string) *accounting {
 	a := &accounting{writer: &statusWriter{ResponseWriter: w}, record: usage.Record{StartedAt: time.Now(), Protocol: protocol}}
+	a.format = protocol
+	if r.URL.Path == "/v1/responses" {
+		a.format = usage.Responses
+	}
 	a.began = a.record.StartedAt
 	a.record.Operation = strings.TrimPrefix(r.URL.Path, "/v1/")
 	a.record.RequestID = reqid.FromContext(r.Context())
@@ -104,9 +109,9 @@ func (a *accounting) observe(contentType string, hideUsage bool, emit func([]byt
 	a.capture.ResponseJSON(contentType == "application/json")
 	if contentType == "text/event-stream" {
 		a.record.IsStream = true
-		a.stream = usage.NewStream(a.record.Protocol, hideUsage, emit)
+		a.stream = usage.NewStream(a.format, hideUsage, emit)
 	} else if contentType == "application/json" {
-		a.json = &usage.JSON{Protocol: a.record.Protocol}
+		a.json = &usage.JSON{Protocol: a.format}
 	}
 }
 
@@ -120,6 +125,9 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 	var totals usage.Totals
 	if a.json != nil {
 		totals = a.json.Totals
+		if a.format == usage.Responses && a.json.Status == "failed" && status >= 200 && status < 300 {
+			a.record.Status = "error"
+		}
 	}
 	if a.stream != nil {
 		totals = a.stream.Totals
@@ -159,6 +167,8 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 	if a.observer != nil {
 		operation := "chat"
 		switch r.URL.Path {
+		case "/v1/responses":
+			operation = "responses"
 		case "/v1/completions":
 			operation = "text_completion"
 		case "/v1/embeddings":

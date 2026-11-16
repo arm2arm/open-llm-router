@@ -3,6 +3,9 @@
 Issue [#8](https://github.com/arm2arm/open-llm-router/issues/8) checks real clients against a real
 backend before the pilot. The router forwards each backend's native protocols; it does not
 implement missing backend APIs. Endpoint URLs and credentials belong in the environment.
+The exact supported endpoints and known gaps are listed in
+[API_COMPATIBILITY.md](API_COMPATIBILITY.md); SDK success does not mean complete
+OpenAI or Anthropic platform compatibility.
 
 ## Result for #8
 
@@ -401,8 +404,8 @@ Run `opencode run --pure --dir /absolute/path/to/fresh-fixture --model olr/chat-
 Code, then independently run `python3 -m unittest -v`. Confirm completed read, edit and bash
 tool events, an unchanged test file and a successful original test, rather than relying on
 the model's final claim.
-Use a compatible provider that sends `/v1/chat/completions`; this router does not serve
-`/v1/responses`. Newer OpenCode releases use a different `providers`/`package`/`settings`
+Use a compatible provider that sends `/v1/chat/completions`, or use native stateless
+`/v1/responses` when every selected backend implements it. Newer OpenCode releases use a different `providers`/`package`/`settings`
 schema; consult that release's [provider documentation](https://opencode.ai/docs/providers/).
 
 Quirks found with vLLM:
@@ -416,6 +419,45 @@ Quirks found with vLLM:
 - Pass `--dir` with the fixture path. Launched from a script with only the working directory
   set, OpenCode selected the wrong project and did not find `olr/chat-model`.
 - OpenCode exits zero when the session ends early or the model's edit is wrong.
+
+## Open WebUI Responses connections
+
+In **Admin → Settings → Connections**, add or edit an OpenAI connection:
+
+- **URL:** `https://olr.example.org/v1` (for AIP, `https://olr.kube.aip.de/v1`).
+- **API key:** an OLR user or trusted-forwarder inference key.
+- **API Type:** **Responses**.
+- **Model:** a permitted OLR logical model or alias whose replicas all serve
+  native `/v1/responses` under the `openai` protocol.
+
+Open WebUI sends complete history in its default stateless mode. Keep
+`ENABLE_RESPONSES_API_STATEFUL=false`; OLR sets `store:false` if omitted and
+rejects stored/background/conversation references. Text, SSE streaming, reasoning,
+structured output, multimodal inputs and function-call/result loops pass through.
+Native provider tools (such as web search) work only when the selected backend
+implements them; OLR does not create these tools or translate Chat Completions.
+The connection's Responses setting is experimental in Open WebUI; see its
+[official setup guide](https://docs.openwebui.com/getting-started/quick-start/connect-a-provider/starting-with-open-responses/).
+
+To exercise an installed backend before selecting Responses in Open WebUI:
+
+```sh
+OLR_BASE_URL=https://olr.example.org OLR_MODEL=your-alias \
+  uv run tests/clients/check_responses.py
+```
+
+Supply `OLR_API_KEY` through your shell/secret manager. The checks use the official
+OpenAI SDK to verify JSON, SSE, structured output and a full stateless tool loop.
+Set `OLR_CHECK_EXTENDED=1` for long-output and cancellation checks, with the same
+backend cancellation evidence settings as the other SDK checks. `make sdk` runs
+all of these against the router and both disposable mocks in CI.
+
+```sh
+curl --fail --no-buffer https://olr.example.org/v1/responses \
+  -H "Authorization: Bearer $OLR_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"your-alias","input":"Say hello","max_output_tokens":128,"store":false,"stream":true}'
+```
 
 ## curl tool round trip
 

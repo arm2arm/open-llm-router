@@ -10,26 +10,53 @@ import (
 
 const maxUsage = 64 << 10
 
+// Responses is a wire format within the OpenAI protocol, with different token
+// fields and SSE events from Chat Completions.
+const Responses = "openai-responses"
+
 // JSON observes the top-level usage member incrementally. Other values,
 // including arbitrarily large content strings and embeddings, are skipped
 // without buffering them. Only the small numeric usage object is decoded.
 type JSON struct {
 	Protocol string
 	Totals   Totals
-	depth    int
-	quoted   bool
-	escaped  bool
-	key      bool
-	keyBytes []byte
-	wantKey  bool
-	usageKey bool
-	wait     bool
-	capture  bool
-	value    []byte
+	// UsageDepth is 1 for a response object and 2 for a Responses SSE
+	// event's nested response object. Content is never buffered.
+	UsageDepth int
+	Type       string
+	Status     string
+	HasDelta   bool
+	depth      int
+	quoted     bool
+	escaped    bool
+	key        bool
+	keyBytes   []byte
+	wantKey    bool
+	usageKey   bool
+	wait       bool
+	capture    bool
+	value      []byte
+	scalarKey  string
+	waitScalar string
+	scalarName string
+	scalar     []byte
 }
 
 func (j *JSON) Write(p []byte) {
+	usageDepth := j.UsageDepth
+	if usageDepth == 0 {
+		usageDepth = 1
+	}
 	for _, c := range p {
+		if j.scalarName != "" {
+			j.scalar = append(j.scalar, c)
+			if len(j.scalar) > 256 {
+				if j.scalarName == "delta" {
+					j.HasDelta = true
+				}
+				j.scalarName, j.scalar = "", nil
+			}
+		}
 		if j.capture && len(j.value) <= maxUsage {
 			j.value = append(j.value, c)
 		}
@@ -44,11 +71,40 @@ func (j *JSON) Write(p []byte) {
 			} else if c == '"' {
 				j.quoted = false
 				if j.key {
-					j.usageKey = keyEquals(j.keyBytes, "usage")
+					j.usageKey = j.depth == usageDepth && keyEquals(j.keyBytes, "usage")
+					j.scalarKey = ""
+					if j.Protocol == Responses && j.depth == 1 {
+						for _, key := range []string{"type", "status", "delta"} {
+							if keyEquals(j.keyBytes, key) {
+								j.scalarKey = key
+							}
+						}
+					}
 					j.key = false
+				}
+				if j.scalarName != "" {
+					var value string
+					if json.Unmarshal(j.scalar, &value) == nil {
+						switch j.scalarName {
+						case "type":
+							j.Type = value
+						case "status":
+							j.Status = value
+						case "delta":
+							j.HasDelta = value != ""
+						}
+					}
+					j.scalarName, j.scalar = "", j.scalar[:0]
 				}
 			}
 			continue
+		}
+		if j.waitScalar != "" && !space(c) {
+			if c == '"' {
+				j.scalarName = j.waitScalar
+				j.scalar = append(j.scalar[:0], c)
+			}
+			j.waitScalar = ""
 		}
 		if j.wait && !space(c) {
 			j.wait = false
@@ -60,18 +116,18 @@ func (j *JSON) Write(p []byte) {
 		switch c {
 		case '"':
 			j.quoted = true
-			if j.depth == 1 && j.wantKey {
+			if (j.depth == 1 || j.depth == usageDepth) && j.wantKey {
 				j.key, j.wantKey = true, false
 				j.keyBytes = append(j.keyBytes[:0], c)
 			}
 		case '{', '[':
 			j.depth++
-			if j.depth == 1 && c == '{' {
+			if (j.depth == 1 || j.depth == usageDepth) && c == '{' {
 				j.wantKey = true
 			}
 		case '}', ']':
 			j.depth--
-			if j.capture && j.depth == 1 {
+			if j.capture && j.depth == usageDepth {
 				if len(j.value) <= maxUsage {
 					j.Totals.readUsage(j.value, j.Protocol, true, true)
 				}
@@ -79,12 +135,16 @@ func (j *JSON) Write(p []byte) {
 				j.value = j.value[:0]
 			}
 		case ':':
-			if j.depth == 1 && j.usageKey {
+			if j.depth == usageDepth && j.usageKey {
 				j.wait = true
 			}
-		case ',':
 			if j.depth == 1 {
+				j.waitScalar = j.scalarKey
+			}
+		case ',':
+			if j.depth == 1 || j.depth == usageDepth {
 				j.wantKey, j.usageKey = true, false
+				j.scalarKey = ""
 			}
 		}
 	}
@@ -103,7 +163,7 @@ func (t *Totals) readUsage(raw []byte, protocol string, input, output bool) bool
 		return false
 	}
 	in, out := value.Prompt, value.Completion
-	if protocol == config.ProtocolAnthropic {
+	if protocol == config.ProtocolAnthropic || protocol == Responses {
 		in, out = value.Input, value.Output
 	}
 	valid := false

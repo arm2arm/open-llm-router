@@ -144,6 +144,8 @@ func rawBlocks(v any) []Block {
 			out = append(out, Block{Type: "text", Text: str(m["text"])})
 		case "thinking":
 			out = append(out, Block{Type: "reasoning", Text: str(m["thinking"])})
+		case "refusal":
+			out = append(out, Block{Type: "refusal", Text: str(m["refusal"])})
 		case "redacted_thinking":
 			out = append(out, Block{Type: "reasoning", Text: "[Provider redacted reasoning]"})
 		case "tool_use":
@@ -210,7 +212,7 @@ func message(m map[string]any) Message {
 }
 
 // Content fields normalized into Input; everything else is a parameter.
-var contentKeys = map[string]bool{"messages": true, "system": true, "prompt": true, "input": true, "tools": true}
+var contentKeys = map[string]bool{"messages": true, "system": true, "instructions": true, "prompt": true, "input": true, "tools": true}
 
 func (c *Capture) decode() Detail {
 	d := Detail{Version: DetailVersion, Operation: c.operation, Input: []Message{}, Output: []Message{}, Events: []Event{}, Parameters: map[string]any{}, Tools: []Tool{}, Frames: []Frame{}, Routing: c.routing, Result: Result{FinishReasons: []string{}, Usage: map[string]float64{}}, Warnings: []string{}, Truncated: c.truncated}
@@ -228,11 +230,18 @@ func (c *Capture) decode() Detail {
 		if sys, ok := input["system"]; ok {
 			d.Input = append(d.Input, Message{Role: "system", Blocks: blocks(sys)})
 		}
+		if instructions, ok := input["instructions"]; ok {
+			d.Input = append(d.Input, Message{Role: "system", Blocks: blocks(instructions)})
+		}
 		for _, v := range list(input["messages"]) {
 			d.Input = append(d.Input, message(object(v)))
 		}
 		for _, key := range []string{"prompt", "input"} {
 			if v, ok := input[key]; ok {
+				if c.operation == "responses" && key == "input" {
+					d.Input = append(d.Input, responseMessages(v)...)
+					continue
+				}
 				text := str(v)
 				if text == "" {
 					text = "[Non-text input omitted]"
@@ -276,6 +285,10 @@ func (c *Capture) decode() Detail {
 	} else if c.jsonResponse {
 		var m map[string]any
 		if json.Unmarshal(c.output, &m) == nil {
+			if c.operation == "responses" {
+				d.Output = append(d.Output, responseMessages(m["output"])...)
+				d.Result.finish(responseFinish(m))
+			}
 			for _, v := range list(m["choices"]) {
 				choice := object(v)
 				if msg := object(choice["message"]); msg != nil {
@@ -458,6 +471,8 @@ func (c *Capture) conversationKey(d Detail) string {
 
 func (c *Capture) decodeStream(d *Detail) {
 	state := map[string]*Block{}
+	responseFinal := map[string][]Block{}
+	var responseOutput []Message
 	order := []string{}
 	roles := map[string]string{}
 	add := func(choice, key, kind, text, name, id, args string, ms int64) {
@@ -510,6 +525,43 @@ func (c *Capture) decodeStream(d *Detail) {
 		kind := str(m["type"])
 		index := fmt.Sprint(m["index"])
 		switch kind {
+		case "response.output_item.added":
+			item := object(m["item"])
+			if str(item["type"]) == "function_call" || str(item["type"]) == "custom_tool_call" {
+				add(responseIndex(m), "call", "tool_call", "", str(item["name"]), str(item["call_id"]), "", ms)
+			}
+		case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+			typ, part := "text", fmt.Sprint(m["content_index"])
+			if kind == "response.refusal.delta" {
+				typ = "refusal"
+			} else if strings.Contains(kind, "reasoning") {
+				typ, part = "reasoning", fmt.Sprint(m["summary_index"])
+			}
+			add(responseIndex(m), typ+part, typ, str(m["delta"]), "", "", "", ms)
+		case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+			add(responseIndex(m), "call", "tool_call", "", "", "", str(m["delta"]), ms)
+		case "response.output_item.done":
+			var complete []Block
+			for _, msg := range responseMessages([]any{m["item"]}) {
+				complete = append(complete, msg.Blocks...)
+			}
+			responseFinal[responseIndex(m)] = complete
+		case "response.created", "response.in_progress", "response.completed", "response.incomplete", "response.failed":
+			response := object(m["response"])
+			d.Result.meta(response)
+			if kind == "response.completed" || kind == "response.incomplete" || kind == "response.failed" {
+				d.Result.finish(responseFinish(response))
+				if output := responseMessages(response["output"]); len(output) > 0 {
+					responseOutput = output
+				}
+				if len(d.Events) < MaxEvents {
+					event := Event{MS: ms, Type: "complete"}
+					if kind == "response.failed" {
+						event.Type, event.Text = "error", providerError(response["error"])
+					}
+					d.Events = append(d.Events, event)
+				}
+			}
 		case "message_start":
 			d.Result.meta(object(m["message"]))
 		case "message_delta":
@@ -614,6 +666,9 @@ func (c *Capture) decodeStream(d *Detail) {
 	for _, key := range order {
 		choices[roles[key]] = append(choices[roles[key]], *state[key])
 	}
+	for key, blocks := range responseFinal {
+		choices[key] = blocks
+	}
 	keys := make([]string, 0, len(choices))
 	for key := range choices {
 		keys = append(keys, key)
@@ -621,6 +676,9 @@ func (c *Capture) decodeStream(d *Detail) {
 	sort.Strings(keys)
 	for _, key := range keys {
 		d.Output = append(d.Output, Message{Role: "assistant", Blocks: choices[key]})
+	}
+	if len(responseOutput) > 0 {
+		d.Output = responseOutput
 	}
 }
 

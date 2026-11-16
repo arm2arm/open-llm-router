@@ -89,6 +89,7 @@ func (h *Handler) Close() {
 
 func (h *Handler) Register(handle func(string, http.Handler)) {
 	for path, protocol := range map[string]string{
+		"/v1/responses":             config.ProtocolOpenAI,
 		"/v1/chat/completions":      config.ProtocolOpenAI,
 		"/v1/completions":           config.ProtocolOpenAI,
 		"/v1/embeddings":            config.ProtocolOpenAI,
@@ -207,12 +208,17 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	meta, err := parseRequest(body)
 	if errors.Is(err, errAmbiguousField) {
-		apierr.Write(w, protocol, 400, "invalid_request_error", "model, stream, max_tokens and max_completion_tokens must each appear once, spelled in lower case")
+		apierr.Write(w, protocol, 400, "invalid_request_error", "model, stream, max_tokens, max_completion_tokens and max_output_tokens must each appear once, spelled in lower case")
 		return
 	}
 	if err != nil || meta.Model == "" {
 		apierr.Write(w, protocol, 400, "invalid_request_error", "a JSON object with a model and optional boolean stream is required")
 		return
+	}
+	if r.URL.Path == "/v1/responses" {
+		// A Responses backend ignores Chat Completions' output-limit names;
+		// they cannot stand in for max_output_tokens in strict admission.
+		meta.MaxTokens = meta.MaxOutputTokens
 	}
 	name := meta.Model
 	if target, ok := cfg.Aliases[name]; ok {
@@ -256,7 +262,17 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		account.capture.Change("priority", "set", nil, priority)
 	}
 	hideUsage := false
-	if protocol == config.ProtocolOpenAI && meta.Stream && r.URL.Path != "/v1/embeddings" {
+	if r.URL.Path == "/v1/responses" {
+		var changed bool
+		body, changed, err = statelessResponses(body)
+		if err != nil {
+			apierr.Write(w, protocol, 400, "invalid_request_error", err.Error())
+			return
+		}
+		if changed {
+			account.capture.Change("store", "set", nil, false)
+		}
+	} else if protocol == config.ProtocolOpenAI && meta.Stream && r.URL.Path != "/v1/embeddings" {
 		var asked bool
 		body, asked, err = usage.IncludeUsage(body)
 		if err != nil {
@@ -287,7 +303,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			// The request size bounds its input tokens: a token covers at
 			// least one byte of text. Over-reserving lasts only while in flight.
 			if meta.MaxTokens == 0 && r.URL.Path != "/v1/embeddings" {
-				apierr.Write(w, protocol, 400, "invalid_request_error", "your group has a strict quota: set max_tokens")
+				field := "max_tokens"
+				if r.URL.Path == "/v1/responses" {
+					field = "max_output_tokens"
+				}
+				apierr.Write(w, protocol, 400, "invalid_request_error", "your group has a strict quota: set "+field)
 				return
 			}
 			admission.Reserve = meta.MaxTokens + int64(len(body))

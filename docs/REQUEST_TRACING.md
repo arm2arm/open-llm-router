@@ -192,11 +192,15 @@ deadline. Shutdown drains the proxy first, then allows up to 2 seconds for conte
 writes; pending content can be lost during shutdown or outages. Quota accounting
 continues through its existing independent queue and shutdown flush.
 
-Supported calls are `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` and
+Supported calls are `/v1/chat/completions`, `/v1/responses`, `/v1/completions`, `/v1/embeddings` and
 `/v1/messages`. Models/discovery/count-tokens and authentication failures are not
 personal content traces. Router admission errors and upstream errors are traced for
 authenticated, attributed inference requests. Usage records retain their separate
 site-configured lifetime (90 days by default), daily totals 400 days by default.
+Responses traces normalize instructions, full input/output items, reasoning
+summaries, function/custom-tool calls and their outputs. Terminal response items
+replace streamed fragments rather than duplicating them. Encrypted reasoning,
+binary attachments and signed attachment URLs remain omitted.
 
 Live updates use one server-sent event stream per open **My requests** page, at most
 4 per user and router instance. The forwarding path does a clock read per write and,

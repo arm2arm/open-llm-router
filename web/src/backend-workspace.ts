@@ -129,6 +129,7 @@ export function backendOrigin(raw: string) {
       '/v1',
       '/v1/models',
       '/v1/chat/completions',
+      '/v1/responses',
       '/v1/messages',
       '/api/tags',
     ].includes(parsed.pathname.replace(/\/+$/, ''))

@@ -476,9 +476,15 @@ protocols enabled for that logical model.
 
 The router forwards native OpenAI and Anthropic request/response formats. Enabling
 `anthropic` does not convert an OpenAI-only backend into an Anthropic backend.
-The supported inference routes are `/v1/chat/completions`, `/v1/completions`,
+The supported inference routes are `/v1/chat/completions`, `/v1/responses`, `/v1/completions`,
 `/v1/embeddings`, `/v1/messages` and `/v1/messages/count_tokens`.
-`/v1/responses` is not implemented.
+`/v1/responses` supports Open WebUI's default stateless HTTP mode under the
+`openai` protocol. Every replica in a Responses pool must implement that native
+endpoint; the router does not translate Chat Completions or provide hosted tools.
+Use `store:false` and send the full input history. Stored responses, background
+jobs, `previous_response_id`, conversation IDs and stored item references are
+refused before forwarding; their lifecycle needs user ownership, replica affinity
+and asynchronous usage reconciliation. See [Open WebUI setup](CLIENTS.md#open-webui-responses-connections).
 
 ## 1. Start the complete local test environment
 
