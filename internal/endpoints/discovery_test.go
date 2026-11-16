@@ -120,6 +120,12 @@ func TestDiscoveryHTTPSVerifiesCertificatesAndNormalizesAPIURL(t *testing.T) {
 	}
 }
 
+type failedCatalog struct{ err error }
+
+func (c failedCatalog) Get(context.Context, string, string) (*http.Response, error) {
+	return nil, c.err
+}
+
 func TestDiscoveryTransportDiagnosticsDoNotExposeRawErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -136,11 +142,7 @@ func TestDiscoveryTransportDiagnosticsDoNotExposeRawErrors(t *testing.T) {
 		{"other", errors.New("synthetic-secret"), "before an HTTP response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			transport := &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
-				return nil, tc.err
-			}}
-			t.Cleanup(transport.CloseIdleConnections)
-			result := catalog(t.Context(), &http.Client{Transport: transport}, "http://backend.invalid", "synthetic-secret")
+			result := catalog(t.Context(), failedCatalog{tc.err}, "http://backend.invalid", "synthetic-secret")
 			if !strings.Contains(result.Error, tc.want) || len(result.Models) != 0 {
 				t.Fatalf("failure was not classified: %+v", result)
 			}
