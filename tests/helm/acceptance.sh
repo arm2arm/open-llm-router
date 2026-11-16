@@ -53,8 +53,6 @@ portal:
 keycloak:
   baseURL: http://localhost:$kc_port
 config:
-  admin_api:
-    enabled: true
   models:
     chat-model:
       # Probe offline inference without the optional 120-second capacity queue.

@@ -33,6 +33,7 @@ import {
   AlertDialogAction,
 } from '@/components/ui/alert-dialog'
 import { api, type Backend, type RoutingDocument } from '@/lib/api'
+import { BackendConnection } from '@/backend-connection'
 import {
   useBackendWorkspace,
   backendOrigin,
@@ -132,6 +133,7 @@ export function BackendWorkspace() {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Entry | 'new' | null>(null)
   const [removing, setRemoving] = useState<Entry | null>(null)
+  const [checking, setChecking] = useState<Entry | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const pending = !!query.data?.settings.draft
@@ -240,13 +242,17 @@ export function BackendWorkspace() {
                   ? !replica.backend && replica.url === entry.backend.url
                   : replica.backend === entry.id,
               ) ?? []
-          const status = !states.length
-            ? 'Not serving models'
-            : states.every((replica) => replica.healthy)
-              ? 'Healthy'
-              : states.some((replica) => replica.healthy)
-                ? 'Degraded'
-                : 'Unavailable'
+          const status = !entry.models.length
+            ? 'Needs model selection'
+            : !states.length
+              ? health.isPending
+                ? 'Checking health…'
+                : 'Health unavailable'
+              : states.every((replica) => replica.healthy)
+                ? 'Healthy'
+                : states.some((replica) => replica.healthy)
+                  ? 'Degraded'
+                  : 'Unavailable'
           const preset = entry.backend.preset
             ? document?.backend_presets?.[entry.backend.preset]
             : undefined
@@ -323,6 +329,14 @@ export function BackendWorkspace() {
                   variant="outline"
                   size="sm"
                   disabled={pending || saving}
+                  onClick={() => setChecking(entry)}
+                >
+                  Test connection
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pending || saving}
                   onClick={() => setEditing(entry)}
                 >
                   <Pencil size={14} />
@@ -345,6 +359,19 @@ export function BackendWorkspace() {
           )
         })}
       </div>
+      {checking && document && (
+        <BackendConnection
+          id={checking.id}
+          backend={checking.backend}
+          legacy={checking.legacy}
+          document={document}
+          onClose={() => setChecking(null)}
+          onSelectModels={() => {
+            setChecking(null)
+            setEditing(checking)
+          }}
+        />
+      )}
       {editing && document && query.data && (
         <BackendEditor
           key={editing === 'new' ? 'new' : editing.id}
@@ -355,9 +382,13 @@ export function BackendWorkspace() {
           saving={saving}
           save={save}
           onClose={() => setEditing(null)}
-          onSaved={() => {
+          onSaved={(selected) => {
             setEditing(null)
-            setNotice('Backend saved and active.')
+            setNotice(
+              selected
+                ? 'Backend saved. Use Test connection to verify generation through OLR.'
+                : 'Backend saved. Select a model to enable routing.',
+            )
           }}
         />
       )}
@@ -407,7 +438,7 @@ type EditorProps = {
     expected: number,
   ) => Promise<void>
   onClose: () => void
-  onSaved: () => void
+  onSaved: (selected: number) => void
 }
 
 function BackendEditor({
@@ -580,7 +611,7 @@ function BackendEditor({
           )
             model.protocols.push('anthropic')
       await save(next, useKey && key ? { [id]: key } : {}, expected)
-      onSaved()
+      onSaved(models.length)
     } catch (error) {
       setError((error as Error).message)
     }

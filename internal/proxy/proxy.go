@@ -339,6 +339,9 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			request.Wait = 0
 		}
 		request.Allowed = func(replica config.Replica) bool {
+			if target, testing := r.Context().Value(connectionTarget{}).(config.Replica); testing && (replica.Backend != target.Backend || replica.URL != target.URL) {
+				return false
+			}
 			return policy.BackendAllowed(cfg, replica.Backend, principal.Groups, principal.ProtectedAdmin)
 		}
 		if model.SessionAffinity {

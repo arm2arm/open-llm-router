@@ -146,6 +146,27 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 	if resp.StatusCode != 200 || inference.Load() != 1 {
 		t.Fatal("cluster inference failed", resp.StatusCode)
 	}
+	// An administrator's connection test uses the active backend credential,
+	// model rewrite and accounting path; ordinary sessions and cross-site
+	// requests cannot invoke it.
+	testPath := "/portal/api/admin/backends/test"
+	testBody := map[string]any{"model": "cluster-route", "backend": "gpu", "api": "chat"}
+	adminCall(t, student, "POST", testPath, testBody, 403)
+	if response, _ := admin.call(t, "POST", testPath, string(mustJSON(t, testBody)), "https://evil.example"); response.StatusCode != 403 {
+		t.Fatal("cross-site model test accepted")
+	}
+	if response, _ := admin.call(t, "POST", testPath, `{"model":"`+strings.Repeat("x", 4097)+`"}`, f.cfg.Portal.BaseURL); response.StatusCode != 400 {
+		t.Fatal("unbounded model test body", response.StatusCode)
+	}
+	var result proxy.ConnectionResult
+	if json.Unmarshal(call("POST", testPath, testBody, 200), &result) != nil || !result.OK || result.HTTPStatus != 200 || result.OutputTokens != 1 || inference.Load() != 2 {
+		t.Fatal("functional connection test failed", result, inference.Load())
+	}
+	waitFor(t, func() bool {
+		var count int
+		err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM usage u JOIN users p ON p.id=u.user_id WHERE u.request_id=$1 AND p.username='backend-admin' AND u.output_tokens=1 AND u.key_id IS NULL`, result.RequestID).Scan(&count)
+		return err == nil && count == 1
+	})
 	response, data := student.call(t, "GET", "/portal/api/models", "", "")
 	if response.StatusCode != 200 || strings.Contains(string(data), "cluster-route") {
 		t.Fatal("restricted backend exposed in portal catalog", string(data))
@@ -205,6 +226,10 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 		if response.StatusCode != want {
 			t.Fatalf("shared backend RPM: %d want %d", response.StatusCode, want)
 		}
+	}
+	before := inference.Load()
+	if json.Unmarshal(call("POST", testPath, testBody, 200), &result) != nil || result.OK || result.HTTPStatus != 429 || inference.Load() != before {
+		t.Fatal("connection test bypassed shared backend limits", result)
 	}
 	// Rotating only the key still probes the affected route. A rejected key
 	// must not silently replace a working route.

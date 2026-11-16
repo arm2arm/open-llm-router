@@ -20,11 +20,14 @@ NAME = "trial-open-llm-router"
 
 
 class HelmChart(unittest.TestCase):
-    def test_agent_administration_opt_in_and_proxy_configuration(self):
+    def test_agent_administration_default_override_and_proxy_configuration(self):
         baseline = self.render()
         config = yaml.safe_load(baseline["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
-        self.assertFalse(config["admin_api"]["enabled"])
+        self.assertTrue(config["admin_api"]["enabled"])
         self.assertEqual(config["admin_api"]["trusted_proxy_cidrs"], [])
+        disabled = self.render({"config": {"admin_api": {"enabled": False}}})
+        disabled_config = yaml.safe_load(disabled["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertFalse(disabled_config["admin_api"]["enabled"])
         policy = {"enabled": True, "trusted_proxy_cidrs": ["10.0.0.0/24", "2001:db8::/64"],
                   "default_lifetime_days": 3, "max_lifetime_days": 30,
                   "max_active_keys": 5, "requests_per_minute": 20, "max_concurrent": 2}
@@ -34,6 +37,7 @@ class HelmChart(unittest.TestCase):
         def checksum(resources):
             return resources["Deployment", NAME]["spec"]["template"]["metadata"]["annotations"]["checksum/config"]
         self.assertNotEqual(checksum(baseline), checksum(rendered))
+        self.assertNotEqual(checksum(baseline), checksum(disabled))
 
     def invoke(self, *args):
         return subprocess.run(

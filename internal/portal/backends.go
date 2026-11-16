@@ -1,11 +1,30 @@
 package portal
 
 import (
+	"context"
 	"net/http"
 
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
+	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/settings"
 )
+
+func (h *Handler) testBackend(w http.ResponseWriter, r *http.Request, by user) {
+	var body proxy.ConnectionTest
+	if !h.jsonBodyLimit(w, r, &body, 4<<10) {
+		return
+	}
+	tester, ok := h.RoutingRuntime.(interface {
+		TestConnection(context.Context, auth.Principal, proxy.ConnectionTest) proxy.ConnectionResult
+	})
+	if !ok {
+		unavailable(w)
+		return
+	}
+	result := tester.TestConnection(r.Context(), auth.Principal{UserID: by.ID, Username: by.Username, Groups: by.Groups, Overrides: by.Overrides, ProtectedAdmin: by.ProtectedAdmin}, body)
+	respond(w, http.StatusOK, result)
+}
 
 func (h *Handler) detectBackend(w http.ResponseWriter, r *http.Request, _ user) {
 	var body struct {

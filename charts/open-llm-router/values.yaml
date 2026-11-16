@@ -96,7 +96,7 @@ env: {}
 # empty initial catalog or supply real models here; no demo environment is needed.
 config:
   admin_api:
-    enabled: false
+    enabled: true
     trusted_proxy_cidrs: []
   security:
     require_tls: false

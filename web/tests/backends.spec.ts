@@ -128,6 +128,223 @@ async function workspace(page: Page) {
   return { view, saved, detections }
 }
 
+function connectionFixture(view: RoutingView, model = true) {
+  const doc = view.settings.active!.document!
+  doc.backends!.gpu = {
+    name: 'Test GPU',
+    url: 'http://gpu.cluster:8000',
+    api_key: { env: 'SYNTHETIC_GPU_KEY' },
+    private_network: true,
+    health_path: '/v1/models',
+    groups: ['staff'],
+    preset: 'unlimited',
+  }
+  if (model)
+    doc.models.fast = {
+      upstream_model: 'deepseek-r1',
+      protocols: ['openai', 'anthropic'],
+      timeout_s: 30,
+      idle_timeout_s: 15,
+      queue_timeout_s: 0,
+      session_affinity: false,
+      priority: null,
+      pool: [
+        {
+          backend: 'gpu',
+          url: '',
+          health_path: '',
+          bearer_token_env: '',
+          weight: 1,
+          max_inflight: 8,
+        },
+      ],
+    }
+}
+
+test('model-less backend checks catalog without claiming generation works', async ({
+  page,
+}) => {
+  const { view, detections } = await workspace(page)
+  connectionFixture(view, false)
+  let inference = 0
+  page.on('request', (request) => {
+    if (request.url().endsWith('/admin/backends/test')) inference++
+  })
+  await page.goto('/portal/admin')
+  const card = page.getByRole('article', { name: 'Test GPU' })
+  await expect(card).toContainText('Needs model selection')
+  await card.getByRole('button', { name: 'Test connection' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Test connection' })
+  await expect(dialog).toContainText('No model is selected')
+  await dialog.getByRole('button', { name: 'Check model API' }).click()
+  await expect(dialog).toContainText('Connection OK · 2 models discovered')
+  await expect(dialog).not.toContainText('Model answered through OLR')
+  expect(inference).toBe(0)
+  expect(detections).toHaveLength(1)
+  expect(detections[0]).toMatchObject({
+    id: 'gpu',
+    backend: { api_key: { env: 'SYNTHETIC_GPU_KEY' } },
+  })
+  await dialog.getByRole('button', { name: 'Select models' }).click()
+  const editor = page.getByRole('dialog', { name: 'Edit backend' })
+  await expect(editor).toBeVisible()
+  await expect(editor.getByLabel('Backend detection')).toContainText('vLLM')
+  await editor.getByRole('button', { name: 'Save backend' }).click()
+  await expect(
+    page.getByText('Backend saved. Select a model to enable routing.'),
+  ).toBeVisible()
+})
+
+test('legacy connection checks keep the approved deployment credential reference', async ({
+  page,
+}) => {
+  const { view } = await workspace(page)
+  connectionFixture(view)
+  const doc = view.settings.active!.document!
+  doc.backends = {}
+  doc.models.fast.pool[0] = {
+    url: 'http://gpu.cluster:8000',
+    health_path: '/v1/models',
+    private_network: true,
+    bearer_token_env: 'SYNTHETIC_GPU_KEY',
+    max_inflight: 8,
+    weight: 1,
+  }
+  let discovery: unknown
+  await page.route('**/portal/api/admin/endpoints/models', async (route) => {
+    discovery = route.request().postDataJSON()
+    await route.fulfill({
+      json: {
+        models: ['deepseek-r1'],
+        replicas: [{ models: ['deepseek-r1'] }],
+      },
+    })
+  })
+  await page.route('**/portal/api/admin/backends/test', async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      model: 'fast',
+      backend: '',
+      url: 'http://gpu.cluster:8000',
+      api: 'chat',
+    })
+    await route.fulfill({
+      json: {
+        ok: true,
+        message: 'Model answered through OLR.',
+        latency_ms: 1,
+        input_tokens: 4,
+        output_tokens: 2,
+      },
+    })
+  })
+  await page.goto('/portal/admin')
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Test connection' })
+  await dialog.getByRole('button', { name: 'Run test' }).click()
+  await expect(dialog).toContainText('Connection OK · 1 models discovered')
+  await expect(dialog).toContainText('Model answered through OLR.')
+  expect(discovery).toEqual({
+    model: 'fast',
+    replicas: [
+      {
+        url: 'http://gpu.cluster:8000',
+        private_network: true,
+        bearer_token_env: 'SYNTHETIC_GPU_KEY',
+      },
+    ],
+  })
+})
+
+test('connection diagnostic separates healthy catalog from failed generation and supports native APIs', async ({
+  page,
+}) => {
+  const { view } = await workspace(page)
+  connectionFixture(view)
+  const attempts: Record<string, string>[] = []
+  await page.route('**/portal/api/admin/backends/test', async (route) => {
+    const body = route.request().postDataJSON() as Record<string, string>
+    attempts.push(body)
+    await route.fulfill({
+      json: {
+        ok: body.api !== 'chat',
+        message:
+          body.api === 'chat'
+            ? 'No healthy replica with available capacity'
+            : 'Model answered through OLR.',
+        http_status: body.api === 'chat' ? 503 : 200,
+        latency_ms: 240,
+        input_tokens: 4,
+        output_tokens: 2,
+        request_id: 'synthetic-diagnostic-id',
+      },
+    })
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/portal/admin')
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Test connection' })
+  await expect(dialog.getByLabel('Connection test model')).toHaveValue('fast')
+  await dialog.getByRole('button', { name: 'Run test' }).click()
+  await expect(dialog).toContainText('Connection OK · 2 models discovered')
+  await expect(dialog).toContainText('HTTP 503')
+  await expect(dialog).toContainText('No healthy replica')
+  for (const api of ['responses', 'messages']) {
+    await dialog.getByLabel('Connection test API').selectOption(api)
+    await expect(dialog).not.toContainText('HTTP 503')
+    await dialog.getByRole('button', { name: 'Run test' }).click()
+    await expect(dialog).toContainText('Model answered through OLR.')
+    await expect(dialog).toContainText('240 ms · 4 input / 2 output tokens')
+    await expect(dialog).toContainText('Request ID: synthetic-diagnostic-id')
+  }
+  expect(attempts).toEqual(
+    ['chat', 'responses', 'messages'].map((api) => ({
+      model: 'fast',
+      backend: 'gpu',
+      api,
+    })),
+  )
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
+  const bounds = await dialog.boundingBox()
+  expect(bounds!.x).toBeGreaterThanOrEqual(0)
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
+})
+
+test('closing a pending connection check cancels requests and clears its result', async ({
+  page,
+}) => {
+  const { view } = await workspace(page)
+  connectionFixture(view)
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => (release = resolve))
+  await page.route('**/portal/api/admin/backends/test', async (route) => {
+    await pending
+    await route.fulfill({
+      json: { ok: true, message: 'Stale result', latency_ms: 0 },
+    })
+  })
+  await page.goto('/portal/admin')
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Test connection' })
+  const started = page.waitForRequest('**/portal/api/admin/backends/test')
+  await dialog.getByRole('button', { name: 'Run test' }).click()
+  await started
+  await expect(dialog.getByRole('button', { name: 'Run test' })).toBeDisabled()
+  const aborted = page.waitForEvent('requestfailed', {
+    predicate: (request) => request.url().endsWith('/admin/backends/test'),
+  })
+  await dialog.getByRole('button', { name: 'Cancel test' }).click()
+  release()
+  await aborted
+  await expect(dialog).toHaveCount(0)
+  await page.getByRole('button', { name: 'Test connection' }).click()
+  await expect(dialog).not.toContainText('Stale result')
+  await expect(dialog.getByRole('button', { name: 'Run test' })).toBeEnabled()
+})
+
 test('simple editor keeps URL refresh, optional key and models visible', async ({
   page,
 }) => {
