@@ -31,7 +31,8 @@ func TestAdminRoutingRevisions(t *testing.T) {
 	second := mockllm.New(mockllm.Options{Tokens: 20, TokenDelay: 25 * time.Millisecond})
 	secondServer := httptest.NewServer(second)
 	defer secondServer.Close()
-	environment := map[string]string{"OLR_BACKEND_TOKEN_ENVS": "GPU_TOKEN", "GPU_TOKEN": backendToken}
+	bindings, _ := json.Marshal(map[string][]string{"GPU_TOKEN": {secondServer.URL}})
+	environment := map[string]string{"OLR_BACKEND_TOKEN_ENVS": "GPU_TOKEN", "OLR_BACKEND_TOKEN_ORIGINS": string(bindings), "GPU_TOKEN": backendToken}
 	f := startPortal(t, usageOptions{portal: func(h *portal.Handler, cfg *config.Config, pool *pgxpool.Pool, forwarder *proxy.Handler) {
 		cfg.OIDC.SyncIntervalS = 900
 		cfg.Forwarders.UnknownUser = config.UnknownUserReject

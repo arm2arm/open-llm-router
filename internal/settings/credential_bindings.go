@@ -32,8 +32,8 @@ func (s *Service[D, P]) storedSecretName(doc P, setting string) string {
 	return s.domain() + "." + setting
 }
 
-// originalConnection reads the first immutable revision that introduced an
-// environment reference or a pre-binding stored secret. Later drafts cannot
+// originalConnection reads the first immutable revision that introduced a
+// pre-binding stored secret. Later drafts cannot
 // redefine that original recipient, including drafts saved before this fix.
 func originalConnection(ctx context.Context, q querier, binding secretBinding, kind, ref string) (*Authentication, error) {
 	var data []byte
