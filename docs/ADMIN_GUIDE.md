@@ -232,19 +232,24 @@ active revision when they start**, so recreate them after activation.
 **Single authority.** To change a setting that YAML or the environment still
 sets, remove it there first (for example `OIDC_ISSUER` from Compose or Helm
 values) and recreate the router; otherwise activation is refused with the
-location to remove. At startup a conflicting file/environment value is
+location to remove. Stored client secrets are an exception: explicitly replacing an
+environment reference with a stored value transfers authority to that revision.
+Keep the environment secret until activation succeeds, then remove it and restart;
+the stored value already applies. At startup a conflicting file/environment value is
 ignored and logged as an error; the active revision still applies.
 
 **Secrets.** `-secret NAME=FILE` reads a private file (same rules as password
 files) and stores the value encrypted with AES-256-GCM under
 `OLR_SETTINGS_ENCRYPTION_KEY`, a base64-encoded 32-byte key supplied outside the
 database (`openssl rand -base64 32`). Each stored value is a new immutable row
-bound to its id and setting name; the draft references it, so activation is the
+bound to its id, setting name, issuer, back-channel URL and corresponding client ID;
+the draft references it, so activation is the
 rotation and rollback restores the earlier secret. Plaintext is never returned
 by the CLI, written to revisions, logs, validation messages or audit events.
 Without the key, environment references keep working but stored secrets can be
 neither saved nor opened. Keep the key stable and back it up separately from
-PostgreSQL: a database backup alone cannot reveal stored secrets.
+PostgreSQL: a database backup alone cannot reveal stored secrets. For planned key
+replacement or recovery after exposure, follow [settings-key rotation](RUNBOOK.md#rotate-the-settings-encryption-key).
 
 **Failure and local administration.** If the active revision cannot be applied
 at startup (for example, the key is missing or different, or a referenced
@@ -283,6 +288,13 @@ so. A Keycloak session cannot reconfigure its own identity provider.
    secret choose *keep*, the setting's own environment variable, *store a new
    secret* (needs `OLR_SETTINGS_ENCRYPTION_KEY`) or *none*. **Save draft** never
    changes the running configuration; the draft's problems are listed.
+Changing the issuer, back-channel URL or a client ID requires clearing or replacing
+that connection's client secret. Inherited environment references are bound to the
+imported connection; older stored references retain their original connection from
+immutable revision history. This is checked again for existing drafts, connection
+checks, test sign-in, activation and rollback. A rejected draft cannot authorize a
+new recipient by being saved repeatedly.
+
 3. **Run checks** on the draft (or on the current settings before importing):
 
 | Check | Passes when |
@@ -292,6 +304,12 @@ so. A Keycloak session cannot reconfigure its own identity provider.
 | Portal client credentials | The portal client ID and secret authenticate at the token introspection endpoint |
 | Service-token audience | A token for the optional test service client (for example `olr-service`) names the API audience; the client is used once and not stored |
 | Sync permissions | The sync service account obtains a token and can list users (`realm-management` `view-users`) |
+
+Checks send the portal secret to the provider's introspection endpoint and the
+sync secret to its token endpoint. Test sign-in sends the portal secret during
+token exchange. These endpoints must belong to the bound issuer or configured
+back-channel origin. Newly entered secrets authorize the explicitly selected
+connection.
 
 4. **Test sign-in** sends your browser to Keycloak with the draft's settings and
    back to the normal callback. The router verifies the identity token, the
@@ -324,8 +342,10 @@ by issuer and subject and are never linked by email or username, so the same
 person gets a new account under the new issuer. On the switch, pending SSO logins
 are discarded and SSO sessions of other issuers stop working (sessions are checked
 against the current issuer). Accounts of previous issuers keep their UUIDs, usage
-and API keys, but group sync no longer updates or disables them: the page lists
-them under *Accounts of previous identity providers*. Disable those users under
+and inference and administration keys, but group sync no longer updates or disables
+them. Administration keys remain usable until expiry, revocation or owner disablement;
+the page lists active inference and administration keys separately under *Accounts
+of previous identity providers*. Disable those users under
 **Users** when they should lose access. Rolling back to the previous issuer makes
 its accounts and sessions usable again.
 
@@ -813,7 +833,13 @@ Container `localhost` refers to the router container, not the host's Ollama.
 
 Token references already used by YAML replicas are available automatically. To
 add another, place the actual secret in the router process environment and list
-its name in `OLR_BACKEND_TOKEN_ENVS`. An unrelated environment variable cannot be
+its name in `OLR_BACKEND_TOKEN_ENVS` and its permitted origins in
+`OLR_BACKEND_TOKEN_ORIGINS` (a JSON object mapping names to origin arrays).
+File references are bound automatically to the origins where the file uses them.
+Scheme, host and port must match; default ports, host case and pasted API paths
+are normalized. Changing the URL while retaining a reference is refused before
+model discovery, health probes or activation can send it. A name without an
+approved origin cannot be used. An unrelated environment variable cannot be
 selected as a backend credential. For development Compose, use a private override:
 
 ```yaml
@@ -822,6 +848,7 @@ services:
     environment:
       OLR_BACKEND_ALLOWED_CIDRS: 192.168.178.0/24
       OLR_BACKEND_TOKEN_ENVS: VLLM_API_KEY
+      OLR_BACKEND_TOKEN_ORIGINS: '{"VLLM_API_KEY":["http://192.168.178.81:8000"]}'
       VLLM_API_KEY: ${VLLM_API_KEY:?set through your secret manager}
 ```
 
@@ -959,7 +986,8 @@ Credential values are never shown or stored in the browser.
 - **Drafts** are read strictly. A model removed while an alias or group policy
   still names it, an alias to an unknown model, an endpoint credential reference
   outside the allowed list (`OLR_BACKEND_TOKEN_ENVS` or the file's own
-  `bearer_token_env` names) or a destination the outbound policy refuses (for
+  `bearer_token_env` names), a reference paired with an unapproved origin, or a
+  destination the outbound policy refuses (for
   example metadata or link-local addresses, or private networks without an
   explicit cluster selection or `OLR_BACKEND_ALLOWED_CIDRS`) is recorded on the
   draft and blocks activation.

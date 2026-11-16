@@ -2,7 +2,6 @@ package settings
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -306,7 +305,9 @@ func (a *Authentication) conflicts(file *config.Config, secrets map[string]strin
 			switch {
 			case ref.Env == binding.env:
 			case ref.Stored != "" && secretsKnown:
-				differs = subtle.ConstantTimeCompare([]byte(fileSecret), []byte(secrets[binding.name])) != 1
+				// Choosing a stored value explicitly transfers this secret's
+				// authority to the revision. Keep the old environment value
+				// available until activation, then it can be removed safely.
 			default:
 				differs = fileSecret != "" || ref.Stored != ""
 			}

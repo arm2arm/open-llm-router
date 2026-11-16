@@ -614,7 +614,8 @@ export function AuthenticationSettingsPanel() {
                 {data.other_issuers.map((issuer) => (
                   <li key={issuer.issuer}>
                     <code>{issuer.issuer}</code>: {issuer.enabled_users} enabled
-                    users, {issuer.active_keys} active keys
+                    users, {issuer.active_keys} active inference keys,{' '}
+                    {issuer.active_admin_keys} active administration keys
                   </li>
                 ))}
               </ul>

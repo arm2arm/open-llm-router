@@ -11,7 +11,7 @@ import (
 
 // WithModels validates an immutable routing copy against the file-owned group
 // and alias policies. Resolved tokens are reconstructed, never accepted in JSON.
-func WithModels(base *Config, models map[string]Model, lookup func(string) (string, bool)) (*Config, error) {
+func WithModels(base *Config, models map[string]Model, lookup func(name, origin string) (string, bool)) (*Config, error) {
 	return WithRouting(base, models, base.Aliases, lookup)
 }
 
@@ -19,13 +19,13 @@ func WithModels(base *Config, models map[string]Model, lookup func(string) (stri
 // aliases. Aliases and group policies must name configured models, so a model
 // still in use cannot be removed. Backend credentials are resolved through
 // lookup from bearer_token_env references.
-func WithRouting(base *Config, models map[string]Model, aliases map[string]string, lookup func(string) (string, bool)) (*Config, error) {
+func WithRouting(base *Config, models map[string]Model, aliases map[string]string, lookup func(name, origin string) (string, bool)) (*Config, error) {
 	return WithPolicies(base, models, aliases, base.Groups, lookup)
 }
 
 // WithPolicies copies and validates models, aliases and group policies together.
 // No model or policy from the previous revision can leak into the replacement.
-func WithPolicies(base *Config, models map[string]Model, aliases map[string]string, groups map[string]Group, lookup func(string) (string, bool)) (*Config, error) {
+func WithPolicies(base *Config, models map[string]Model, aliases map[string]string, groups map[string]Group, lookup func(name, origin string) (string, bool)) (*Config, error) {
 	data, err := json.Marshal(models)
 	if err != nil {
 		return nil, Problems{"invalid model configuration"}
@@ -62,7 +62,7 @@ func WithPolicies(base *Config, models map[string]Model, aliases map[string]stri
 			}
 			r.URL = origin
 			if r.Backend != "" {
-				token, ok := lookup("backend:" + r.Backend)
+				token, ok := lookup("backend:"+r.Backend, r.URL)
 				if !ok || r.BearerTokenEnv != "" {
 					problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: choose an available managed backend", name, i))
 				} else {
@@ -70,7 +70,7 @@ func WithPolicies(base *Config, models map[string]Model, aliases map[string]stri
 				}
 			}
 			if r.BearerTokenEnv != "" {
-				token, ok := lookup(r.BearerTokenEnv)
+				token, ok := lookup(r.BearerTokenEnv, r.URL)
 				if !isVarName(r.BearerTokenEnv) || !ok || token == "" || strings.ContainsAny(token, "\r\n") {
 					problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: choose an available backend credential reference", name, i))
 				} else {

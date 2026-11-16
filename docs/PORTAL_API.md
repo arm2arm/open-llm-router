@@ -321,6 +321,10 @@ Resolved backend secrets are excluded from all responses and revisions.
   per-replica lists are diagnostic. Uses `GET /v1/models`, with `/api/tags` fallback
   only on 404/405/501. Destinations and credential references use the same policy
   as inference, without browser credentials, environment proxies or redirects.
+  Credential references are bound to their deployment-approved origins (file
+  replicas or `OLR_BACKEND_TOKEN_ORIGINS`); changing the origin with a reference
+  selected returns 400 before sending a credential. This also applies to endpoint
+  tests, saved revisions and routing activation.
   Authentication errors are not retried on the fallback path. A generic
   OpenAI-compatible catalog may also be checked against `/api/tags` to identify
   Ollama. The detected provider is returned per replica. Host inputs and common
@@ -429,15 +433,25 @@ contain secret values: secrets appear as `configured`, `reference`
   active revision (404 otherwise) and applies it, even while that provider is down.
 - `POST …/apply` with `{}` applies the active revision to this router, for example
   after a CLI activation.
-- The view also contains `other_issuers`: `{issuer, enabled_users, active_keys}`
-  for SSO accounts of issuers other than the current one. On an issuer change,
+- The view also contains `other_issuers`: `{issuer, enabled_users, active_keys, active_admin_keys}`
+  for SSO accounts of issuers other than the current one. `active_keys` counts
+  unexpired, unrevoked inference keys of enabled owners; `active_admin_keys`
+  reports administration keys separately. Both survive an issuer change until
+  expiry, revocation or owner disablement. On an issuer change,
   pending SSO logins are discarded and other issuers' SSO sessions stop
   authenticating; accounts are never merged across issuers.
 
 Connection checks and test sign-in contact only the issuer (or its back-channel
 URL), never follow redirects, and refuse link-local, metadata, multicast and
 unspecified addresses at connection time. Loopback and private networks are
-allowed for internal identity providers.
+allowed for internal identity providers. Inherited client secrets are bound to
+the original issuer, back-channel URL and corresponding client ID; changing any
+of them requires clearing or replacing the secret. Checks and test sign-in reject
+such drafts with 400 before contacting a provider. Portal credentials go to the
+bound provider's introspection/token endpoints; sync credentials go to its token
+endpoint. Explicitly replacing an environment reference with a stored secret
+allows activation while the old environment value is still present; remove it
+after activation.
 
 ## Admin routing settings
 

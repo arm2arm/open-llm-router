@@ -1281,6 +1281,13 @@ test('administrator applies and rolls back authentication settings without a res
     .fill('http://keycloak:8080/realms/olr-dev')
   await draft.getByLabel('Portal client ID', { exact: true }).fill('olr-portal')
   await draft.getByLabel('API audience', { exact: true }).fill('olr-api')
+  // This is a new connection. Explicitly supply its credentials instead of
+  // forwarding the environment secrets imported with local-only settings.
+  // Keep those environment values present until the stored draft activates.
+  await draft.getByLabel('Portal client secret source').selectOption('store')
+  await draft.getByLabel('New portal client secret').fill('olr-portal-dev-only')
+  await draft.getByLabel('Sync client secret source').selectOption('store')
+  await draft.getByLabel('New sync client secret').fill('olr-sync-dev-only')
   await draft.getByRole('button', { name: 'Save draft', exact: true }).click()
   await expect(panel).toContainText('Draft revision 2')
   const checks = panel.getByRole('form', { name: 'Run connection checks' })

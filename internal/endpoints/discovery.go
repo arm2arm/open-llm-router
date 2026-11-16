@@ -70,8 +70,8 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 		}
 		seen[source.URL] = true
 		if source.BearerTokenEnv != "" {
-			if _, ok := s.Policy.Token(source.BearerTokenEnv); !ok {
-				return result, &ValidationError{"choose an available backend credential reference"}
+			if _, ok := s.Policy.Token(source.BearerTokenEnv, source.URL); !ok {
+				return result, &ValidationError{"choose a backend credential approved for this origin"}
 			}
 		}
 	}
@@ -87,7 +87,7 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 				result.Replicas[i] = Catalog{URL: source.URL, Models: []string{}, Error: "model discovery timed out"}
 				return
 			}
-			token, _ := s.Policy.Token(source.BearerTokenEnv)
+			token, _ := s.Policy.Token(source.BearerTokenEnv, source.URL)
 			client, err := s.Policy.NewCatalogClient(ctx, source.URL, source.PrivateNetwork)
 			if err != nil {
 				result.Replicas[i] = Catalog{URL: source.URL, Models: []string{}, Error: "backend destination is not permitted or could not be resolved"}

@@ -158,10 +158,10 @@ func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, err
 		}
 		models[name] = model
 	}
-	lookup := func(name string) (string, bool) {
+	lookup := func(name, origin string) (string, bool) {
 		if id, ok := strings.CutPrefix(name, "backend:"); ok {
 			backend := r.Backends[id]
-			if backend == nil {
+			if backend == nil || backend.URL != origin {
 				return "", false
 			}
 			return in.secrets[backend.SecretName(id)], true
@@ -169,7 +169,7 @@ func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, err
 		if in.tokens == nil {
 			return "", false
 		}
-		return in.tokens(name)
+		return in.tokens(name, origin)
 	}
 	cfg, err := config.WithPolicies(base, models, r.Aliases, groups, lookup)
 	if err != nil {

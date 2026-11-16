@@ -504,7 +504,8 @@ func (h *Handler) applyAuthentication(w http.ResponseWriter, r *http.Request, u 
 // one in use. They are never linked to the current issuer's accounts.
 func (h *Handler) otherIssuers(r *http.Request) ([]issuerUsers, error) {
 	rows, err := h.pool.Query(r.Context(), `SELECT u.issuer,count(*) FILTER (WHERE u.enabled),
-		(SELECT count(*) FROM api_keys k JOIN users o ON o.id=k.user_id WHERE o.issuer=u.issuer AND o.enabled AND NOT k.revoked AND k.expires>clock_timestamp())
+		(SELECT count(*) FROM api_keys k JOIN users o ON o.id=k.user_id WHERE o.issuer=u.issuer AND o.enabled AND NOT k.revoked AND k.expires>clock_timestamp()),
+		(SELECT count(*) FROM admin_api_keys k JOIN users o ON o.id=k.owner_id WHERE o.issuer=u.issuer AND o.enabled AND NOT k.revoked AND k.expires>clock_timestamp())
 		FROM users u WHERE u.issuer<>'local' AND u.issuer<>$1 GROUP BY u.issuer ORDER BY u.issuer`, h.current().issuer())
 	if err != nil {
 		return nil, err
@@ -513,7 +514,7 @@ func (h *Handler) otherIssuers(r *http.Request) ([]issuerUsers, error) {
 	list := []issuerUsers{}
 	for rows.Next() {
 		var entry issuerUsers
-		if err := rows.Scan(&entry.Issuer, &entry.EnabledUsers, &entry.ActiveKeys); err != nil {
+		if err := rows.Scan(&entry.Issuer, &entry.EnabledUsers, &entry.ActiveKeys, &entry.ActiveAdminKeys); err != nil {
 			return nil, err
 		}
 		list = append(list, entry)
@@ -522,7 +523,8 @@ func (h *Handler) otherIssuers(r *http.Request) ([]issuerUsers, error) {
 }
 
 type issuerUsers struct {
-	Issuer       string `json:"issuer"`
-	EnabledUsers int64  `json:"enabled_users"`
-	ActiveKeys   int64  `json:"active_keys"`
+	Issuer          string `json:"issuer"`
+	EnabledUsers    int64  `json:"enabled_users"`
+	ActiveKeys      int64  `json:"active_keys"`
+	ActiveAdminKeys int64  `json:"active_admin_keys"`
 }

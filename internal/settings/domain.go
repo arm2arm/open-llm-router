@@ -48,8 +48,8 @@ type secretBinding struct {
 }
 
 type applyInput struct {
-	secrets map[string]string           // resolved secret values by setting name
-	tokens  func(string) (string, bool) // backend credential references
+	secrets map[string]string                        // resolved secret values by setting name
+	tokens  func(name, origin string) (string, bool) // backend credential references
 }
 
 func bindingNamed(bindings []secretBinding, name string) (secretBinding, bool) {

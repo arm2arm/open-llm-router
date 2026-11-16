@@ -25,7 +25,7 @@ func TestManagedBackendURLsAcceptHostsAndAPIPaths(t *testing.T) {
 			model.Pool = append([]Replica(nil), model.Pool...)
 			model.Pool[0].URL = raw
 			models["chat-model"] = model
-			next, err := WithModels(base, models, lookupIn(nil))
+			next, err := WithModels(base, models, func(string, string) (string, bool) { return "", false })
 			if err != nil || next.Models["chat-model"].Pool[0].URL != want {
 				t.Fatalf("expected %s: %v", want, err)
 			}
