@@ -60,6 +60,9 @@ func (h *Handler) agentPreview(w http.ResponseWriter, r *http.Request, a agentId
 	if !validArgs(w, op, body.Arguments) {
 		return
 	}
+	if !h.authorizeAgentTarget(w, r, a, &op, body.Arguments) {
+		return
+	}
 	raw, _ := json.Marshal(body.Arguments)
 	hash, err := argumentHash(raw)
 	if err != nil {
@@ -137,7 +140,7 @@ func (h *Handler) agentPreview(w http.ResponseWriter, r *http.Request, a agentId
 	}
 	respond(w, 201, map[string]any{"id": id, "operation": op.Name, "proposed": summary, "state_version": version, "expires": expires, "required_permissions": append([]string{op.Permission}, op.Additional...), "warnings": []string{"Preview does not apply changes. Apply revalidates configuration and authorization.", "Changes are autonomous with this key; this preview is not a human approval."}})
 }
-func (h *Handler) agentApply(w http.ResponseWriter, r *http.Request, a agentIdentity) {
+func (h *Handler) agentApply(w http.ResponseWriter, r *http.Request, _ agentIdentity) {
 	var body struct {
 		Arguments      agentArguments `json:"arguments"`
 		IdempotencyKey string         `json:"idempotency_key"`
@@ -156,12 +159,12 @@ func (h *Handler) agentApply(w http.ResponseWriter, r *http.Request, a agentIden
 	h.agentMu.Lock()
 	defer h.agentMu.Unlock()
 	// Authentication is repeated after acquiring the execution lock.
-	fresh, err := h.agentIdentity(r)
+	a, err := h.agentIdentity(r)
 	if err != nil {
 		fail(w, 403, "permission_error", "administration authorization changed")
 		return
 	}
-	a = fresh
+	r = r.WithContext(context.WithValue(r.Context(), agentContext{}, a))
 	raw, _ := json.Marshal(body.Arguments)
 	hash, _ := argumentHash(raw)
 	var name, status string
@@ -191,6 +194,9 @@ func (h *Handler) agentApply(w http.ResponseWriter, r *http.Request, a agentIden
 		return
 	}
 	if !validArgs(w, op, body.Arguments) {
+		return
+	}
+	if !h.authorizeAgentTarget(w, r, a, &op, body.Arguments) {
 		return
 	}
 	err = h.pool.QueryRow(r.Context(), `SELECT version FROM admin_state WHERE id=true`).Scan(&current)

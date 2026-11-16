@@ -1159,6 +1159,12 @@ issued OIDC access tokens retain their embedded group claims until replaced.
 
 ### Manage local users in Admin
 
+Creating or promoting a local administrator, resetting a local administrator's
+password, or activating a group policy that grants new administrator authority
+requires a local administrator sign-in within the last 15 minutes. SSO and stale
+local sessions can still manage ordinary local users. Agent administration uses
+its explicit `admin_keys:delegate` permission for administrator targets instead.
+
 1. Sign in as the protected local administrator or a user in a configured
    `admin: true` group. Complete any required first password change.
 2. Open **Admin → Create local user**. Enter an exact username, optional email,

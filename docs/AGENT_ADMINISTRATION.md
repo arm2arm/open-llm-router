@@ -82,7 +82,7 @@ its own egress address the source unless deployed as an explicitly trusted proxy
 | `audit:read` | Paginated administration history |
 | `users:read` | User, limit and group inspection |
 | `users:write` | User enablement, memberships, quota overrides, local creation |
-| `users:credentials` | Password resets and inference-key revocation |
+| `users:credentials` | Ordinary-user password resets and inference-key revocation; administrator resets also require `admin_keys:delegate` |
 | `routing:read`, `routing:write` | Models, aliases, endpoints and group policies |
 | `authentication:read`, `authentication:write` | Masked settings, checks, draft/activate/rollback/apply |
 | `admin_keys:read`, `admin_keys:write` | Own administration-key metadata, narrowing and revocation |
@@ -91,6 +91,11 @@ its own egress address the source unless deployed as an explicitly trusted proxy
 Writes also require the corresponding read permission. User creation requires
 credential and delegation permission; group assignment and complete routing
 policy changes require delegation permission because they can grant admin rights.
+Resetting an administrator's password (including an API-key-only local account)
+or re-enabling an administrator also requires `admin_keys:delegate`. Ordinary-user
+resets/enablement and disabling users do not gain that requirement. Preview and
+apply both check the target's current authority. `/operations` exposes this
+conditional requirement as `administrator_target_permission`.
 Endpoint probes require routing write permission and use existing outbound
 network and credential-reference restrictions. `/operations` is authoritative for
 all required permissions and exact body schemas.
