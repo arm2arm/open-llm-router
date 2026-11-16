@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	errUnknownEndUser  = errors.New("unknown end user")
-	errDisabledEndUser = errors.New("end user is disabled")
-	errEndUserConflict = errors.New("end-user headers name different users")
+	errUnknownEndUser   = errors.New("unknown end user")
+	errDisabledEndUser  = errors.New("end user is disabled")
+	errProtectedEndUser = errors.New("protected administrator cannot be a forwarded end user")
+	errEndUserConflict  = errors.New("end-user headers name different users")
 )
 
 type endUserEntry struct {
@@ -34,6 +35,9 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 	entry, ok := a.endUsers[endUserKey(attribute, value)]
 	if ok && a.listening && a.now().Before(entry.until) {
 		a.mu.Unlock()
+		if entry.principal.ProtectedAdmin {
+			return Principal{}, errProtectedEndUser
+		}
 		return entry.principal.clone(), nil
 	}
 	a.mu.Unlock()
@@ -53,12 +57,13 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 	rows, err := a.pool.Query(ctx, `SELECT id, username, groups, enabled AND NOT EXISTS
 		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password),protected_admin,
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = users.id)
-		FROM users WHERE `+where+` LIMIT 2`, value)
+		FROM users WHERE `+where+` ORDER BY protected_admin DESC LIMIT 2`, value)
 	if err != nil {
 		return Principal{}, errors.New("end-user lookup failed")
 	}
 	var found []Principal
 	var enabled bool
+	var protected bool
 	for rows.Next() {
 		var p Principal
 		if err := rows.Scan(&p.UserID, &p.Username, &p.Groups, &enabled, &p.ProtectedAdmin, &p.Overrides); err != nil {
@@ -66,10 +71,14 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 			return Principal{}, errors.New("end-user lookup failed")
 		}
 		found = append(found, p)
+		protected = protected || p.ProtectedAdmin
 	}
 	rows.Close()
 	if rows.Err() != nil {
 		return Principal{}, errors.New("end-user lookup failed")
+	}
+	if protected {
+		return Principal{}, errProtectedEndUser
 	}
 	if len(found) != 1 {
 		return Principal{}, errUnknownEndUser
@@ -114,20 +123,27 @@ func (a *Authenticator) forward(r *http.Request, p Principal) (Principal, error)
 		return Principal{}, errEndUserConflict
 	}
 	var end Principal
-	for i, n := range names {
+	fallback := false
+	for _, n := range names {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		user, err := a.lookupEndUser(ctx, n.attribute, n.value)
 		cancel()
 		if errors.Is(err, errUnknownEndUser) && a.Forwarders.UnknownUser == config.UnknownForwarderPolicy {
-			return p, nil
+			// Check every named identity before falling back: an unknown
+			// header must not hide a protected or disabled account.
+			fallback = true
+			continue
 		}
 		if err != nil {
 			return Principal{}, err
 		}
-		if i > 0 && user.UserID != end.UserID {
+		if end.UserID != "" && user.UserID != end.UserID {
 			return Principal{}, errEndUserConflict
 		}
 		end = user
+	}
+	if fallback {
+		return p, nil
 	}
 	end.KeyID, end.KeyClass, end.ForwardedBy = p.KeyID, p.KeyClass, p.UserID
 	return end, nil

@@ -562,6 +562,11 @@ Otherwise the call is refused with 403 (`unknown_user: reject`) or served as the
 own (`forwarder_policy`). A disabled user is always refused. The mapped headers are removed
 before the call reaches a backend, and ignored from keys without the flag.
 
+The protected local administrator cannot be named as a forwarded end user by username,
+email or ID. Such a request returns 403 under either `unknown_user` policy, including when
+another identity header names an unknown user. The administrator's own API keys continue to
+work normally. Forwarder fallback never overrides an explicit protected or disabled match.
+
 ## Usage retention
 
 The router deletes per-request records older than `retention.usage_days` (default 90) and
