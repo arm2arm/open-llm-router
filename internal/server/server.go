@@ -20,7 +20,8 @@ const (
 	// deadlines for a whole exchange, and responses stream for minutes.
 	readHeaderTimeout = 10 * time.Second
 	// idleTimeout closes keep-alive connections that carry no request.
-	idleTimeout = 2 * time.Minute
+	idleTimeout    = 2 * time.Minute
+	maxHeaderBytes = 64 << 10
 	// Bound readiness checks even if the database is unreachable or its pool
 	// has no free connections. Request cancellation also stops the check.
 	readinessTimeout = 2 * time.Second
@@ -165,6 +166,7 @@ func (s *Server) Run(ctx context.Context, ln net.Listener, grace time.Duration) 
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 		ErrorLog:          slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
 	}
 	serveErr := make(chan error, 1)

@@ -144,7 +144,7 @@ aliases:
 						if shape.Type != "error" || len(shape.Error) != 2 {
 							t.Fatalf("Anthropic error: %s", body)
 						}
-					} else if shape.Type != "" || shape.Error["code"] != float64(403) || len(shape.Error) != 4 {
+					} else if shape.Type != "" || shape.Error["code"] != "permission_error" || len(shape.Error) != 4 {
 						t.Fatalf("OpenAI error: %s", body)
 					}
 					if mock.Stats().Requests != before {

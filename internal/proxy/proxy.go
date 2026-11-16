@@ -37,6 +37,7 @@ import (
 const MaxBody = config.DefaultMaxBodyBytes
 
 var errHeaderTimeout = errors.New("upstream response headers timed out")
+var errFirstByteTimeout = errors.New("upstream first response byte timed out")
 var errIdleTimeout = errors.New("upstream response stalled")
 
 type Handler struct {
@@ -161,6 +162,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			panic(p)
 		}
 	}()
+	if len(r.Header.Get("X-Session-Id")) > pool.MaxSessionIDBytes {
+		apierr.Write(w, protocol, 400, "invalid_request_error", "X-Session-Id must not exceed 256 bytes")
+		return
+	}
 	if r.ContentLength > h.maxBody {
 		w.Header().Set("Connection", "close") // do not drain a rejected upload
 		apierr.Write(w, protocol, 413, "request_too_large", fmt.Sprintf("request body exceeds %d bytes", h.maxBody))
@@ -302,12 +307,16 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	// normal user concurrency lease owns the buffered request, including queues.
 	slot.release()
 	var previous *pool.Lease
+	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if r.Context().Err() != nil {
 			return
 		}
 		selectionStarted := time.Now()
 		request := pool.Request{Exclude: previous, Priority: priority, Wait: time.Duration(model.QueueTimeoutS) * time.Second}
+		if previous != nil {
+			request.Wait = 0
+		}
 		request.Allowed = func(replica config.Replica) bool {
 			return policy.BackendAllowed(cfg, replica.Backend, principal.Groups, principal.ProtectedAdmin)
 		}
@@ -318,6 +327,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		queued := time.Since(selectionStarted)
 		account.selection += queued
 		if lease == nil {
+			if lastErr != nil {
+				writeAttemptError(w, protocol, lastErr)
+				return
+			}
 			account.capture.Attempt(requesttrace.Attempt{QueueMS: queued.Milliseconds(), Error: "no healthy replica with available capacity"})
 			w.Header().Set("Retry-After", "1")
 			apierr.Write(w, protocol, 503, "overloaded_error", "no healthy replica with available capacity")
@@ -348,7 +361,20 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		if err == nil || committed || r.Context().Err() != nil {
 			return
 		}
+		if errors.Is(err, errFirstByteTimeout) || errors.Is(err, errIdleTimeout) {
+			writeAttemptError(w, protocol, err)
+			return
+		}
+		lastErr = err
 		previous = lease
+	}
+	writeAttemptError(w, protocol, lastErr)
+}
+
+func writeAttemptError(w http.ResponseWriter, protocol string, err error) {
+	if errors.Is(err, errHeaderTimeout) || errors.Is(err, errFirstByteTimeout) || errors.Is(err, errIdleTimeout) {
+		apierr.Write(w, protocol, 504, "timeout_error", "upstream response timed out")
+		return
 	}
 	apierr.Write(w, protocol, 502, "api_error", "backend connection failed before the response started")
 }
@@ -358,7 +384,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, model config.Model, lease *pool.Lease, account *accounting, hideUsage bool) (committed bool, err error) {
 	defer lease.Release()
 	defer func() {
-		if err != nil && !committed && r.Context().Err() == nil {
+		if err != nil && !committed && r.Context().Err() == nil && !errors.Is(err, errFirstByteTimeout) && !errors.Is(err, errIdleTimeout) {
 			lease.Failed()
 		}
 	}()
@@ -369,7 +395,7 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	defer cancel(nil)
 	defer func() {
 		// Keep the timer's cause for the trace's attempt classification.
-		if cause := context.Cause(ctx); err != nil && (cause == errHeaderTimeout || cause == errIdleTimeout) {
+		if cause := context.Cause(ctx); err != nil && (cause == errHeaderTimeout || cause == errFirstByteTimeout || cause == errIdleTimeout) {
 			err = fmt.Errorf("%w: %v", cause, err)
 		}
 	}()
@@ -405,13 +431,18 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	}
 	account.capture.Upstream(resp.StatusCode, resp.Header.Get("Content-Type"))
 	defer resp.Body.Close()
-	idleTimer := time.AfterFunc(time.Duration(model.IdleTimeoutS)*time.Second, func() { cancel(errIdleTimeout) })
-	defer idleTimer.Stop()
+	// Headers can arrive before a long prompt prefill. Give the first body
+	// byte its own timeout_s budget; idle_timeout_s starts after that byte.
+	firstByteTimer := time.AfterFunc(time.Duration(model.TimeoutS)*time.Second, func() { cancel(errFirstByteTimeout) })
+	defer firstByteTimer.Stop()
 	buf := make([]byte, 32<<10)
 	n, readErr := resp.Body.Read(buf)
+	firstByteTimer.Stop()
 	if n == 0 && readErr != nil && readErr != io.EOF {
 		return false, readErr
 	}
+	idleTimer := time.AfterFunc(time.Duration(model.IdleTimeoutS)*time.Second, func() { cancel(errIdleTimeout) })
+	defer idleTimer.Stop()
 	if n > 0 {
 		account.firstByte()
 	}
@@ -430,9 +461,10 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		return err
 	}
 	account.observe(resp.Header.Get("Content-Type"), hideUsage, write)
-	if account.stream != nil && hideUsage {
-		// A filtered event changes the length, even if the backend supplied a
-		// Content-Length for its SSE response.
+	if account.stream != nil {
+		// A filtered event changes the length. Also keep the response open
+		// until its terminator is checked: Content-Length could otherwise
+		// make a truncated stream look complete before we abort it.
 		w.Header().Del("Content-Length")
 	}
 	w.WriteHeader(resp.StatusCode)
@@ -466,7 +498,8 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 					return true, err
 				}
 			}
-			if readErr != io.EOF {
+			incomplete := account.stream != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 && !account.stream.Totals.Complete && !account.stream.Totals.StreamError
+			if readErr != io.EOF || incomplete {
 				// Terminate the HTTP response instead of reporting a truncated
 				// stream as a successful, complete response.
 				account.aborted = true
@@ -502,6 +535,8 @@ func attemptError(r *http.Request, err error, committed bool) string {
 		return "client disconnected"
 	case errors.Is(err, errHeaderTimeout):
 		return "upstream response headers timed out"
+	case errors.Is(err, errFirstByteTimeout):
+		return "upstream first response byte timed out"
 	case errors.Is(err, errIdleTimeout):
 		return "upstream response stalled"
 	case committed:

@@ -392,6 +392,9 @@ func TestPassiveRetryAndNoRetryAfterBytes(t *testing.T) {
 				if readErr != nil || string(body) != "complete\n" || calls[0].Load() != 1 || calls[1].Load() != 1 {
 					t.Fatalf("response %q error %v", body, readErr)
 				}
+				if states := p.Snapshot(); states[0].Healthy || !states[1].Healthy {
+					t.Fatalf("transport failure did not cool only the failed replica: %+v", states)
+				}
 			}
 		})
 	}
@@ -495,7 +498,7 @@ func TestHeaderAndIdleTimeouts(t *testing.T) {
 					t.Fatalf("%q %v", body, readErr)
 				}
 			} else {
-				if resp.StatusCode != 503 || h.Pools.Ready() {
+				if resp.StatusCode != 504 || h.Pools.Ready() {
 					t.Fatalf("status %d ready %v", resp.StatusCode, h.Pools.Ready())
 				}
 			}

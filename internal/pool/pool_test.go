@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -305,7 +306,7 @@ func TestSessionAffinity(t *testing.T) {
 			t.Fatalf("sessions are unevenly spread: %v", homes)
 		}
 	}
-	home := p.preferred("sticky")
+	home := p.preferred(sha256.Sum256([]byte("sticky")))
 	p.replicas[home].healthy = false
 	l := p.AcquireRequest(t.Context(), Request{Session: "sticky"})
 	if l == nil || l.index == home {

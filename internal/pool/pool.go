@@ -4,6 +4,7 @@ package pool
 
 import (
 	"context"
+	"crypto/sha256"
 	"hash/fnv"
 	"math"
 	"math/rand/v2"
@@ -19,9 +20,10 @@ import (
 )
 
 const (
-	CheckInterval = 5 * time.Second
-	CheckTimeout  = 2 * time.Second
-	Cooldown      = 10 * time.Second
+	CheckInterval     = 5 * time.Second
+	CheckTimeout      = 2 * time.Second
+	Cooldown          = 10 * time.Second
+	MaxSessionIDBytes = 256
 )
 
 type replica struct {
@@ -90,7 +92,9 @@ type Request struct {
 	Exclude *Lease
 	// Session, if not empty, prefers one replica per session (rendezvous
 	// hashing) while it is healthy and has capacity.
-	Session string
+	Session    string
+	sessionKey [32]byte
+	hasSession bool
 	// Priority orders queued callers: lower values are served first.
 	Priority int
 	// Wait is how long to queue when every replica is full; 0 does not wait.
@@ -115,20 +119,26 @@ func (p *Pool) Acquire(exclude *Lease) *Lease {
 // full. It returns nil when the wait ends without capacity or ctx is done.
 // Callers already queued with the same or a better priority go first.
 func (p *Pool) AcquireRequest(ctx context.Context, r Request) *Lease {
+	if ctx.Err() != nil {
+		return nil
+	}
+	// Bound and hash client input once, before taking the selection mutex.
+	if r.Session != "" && len(r.Session) <= MaxSessionIDBytes {
+		r.sessionKey, r.hasSession = sha256.Sum256([]byte(r.Session)), true
+	}
+	r.Session = ""
+	// Failover is an immediate attempt on another replica, never a queued replay.
+	if r.Exclude != nil {
+		r.Wait = 0
+	}
 	p.mu.Lock()
 	changed := p.events.channel()
-	ahead := false
-	for _, w := range p.waiters {
-		ahead = ahead || w.priority <= r.Priority
-	}
-	if !ahead {
-		if lease := p.reserve(r); lease != nil || r.Wait <= 0 {
-			p.mu.Unlock()
-			return lease
-		}
-	} else if r.Wait <= 0 {
+	// Give existing callers first use of capacity they can actually use.
+	// An unserviceable waiter must not block unrelated free replicas.
+	p.dispatchBefore(r.Priority)
+	if lease := p.reserve(r); lease != nil || r.Wait <= 0 {
 		p.mu.Unlock()
-		return nil
+		return lease
 	}
 	w := &waiter{request: r, lease: make(chan *Lease, 1), priority: r.Priority}
 	at := len(p.waiters)
@@ -146,6 +156,10 @@ waiting:
 	for {
 		select {
 		case lease := <-w.lease:
+			if ctx.Err() != nil {
+				lease.Release()
+				return nil
+			}
 			return lease
 		case <-changed:
 			p.mu.Lock()
@@ -160,7 +174,9 @@ waiting:
 	}
 	p.mu.Lock()
 	p.waiters = slices.DeleteFunc(p.waiters, func(other *waiter) bool { return other == w })
+	p.dispatch()
 	p.mu.Unlock()
+	p.events.notify()
 	// A lease may have been handed over just before the waiter left.
 	select {
 	case lease := <-w.lease:
@@ -182,13 +198,21 @@ func (p *Pool) Queued() int {
 
 // dispatch hands free capacity to queued callers in order. The caller holds mu.
 func (p *Pool) dispatch() {
-	for len(p.waiters) > 0 {
-		w := p.waiters[0]
-		lease := p.reserve(w.request)
-		if lease == nil {
+	p.dispatchBefore(math.MaxInt)
+}
+
+func (p *Pool) dispatchBefore(priority int) {
+	for i := 0; i < len(p.waiters); {
+		w := p.waiters[i]
+		if w.priority > priority {
 			return
 		}
-		p.waiters = p.waiters[1:]
+		lease := p.reserve(w.request)
+		if lease == nil {
+			i++
+			continue
+		}
+		p.waiters = slices.Delete(p.waiters, i, i+1)
 		w.lease <- lease
 	}
 }
@@ -204,8 +228,8 @@ func (p *Pool) eligible(i int, r Request, now time.Time) bool {
 func (p *Pool) reserve(r Request) *Lease {
 	now := time.Now()
 	best := -1
-	if r.Session != "" {
-		if i := p.preferred(r.Session); p.eligible(i, r, now) {
+	if r.hasSession {
+		if i := p.preferred(r.sessionKey); p.eligible(i, r, now) {
 			best = i
 		}
 	}
@@ -250,13 +274,13 @@ func (p *Pool) reserve(r Request) *Lease {
 // preferred returns the session's replica by rendezvous hashing over replica
 // URLs: stable while the pool's configuration is unchanged, and only the
 // sessions of a removed replica move. Weights scale the scores.
-func (p *Pool) preferred(session string) int {
+func (p *Pool) preferred(session [32]byte) int {
 	best, top := 0, -1.0
 	for i, rep := range p.replicas {
 		h := fnv.New64a()
 		h.Write([]byte(rep.config.URL))
 		h.Write([]byte{0})
-		h.Write([]byte(session))
+		h.Write(session[:])
 		// Weighted rendezvous: -w / ln(u) with u uniform in (0, 1).
 		u := (float64(mix(h.Sum64())>>11) + 0.5) / (1 << 53)
 		score := -rep.config.Weight / math.Log(u)

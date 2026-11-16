@@ -25,7 +25,7 @@ func WriteDetails(w http.ResponseWriter, protocol string, status int, kind, mess
 		body["type"] = "error"
 	} else {
 		detail["param"] = nil
-		detail["code"] = status
+		detail["code"] = kind
 	}
 	_ = json.NewEncoder(w).Encode(body)
 }
