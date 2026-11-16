@@ -163,6 +163,14 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			panic(p)
 		}
 	}()
+	if r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses" {
+		values := r.Header.Values(usage.TimingHeader)
+		if len(values) > 1 || (len(values) == 1 && values[0] != "true" && values[0] != "false") {
+			apierr.Write(w, protocol, 400, "invalid_request_error", usage.TimingHeader+" must be true or false")
+			return
+		}
+		account.usageTiming = len(values) == 1 && values[0] == "true"
+	}
 	if len(r.Header.Get("X-Session-Id")) > pool.MaxSessionIDBytes {
 		apierr.Write(w, protocol, 400, "invalid_request_error", "X-Session-Id must not exceed 256 bytes")
 		return
@@ -439,7 +447,7 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		metrics.Inject(ctx, req.Header)
 	}
 	req.Header.Del("Baggage")
-	for _, key := range []string{"Authorization", "X-Api-Key", "Cookie", "Content-Length", "Host"} {
+	for _, key := range []string{"Authorization", "X-Api-Key", "Cookie", "Content-Length", "Host", usage.TimingHeader} {
 		req.Header.Del(key)
 	}
 	req.Header.Set("Accept-Encoding", "identity")
@@ -488,6 +496,15 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	write := func(p []byte) error {
 		_, err := w.Write(p)
 		return err
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0]))
+	encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+	if account.usageTiming && !account.inputRejected && (encoding == "" || encoding == "identity") && (contentType == "application/json" || contentType == "text/event-stream") {
+		timing := usage.NewTiming(account.format, contentType == "text/event-stream", account.began, write)
+		write = timing.Write
+		for _, key := range []string{"Content-Length", "Content-MD5", "Digest", "Content-Digest", "ETag"} {
+			w.Header().Del(key)
+		}
 	}
 	account.observe(resp.Header.Get("Content-Type"), hideUsage, write)
 	if account.stream != nil {

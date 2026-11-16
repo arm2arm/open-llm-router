@@ -54,6 +54,12 @@ model, API version, content type or parameter. A healthy backend is not proof th
 it implements Responses or Anthropic Messages. Pools must contain replicas with
 the same native API and model capabilities.
 
+Chat Completions and Responses clients may explicitly request the
+`X-OLR-Usage-Timing: true` usage extension. It adds router-observed throughput
+without replacing provider fields or changing token accounting. The header is
+consumed by OLR; native bodies remain unchanged by default. See
+[Open WebUI setup and measurement semantics](CLIENTS.md#open-webui-response-throughput).
+
 Responses create is deliberately stateless. Stored identifiers on shared backend
 credentials require user ownership checks and replica affinity; background jobs
 also require asynchronous usage and concurrency reconciliation. Those lifecycles

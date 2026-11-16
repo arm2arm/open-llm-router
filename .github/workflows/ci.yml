@@ -55,8 +55,10 @@ jobs:
         env:
           OLR_TEST_MCP_PYTHON: /tmp/olr-mcp/bin/python
         run: go test -count=1 ./tests/integration -run '^TestAgentAdministrationLifecycle$'
-      - name: SSE splitter fuzz test
-        run: go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=10s -parallel=2
+      - name: SSE splitter and usage timing fuzz tests
+        run: |
+          go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=10s -parallel=2
+          go test ./internal/usage -run '^$' -fuzz '^FuzzTimingPreservesProviderBytes$' -fuzztime=10s -parallel=2
       - name: Client verification helpers
         run: make test-clients
 

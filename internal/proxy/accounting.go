@@ -26,6 +26,7 @@ type accounting struct {
 	format        string // wire usage format; Responses still uses the openai protocol
 	inputEstimate int64  // serialized OpenAI streaming request bytes, once dispatched
 	inputRejected bool   // an upstream HTTP refusal must not receive an estimate
+	usageTiming   bool   // client explicitly requested router-observed throughput
 	json          *usage.JSON
 	stream        *usage.Stream
 	aborted       bool
