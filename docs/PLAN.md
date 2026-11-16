@@ -204,8 +204,11 @@ Keycloak clients per realm: `olr-portal` (confidential, auth code + PKCE, groups
 - `models.<name>.pool` lists replicas with `weight` (relative throughput) and `max_inflight`.
 - Selection: among healthy replicas below `max_inflight`, minimise `inflight / weight`;
   ties broken randomly. If all are full: queue up to `queue_timeout_s`, then `429`/`503`.
-- Health: active `GET /health` every few seconds + passive (connect errors/5xx → cool-down).
-  No retry after the first streamed byte; before that, one retry on a different replica.
+- Health: active `GET /health` every few seconds + passive (connection errors/header timeouts
+  before response bytes → 10-second cooldown and one immediate retry). First-body-byte timeouts
+  return 504 without cooldown/replay. Inference HTTP errors, including 5xx, pass through unchanged
+  without cooldown/replay; monitor per-replica inference errors separately from probe health.
+  A retry is never queued or sent back to the failed replica.
 - Optional **session affinity**: hash of `X-Session-Id` (or forwarder chat ID) prefers the same replica
   for prefix-cache reuse, unless it is overloaded.
 - **Priority**: key class / group maps to vLLM `priority` (backends started with

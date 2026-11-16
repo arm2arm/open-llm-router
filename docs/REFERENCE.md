@@ -90,14 +90,26 @@ database ping, regardless of whether replica slots are currently full. The datab
 bounded to 2 seconds and returns 503 on failure; `/healthz` remains a process liveness check.
 Health probes use each replica's `health_path` (default
 `/health`; use `/` for Ollama), at startup and every 5 seconds with a 2-second timeout:
-two failures remove a replica, one success restores it. A connection failure
-before response bytes triggers a 10-second cooldown and at most one retry on another replica.
-Once response bytes have started, a broken stream is cut off and never replayed.
+two failures remove a replica, one success restores it. A connection failure or header timeout
+before response bytes triggers a 10-second cooldown and at most one immediate retry on
+another available replica. The retry never queues; if it cannot run, the caller gets the
+original failure (502 for connection errors, 504 for timeouts). Inference HTTP error statuses,
+including 5xx, pass through without cooldown or replay; probe health does not guarantee
+inference success. Once response bytes have started, a broken stream is cut off and never replayed.
+Successful SSE responses must end with `[DONE]` (OpenAI), `message_stop` (Anthropic), or a
+protocol error event; clean EOF without one aborts the client response and records `aborted`.
 
-`timeout_s` bounds the wait for response headers; `idle_timeout_s` (default 30 seconds) bounds
-silence between chunks and blocked downstream writes. There is no overall generation timeout.
+`timeout_s` bounds each of the wait for response headers and, after headers arrive, the wait
+for the first body byte. Early headers therefore do not subject prompt prefill to the shorter
+`idle_timeout_s`. A first-body-byte timeout returns a protocol-shaped 504 `timeout_error`,
+does not cool the replica, and never replays the prompt. `idle_timeout_s` (default 30 seconds)
+bounds silence between subsequent chunks and blocked downstream writes. There is no overall generation timeout.
 Client disconnects cancel backend work. Streaming responses flush each read and carry
 `X-Accel-Buffering: no`, `Cache-Control: no-cache` and the router's `X-Request-Id`.
+Request headers are limited to 64 KiB. `X-Session-Id` is limited to 256 bytes; longer values
+return 400 before pool selection. Affinity reduces the session ID to a fixed-size digest before
+taking the pool mutex. Repeated sessions prefer the same replica; removing a replica moves
+only its sessions.
 
 For a quick alias check:
 

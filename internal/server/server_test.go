@@ -284,6 +284,25 @@ func run(t *testing.T, s *Server, grace time.Duration) (addr string, stop contex
 	return ln.Addr().String(), cancel, done
 }
 
+func TestRequestHeadersAreBounded(t *testing.T) {
+	s, _ := newTestServer()
+	addr, stop, done := run(t, s, time.Second)
+	defer func() { stop(); <-done }()
+	req, err := http.NewRequest("GET", "http://"+addr+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Large-Header", strings.Repeat("x", maxHeaderBytes+8192))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestHeaderFieldsTooLarge {
+		t.Fatal("unbounded request headers", resp.StatusCode)
+	}
+}
+
 type response struct {
 	body string
 	err  error

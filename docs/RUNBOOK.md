@@ -169,7 +169,7 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `oidc.required_claim` | — | `{name, value}` a portal login must carry |
 | `models.<name>.protocols` | — | `openai`, `anthropic` or both |
 | `models.<name>.upstream_model` | the name | model name sent to the backend |
-| `models.<name>.timeout_s` | — | wait for response headers |
+| `models.<name>.timeout_s` | — | each wait for response headers and for the first body byte after headers |
 | `models.<name>.idle_timeout_s` | 30 | silence allowed between chunks |
 | `models.<name>.queue_timeout_s` | 0 | wait for a free replica when all are full |
 | `models.<name>.session_affinity` | false | `X-Session-Id` keeps a session on one replica |
@@ -410,16 +410,30 @@ Calls pass, in order: authentication, model allow-list, concurrency (`max_concur
 A refused call gets **429** with `Retry-After` (seconds) and the protocol's error shape:
 
 ```json
-{"error":{"code":429,"type":"rate_limit_error","param":null,"limit":"tpm",
+{"error":{"code":"rate_limit_error","type":"rate_limit_error","param":null,"limit":"tpm",
            "message":"tpm exceeded; retry at 2026-11-11T12:00:21Z","reset_at":"2026-11-11T12:00:21.4Z"}}
 ```
 
-Anthropic clients get the same inside `{"type":"error","error":{…}}`. `limit` names the gate;
+OpenAI `error.code` is a string matching `error.type`; HTTP status remains in the status line.
+Anthropic clients get `{"type":"error","error":{…}}` without `code` or `param`. `limit` names the gate;
 `reset_at` is when it opens again (for concurrency an estimate of one second). Other answers:
 401 bad or missing credentials; 403 model not allowed, or unknown/disabled forwarded user;
 400 malformed body or, with `strict_quota`, a call without `max_tokens`; 408 a body not sent
 within two minutes; 413 a body over the configured limit (4 MiB by default); 503 the body-reader
 budget is full, no replica is free after `queue_timeout_s`, or the database is unreachable.
+A backend connection failure returns 502; an upstream timeout before response bytes returns
+504 `timeout_error`. After headers arrive, the first body byte has a separate `timeout_s`
+budget; exceeding it does not cool the replica or replay the prompt. Subsequent silence is
+bounded by `idle_timeout_s` and aborts an already started response. A successful SSE response
+ending without its protocol terminator or an error event also aborts, so clients see a read
+error and usage records `aborted`.
+
+Backend inference 5xx responses pass through without cooldown or retry, even when the health
+probe succeeds. A healthy endpoint badge means probe health, not successful inference.
+Detect a broken model runner with `sum by (model, replica)
+(rate(olr_requests_total{status_class="5xx"}[5m]))`; inspect the backend logs and model runner,
+and remove or repair a replica that keeps failing inference. This is especially relevant to
+Ollama's `/` health path, which can return a static banner while inference is broken.
 Users see their own limits and use in the portal and at `/v1/me/usage`.
 
 ## Known limitations
@@ -465,7 +479,9 @@ Per model:
   reverse proxy's read timeout.
 - `session_affinity: true`: calls with the same `X-Session-Id` header go to the same replica
   (weighted rendezvous hashing) while it is healthy and below `max_inflight`, so the backend's
-  prefix cache is reused; otherwise they go to the least-loaded replica.
+  prefix cache is reused; otherwise they go to the least-loaded replica. IDs over 256 bytes
+  return 400. The HTTP server limits request headers to 64 KiB. Session assignments may change
+  once on upgrading to the bounded digest implementation, then remain stable across replica removal.
 - `priority: {interactive: 0, batch: 10}`: the router sets the request field `priority` to the
   key class's value plus the caller's group `priority` (the lowest of their groups), replacing
   any value the client sent. Start vLLM with `--scheduling-policy priority`; lower values are
