@@ -478,10 +478,20 @@ Users see their own limits and use in the portal and at `/v1/me/usage`.
 - Endpoint/model parameters for existing logical models can be activated live through
   Admin. YAML/environment, logical model names, aliases and group policies require
   recreation. Endpoint activation does not synchronize multiple router processes.
-- Quotas count tokens as the backend reports them; a stream that ends without usage is counted
+- Quotas use backend-reported token counts when available. A stream that ends without output usage is counted
   by its content events, a lower bound. Without `strict_quota`, calls already admitted can
   overshoot a quota.
 - A call refused by `tpm` or a quota still counts against `rpm`.
+- OpenAI streaming calls without an input count use a conservative input charge of
+  one token per serialized forwarded request byte, including framing and router
+  rewrites. This covers disconnects during prefill/generation, timeouts and streams
+  that finish without usage. It may exceed actual tokenizer counts. Reported input
+  counts (including zero) take precedence; local rejections and upstream HTTP
+  errors do not receive this estimate. The identical charge reaches usage records,
+  daily totals, quota and TPM, so canceling before the usage event cannot avoid the
+  prompt charge. Ensure compatible backends honor `include_usage` for exact counts.
+- Anthropic input includes uncached, cache-read and cache-creation tokens. Final
+  delta components replace earlier components; output-only deltas retain input.
 - Per-request records are one table; monthly partitions are not used (see Usage retention).
 - Exported traces and shipped logs are outside the router's erasure and retention.
 - Users are re-enabled by an operator only, never by the group sync.

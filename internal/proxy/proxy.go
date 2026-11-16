@@ -255,6 +255,19 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	if model.Priority != nil {
 		account.capture.Change("priority", "set", nil, priority)
 	}
+	hideUsage := false
+	if protocol == config.ProtocolOpenAI && meta.Stream && r.URL.Path != "/v1/embeddings" {
+		var asked bool
+		body, asked, err = usage.IncludeUsage(body)
+		if err != nil {
+			apierr.Write(w, protocol, 400, "invalid_request_error", "use unique lower-case stream_options/include_usage keys and a boolean include_usage")
+			return
+		}
+		hideUsage = !asked
+		if !asked {
+			account.capture.Change("stream_options.include_usage", "set", nil, true)
+		}
+	}
 	if upstreamName != meta.Model || model.Priority != nil {
 		// RawMessage retains unknown values, including large integers, while
 		// replacing only the model and the priority, which callers cannot
@@ -267,19 +280,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		body, _ = json.Marshal(fields)
 	}
-	hideUsage := false
-	if protocol == config.ProtocolOpenAI && meta.Stream && r.URL.Path != "/v1/embeddings" {
-		var asked bool
-		body, asked, err = usage.IncludeUsage(body)
-		if err != nil {
-			apierr.Write(w, protocol, 400, "invalid_request_error", "stream_options must contain an optional boolean include_usage")
-			return
-		}
-		hideUsage = !asked
-		if !asked {
-			account.capture.Change("stream_options.include_usage", "set", nil, true)
-		}
-	}
+
 	if h.Limits != nil {
 		admission := limits.Admission{User: principal.UserID, Class: principal.KeyClass}
 		if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {
@@ -352,6 +353,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		exchanged := time.Now()
 		account.backendLease = budget
+		if protocol == config.ProtocolOpenAI && meta.Stream {
+			account.inputEstimate = int64(len(body))
+			account.inputRejected = false
+		}
 		committed, err := h.attempt(w, r, body, model, lease, account, hideUsage)
 		if err != nil && !committed {
 			_ = budget.Complete(0)
@@ -429,6 +434,7 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	if err != nil {
 		return false, err
 	}
+	account.inputRejected = resp.StatusCode < 200 || resp.StatusCode >= 300
 	account.capture.Upstream(resp.StatusCode, resp.Header.Get("Content-Type"))
 	defer resp.Body.Close()
 	// Headers can arrive before a long prompt prefill. Give the first body

@@ -222,14 +222,28 @@ this rate is not meaningful for non-stream responses that arrive all at once.
 OpenAI streams request `stream_options.include_usage: true`. If the caller omitted it or
 set it to false, the router removes only the extra event with empty `choices` and numeric
 usage; all other events keep their original bytes. If the caller requested usage, that
-event is delivered unchanged. Unknown request fields and stream options remain intact.
-Anthropic input comes from `message_start`; output comes from the last `message_delta`.
+event is delivered unchanged. Duplicate or case-variant `stream_options` or nested
+`include_usage` keys return 400 before forwarding; a backend cannot interpret another
+spelling as an override. Unknown request fields and stream options remain intact.
+Anthropic input is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`.
+Streaming counts begin at `message_start`; input components present in a later
+`message_delta` replace their earlier values, while omitted components are retained.
+An output-only delta keeps the existing input total. Output comes from the last
+`message_delta`. OpenAI prompt counts already include cached tokens and are not
+increased by cache detail fields.
 An incomplete stream or client disconnect has status `aborted`; an explicit SSE error has
 status `error`. Without final output usage, the number of observed content events is a
 lower-bound estimate. OpenAI `delta.reasoning` and `delta.reasoning_content` count as
 content for this fallback; each event counts once, even if it contains both fields.
-Backend-reported output usage takes precedence over this estimate. Missing input
-usage is zero. Non-stream JSON is inspected incrementally
+Backend-reported output usage takes precedence over this estimate. A dispatched
+OpenAI streaming request without a valid input count is charged one input token per
+byte of the serialized forwarded request, including JSON framing and any router
+rewrites. This conservative admission estimate applies to streams that finish
+without usage, disconnect during prefill or generation, or time out. It can exceed
+tokenizer counts; a reported count, including explicit zero, always takes precedence.
+The same resulting input value is used in request/daily records, the quota ledger,
+TPM and usage reports. Locally rejected requests and upstream HTTP errors do not
+receive this estimate. Other missing input usage remains zero. Non-stream JSON is inspected incrementally
 without retaining content. Inspection buffers at most 1 MiB per SSE event and 64 KiB per
 usage object; oversized events pass through unchanged without inspection or filtering.
 

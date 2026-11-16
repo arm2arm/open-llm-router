@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
@@ -91,10 +92,12 @@ func (j *JSON) Write(p []byte) {
 
 func (t *Totals) readUsage(raw []byte, protocol string, input, output bool) bool {
 	var value struct {
-		Prompt     *int64 `json:"prompt_tokens"`
-		Completion *int64 `json:"completion_tokens"`
-		Input      *int64 `json:"input_tokens"`
-		Output     *int64 `json:"output_tokens"`
+		Prompt        *int64 `json:"prompt_tokens"`
+		Completion    *int64 `json:"completion_tokens"`
+		Input         *int64 `json:"input_tokens"`
+		Output        *int64 `json:"output_tokens"`
+		CacheRead     *int64 `json:"cache_read_input_tokens"`
+		CacheCreation *int64 `json:"cache_creation_input_tokens"`
 	}
 	if len(raw) > maxUsage || json.Unmarshal(raw, &value) != nil {
 		return false
@@ -104,7 +107,27 @@ func (t *Totals) readUsage(raw []byte, protocol string, input, output bool) bool
 		in, out = value.Input, value.Output
 	}
 	valid := false
-	if input && in != nil && *in >= 0 {
+	if protocol == config.ProtocolAnthropic && input && (in != nil || value.CacheRead != nil || value.CacheCreation != nil) {
+		// Input fields in message_delta are authoritative updates. Omitted
+		// components retain message_start's values; an output-only delta must
+		// not erase the prompt charge. Commit only a complete, safe sum.
+		parts := t.anthropicInput
+		sum, safe := int64(0), true
+		for i, field := range []*int64{in, value.CacheRead, value.CacheCreation} {
+			if field != nil {
+				parts[i] = *field
+			}
+			if parts[i] < 0 || parts[i] > math.MaxInt64-sum {
+				safe = false
+				break
+			}
+			sum += parts[i]
+		}
+		if safe {
+			t.anthropicInput = parts
+			t.InputTokens, t.HasInput, valid = sum, true, true
+		}
+	} else if protocol != config.ProtocolAnthropic && input && in != nil && *in >= 0 {
 		t.InputTokens, t.HasInput, valid = *in, true, true
 	}
 	if output && out != nil && *out >= 0 {
