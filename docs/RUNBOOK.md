@@ -557,9 +557,12 @@ A single explicit mapping may override the built-in `X-OLR-End-User: username` d
 Each call with the header is authorized against the end user's groups, counts against their
 limits and quotas, and is recorded with `usage.forwarded_for` set to them, so it appears in
 their portal and they can delete it. Users must exist in the router — they have signed in to
-the portal once, or were added with `olr admin user add` — and their email must be unique.
-Otherwise the call is refused with 403 (`unknown_user: reject`) or served as the forwarder's
-own (`forwarder_policy`). A disabled user is always refused. The mapped headers are removed
+the portal once, or were added with `olr admin user add` — and the mapped value must identify
+exactly one enabled account that has no pending password change. Disabled and
+password-change-pending accounts do not make an enabled match ambiguous. No match or several
+enabled matches is refused with 403 (`unknown_user: reject`) or served as the forwarder's
+own (`forwarder_policy`). If all matches are disabled or awaiting a password change, the
+request is always refused. The mapped headers are removed
 before the call reaches a backend, and ignored from keys without the flag.
 
 The protected local administrator cannot be named as a forwarded end user by username,

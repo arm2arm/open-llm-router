@@ -28,7 +28,9 @@ func endUserKey(attribute, value string) string { return attribute + "\x00" + va
 
 // lookupEndUser finds the one enabled user whose attribute equals value.
 // Email matches without regard to case. A value that matches no user, or
-// several (an email is not unique), is unknown.
+// several enabled users, is unknown. Disabled and password-change-pending
+// matches do not hide an enabled user, but are refused when no enabled match
+// exists. A protected administrator match is always refused.
 func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value string) (Principal, error) {
 	a.mu.Lock()
 	generation := a.generation
@@ -55,22 +57,26 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 		}
 	}
 	rows, err := a.pool.Query(ctx, `SELECT id, username, groups, enabled AND NOT EXISTS
-		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password),protected_admin,
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password) AS available,protected_admin,
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = users.id)
-		FROM users WHERE `+where+` ORDER BY protected_admin DESC LIMIT 2`, value)
+		FROM users WHERE `+where+` ORDER BY protected_admin DESC, available DESC LIMIT 2`, value)
 	if err != nil {
 		return Principal{}, errors.New("end-user lookup failed")
 	}
 	var found []Principal
-	var enabled bool
-	var protected bool
+	var protected, unavailable bool
 	for rows.Next() {
 		var p Principal
+		var enabled bool
 		if err := rows.Scan(&p.UserID, &p.Username, &p.Groups, &enabled, &p.ProtectedAdmin, &p.Overrides); err != nil {
 			rows.Close()
 			return Principal{}, errors.New("end-user lookup failed")
 		}
-		found = append(found, p)
+		if enabled {
+			found = append(found, p)
+		} else {
+			unavailable = true
+		}
 		protected = protected || p.ProtectedAdmin
 	}
 	rows.Close()
@@ -80,11 +86,11 @@ func (a *Authenticator) lookupEndUser(ctx context.Context, attribute, value stri
 	if protected {
 		return Principal{}, errProtectedEndUser
 	}
+	if len(found) == 0 && unavailable {
+		return Principal{}, errDisabledEndUser
+	}
 	if len(found) != 1 {
 		return Principal{}, errUnknownEndUser
-	}
-	if !enabled {
-		return Principal{}, errDisabledEndUser
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

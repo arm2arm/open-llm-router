@@ -227,6 +227,102 @@ func TestEndUserHeaderFromNormalKeyIsIgnored(t *testing.T) {
 	}
 }
 
+func TestForwarderLookupIgnoresUnavailableDuplicates(t *testing.T) {
+	for _, unknown := range []string{config.UnknownUserReject, config.UnknownForwarderPolicy} {
+		t.Run(unknown, func(t *testing.T) {
+			f := startForwarder(t, unknown)
+			admin := auth.Admin{Pool: f.pool}
+			var old []string
+			for _, sub := range []string{"old-one", "old-two", "old-three"} {
+				id := user(t, f.pool, "https://old-idp.example/realm", sub)
+				execSQL(t, f.pool, `UPDATE users SET username='shared',email='shared@example.org',groups='{staff}' WHERE id=$1`, id)
+				if err := admin.DisableUser(t.Context(), id); err != nil {
+					t.Fatal(err)
+				}
+				old = append(old, id)
+			}
+			active := user(t, f.pool, "https://current-idp.example/realm", "active")
+			execSQL(t, f.pool, `UPDATE users SET username='shared',email='shared@example.org',groups='{staff}' WHERE id=$1`, active)
+			headers := []map[string]string{{"X-OLR-End-User": "shared"}, {"X-OpenWebUI-User-Email": "SHARED@example.org"}}
+			assertStatus := func(want int) {
+				t.Helper()
+				for _, h := range headers {
+					if resp := f.send(t, f.key, h); resp.StatusCode != want {
+						t.Fatalf("%v: got %d, want %d", h, resp.StatusCode, want)
+					}
+				}
+			}
+			assertStatus(200)
+			assertStatus(200) // Repeat after warming both lookup caches.
+			if err := admin.DisableUser(t.Context(), active); err != nil {
+				t.Fatal(err)
+			}
+			assertStatus(403) // Disabled-only matches never use forwarder fallback.
+			if resp := f.send(t, f.key, map[string]string{"X-OLR-End-User": "unknown", "X-OpenWebUI-User-Email": "shared@example.org"}); resp.StatusCode != 403 {
+				t.Fatal("unknown header hid a disabled match", resp.StatusCode)
+			}
+			if err := admin.SetEnabled(t.Context(), old[0], true); err != nil {
+				t.Fatal(err)
+			}
+			assertStatus(200)
+			if err := admin.SetEnabled(t.Context(), old[1], true); err != nil {
+				t.Fatal(err)
+			}
+			ambiguousStatus := 403
+			if unknown == config.UnknownForwarderPolicy {
+				ambiguousStatus = 200
+			}
+			assertStatus(ambiguousStatus)
+			f.stop()
+			if f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1`, active) != 4 ||
+				f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1`, old[0]) != 2 ||
+				f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1 OR forwarded_for=$2`, old[1], old[2]) != 0 ||
+				f.rows(t, `SELECT count(*) FROM usage_daily WHERE user_id=$1 AND requests=4`, active) != 1 {
+				t.Fatal("lookup selected or charged the wrong identity")
+			}
+			fallbackCalls := 0
+			if unknown == config.UnknownForwarderPolicy {
+				fallbackCalls = 2
+			}
+			if f.rows(t, `SELECT count(*) FROM usage WHERE user_id=$1 AND forwarded_for IS NULL`, f.webui) != fallbackCalls ||
+				int(f.writer.Counters().Written) != 6+fallbackCalls {
+				t.Fatal("unexpected forwarder fallback or duplicate recording", f.writer.Counters())
+			}
+		})
+	}
+}
+
+func TestForwarderLookupIgnoresPasswordChangePendingDuplicates(t *testing.T) {
+	for _, unknown := range []string{config.UnknownUserReject, config.UnknownForwarderPolicy} {
+		t.Run(unknown, func(t *testing.T) {
+			f := startForwarder(t, unknown)
+			admin := auth.Admin{Pool: f.pool}
+			pending, err := admin.CreateLocalUser(t.Context(), "pending", "pending@example.org", []string{"staff"}, []byte(initialAdminPassword))
+			if err != nil {
+				t.Fatal(err)
+			}
+			active := user(t, f.pool, "https://idp.example/realm", "active")
+			execSQL(t, f.pool, `UPDATE users SET username='pending',email='pending@example.org',groups='{staff}' WHERE id=$1`, active)
+			for _, h := range []map[string]string{{"X-OLR-End-User": "pending"}, {"X-OpenWebUI-User-Email": "PENDING@example.org"}} {
+				if resp := f.send(t, f.key, h); resp.StatusCode != 200 {
+					t.Fatal("pending duplicate hid the enabled account", resp.StatusCode)
+				}
+			}
+			if err := admin.DisableUser(t.Context(), active); err != nil {
+				t.Fatal(err)
+			}
+			if resp := f.send(t, f.key, map[string]string{"X-OLR-End-User": "pending"}); resp.StatusCode != 403 {
+				t.Fatal("pending-only match used fallback", resp.StatusCode)
+			}
+			f.stop()
+			if f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1`, active) != 2 ||
+				f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1`, pending) != 0 || f.writer.Counters().Written != 2 {
+				t.Fatal("pending account usage attribution", f.writer.Counters())
+			}
+		})
+	}
+}
+
 func TestUnknownDisabledAndConflictingEndUsers(t *testing.T) {
 	f := startForwarder(t, config.UnknownUserReject)
 	admin := auth.Admin{Pool: f.pool}
