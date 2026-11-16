@@ -33,3 +33,26 @@ func TestConfigCheck(t *testing.T) {
 		t.Fatal("missing -config accepted")
 	}
 }
+
+func TestConfigCheckDoesNotExposeBackendURLSecrets(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(file, []byte(`models:
+  m:
+    protocols: [openai]
+    timeout_s: 5
+    pool:
+      - {url: "${BACKEND_URL}", weight: 1, max_inflight: 1}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BACKEND_URL", "https://private-user:private-password@backend.example?token=private-query#private-fragment")
+	var out, errout bytes.Buffer
+	err := configCommand([]string{"check", "-config", file}, &out, &errout)
+	if err == nil {
+		t.Fatal("accepted backend URL containing credentials")
+	}
+	diagnostic := out.String() + errout.String() + err.Error()
+	if strings.Contains(diagnostic, "private-") || !strings.Contains(diagnostic, "models.m.pool[0].url") || !strings.Contains(diagnostic, "origin without credentials, path, query or fragment") {
+		t.Fatal("unsafe or misleading config-check output", diagnostic)
+	}
+}

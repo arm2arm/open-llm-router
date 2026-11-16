@@ -546,9 +546,13 @@ An application that serves many users with one key can attribute each call to it
    `olr admin key create -user <uuid> -label open-webui -trusted-forwarder`.
 2. Map the header the application sends, in the config file:
    `forwarders: {header_map: {X-OpenWebUI-User-Email: email}, unknown_user: reject}`.
-   `X-OLR-End-User: <username>` always works.
+   `X-OLR-End-User` maps to a username by default.
 3. In Open WebUI set `ENABLE_FORWARD_USER_INFO_HEADERS=true` and add the router as an OpenAI
    connection (`<router>/v1`) with the forwarder key.
+
+Header names are case-insensitive. Configure each header once: mappings such as `X-User`
+and `x-user` in the same file are rejected, with both keys named in the diagnostic.
+A single explicit mapping may override the built-in `X-OLR-End-User: username` default.
 
 Each call with the header is authorized against the end user's groups, counts against their
 limits and quotas, and is recorded with `usage.forwarded_for` set to them, so it appears in

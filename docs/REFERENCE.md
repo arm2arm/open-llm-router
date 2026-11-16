@@ -75,7 +75,9 @@ The router serves `POST /v1/chat/completions`, `/v1/completions`, `/v1/embedding
 `/v1/messages` and `/v1/messages/count_tokens`. Request bodies are limited to 4 MiB by default (`limits.max_body_bytes`).
 Unknown fields and client protocol headers pass through. Client credentials and cookies are
 removed; replicas can use their own bearer token via `bearer_token_env` in the config.
-Backend URLs must be HTTP(S) origins without credentials, a path prefix or a query.
+Backend URLs must be HTTP(S) origins without credentials, a path prefix, query or fragment.
+Rejected backend URL diagnostics identify the configuration field and the origin rule
+without echoing the supplied URL, including values expanded from environment variables.
 
 An alias resolves to its configured model; `upstream_model` optionally changes the name sent
 to the backend. Only a rewritten request is serialized again, preserving unknown JSON values.
