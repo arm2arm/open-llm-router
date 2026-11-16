@@ -226,7 +226,10 @@ event is delivered unchanged. Unknown request fields and stream options remain i
 Anthropic input comes from `message_start`; output comes from the last `message_delta`.
 An incomplete stream or client disconnect has status `aborted`; an explicit SSE error has
 status `error`. Without final output usage, the number of observed content events is a
-lower-bound estimate. Missing input usage is zero. Non-stream JSON is inspected incrementally
+lower-bound estimate. OpenAI `delta.reasoning` and `delta.reasoning_content` count as
+content for this fallback; each event counts once, even if it contains both fields.
+Backend-reported output usage takes precedence over this estimate. Missing input
+usage is zero. Non-stream JSON is inspected incrementally
 without retaining content. Inspection buffers at most 1 MiB per SSE event and 64 KiB per
 usage object; oversized events pass through unchanged without inspection or filtering.
 
