@@ -876,9 +876,14 @@ addresses such as `141.33.4.201` are supported; the address does not have to be 
 a standard private range.
 Loopback, link-local and metadata addresses remain refused unless the origin
 is already an operator-trusted file destination. Leave this option cleared for
-external services to retain the deployment's HTTPS policy. DNS is rechecked
-and pinned on new connections for discovery, health probes and inference.
+external services to retain the deployment's HTTPS policy. Health probes and
+inference recheck and pin DNS on new connections.
 File-managed replicas can opt in with `private_network: true`.
+Model detection resolves and checks the selected destination before creating a
+short-lived client pinned to those IPs. It requests only `/v1/models` and
+`/api/tags`, ignores HTTP proxy environment settings, and refuses redirects.
+HTTP virtual hosts and HTTPS certificate verification use the original backend
+hostname. This does not require HTTPS for explicitly permitted internal backends.
 
 API keys require `OLR_SETTINGS_ENCRYPTION_KEY` (base64-encoded 32 bytes). They
 are encrypted with the existing managed-settings secret store; routing history

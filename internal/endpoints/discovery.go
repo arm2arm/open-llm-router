@@ -17,7 +17,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
 
@@ -76,11 +75,6 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 			}
 		}
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DialContext = s.Policy.DialContext
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	result.Replicas = make([]Catalog, len(sources))
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, 8)
@@ -94,11 +88,13 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 				return
 			}
 			token, _ := s.Policy.Token(source.BearerTokenEnv)
-			requestCtx := ctx
-			if source.PrivateNetwork {
-				requestCtx = backendpolicy.WithPrivateNetwork(ctx, source.URL)
+			client, err := s.Policy.NewCatalogClient(ctx, source.URL, source.PrivateNetwork)
+			if err != nil {
+				result.Replicas[i] = Catalog{URL: source.URL, Models: []string{}, Error: "backend destination is not permitted or could not be resolved"}
+				return
 			}
-			result.Replicas[i] = detectCatalog(requestCtx, client, source.URL, token)
+			defer client.Close()
+			result.Replicas[i] = detectCatalog(ctx, client, source.URL, token)
 		})
 	}
 	wg.Wait()
@@ -120,24 +116,18 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 	return result, nil
 }
 
-func catalog(ctx context.Context, client *http.Client, origin, token string) Catalog {
+type catalogGetter interface {
+	Get(context.Context, string, string) (*http.Response, error)
+}
+
+func catalog(ctx context.Context, client catalogGetter, origin, token string) Catalog {
 	return catalogPaths(ctx, client, origin, token, []string{"/v1/models", "/api/tags"})
 }
 
-func catalogPaths(ctx context.Context, client *http.Client, origin, token string, paths []string) Catalog {
+func catalogPaths(ctx context.Context, client catalogGetter, origin, token string, paths []string) Catalog {
 	result := Catalog{URL: origin, Models: []string{}}
 	for _, path := range paths {
-		req, err := http.NewRequestWithContext(ctx, "GET", origin+path, nil)
-		if err != nil {
-			result.Error = "invalid backend origin"
-			return result
-		}
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("Anthropic-Version", "2023-06-01")
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		resp, err := client.Do(req)
+		resp, err := client.Get(ctx, path, token)
 		if err != nil {
 			result.Error = catalogRequestError(err)
 			return result
@@ -246,21 +236,15 @@ func (s *Service) Detect(ctx context.Context, source ModelSource, token string) 
 	if err != nil {
 		return Catalog{}, &ValidationError{err.Error()}
 	}
-	source.URL = origin
-	if err := s.Policy.CheckBackend(ctx, source.URL, source.PrivateNetwork); err != nil {
+	client, err := s.Policy.NewCatalogClient(ctx, origin, source.PrivateNetwork)
+	if err != nil {
 		return Catalog{}, &ValidationError{err.Error()}
 	}
-	if source.PrivateNetwork {
-		ctx = backendpolicy.WithPrivateNetwork(ctx, source.URL)
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy, transport.DialContext = nil, s.Policy.DialContext
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return detectCatalog(ctx, client, source.URL, token), nil
+	defer client.Close()
+	return detectCatalog(ctx, client, origin, token), nil
 }
 
-func detectCatalog(ctx context.Context, client *http.Client, origin, token string) Catalog {
+func detectCatalog(ctx context.Context, client catalogGetter, origin, token string) Catalog {
 	result := catalog(ctx, client, origin, token)
 	u, _ := url.Parse(origin)
 	if result.Error == "" && u.Hostname() == "api.deepseek.com" {
