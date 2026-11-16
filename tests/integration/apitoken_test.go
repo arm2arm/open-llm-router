@@ -25,13 +25,18 @@ type tokenFixture struct {
 	oidc     *config.OIDC
 }
 
-func startTokenRouter(t *testing.T) *tokenFixture {
+func startTokenRouter(t *testing.T, forwarders ...*config.Forwarders) *tokenFixture {
 	t.Helper()
 	p := newIdentityProvider(t)
 	f := &tokenFixture{provider: p, oidc: &config.OIDC{Issuer: p.issuer, PortalClientID: "olr-portal", GroupsClaim: "groups",
 		UsernameClaim: "preferred_username", Audience: "olr-api", SyncClientID: "olr-sync", SyncIntervalS: 60}}
+	var mapping *config.Forwarders
+	if len(forwarders) > 0 {
+		mapping = forwarders[0]
+	}
 	f.usageRouter = startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 3}), usageOptions{
-		group: &config.Group{Models: []string{"*"}},
+		group:      &config.Group{Models: []string{"*"}},
+		forwarders: mapping,
 		configure: func(cfg *config.Config, _ *proxy.Handler, _ *server.Server, pool *pgxpool.Pool) {
 			cfg.Groups["students"] = config.Group{Models: []string{"other-model"}}
 		},
@@ -201,7 +206,7 @@ func TestGroupSyncNamesNestedGroupsConsistently(t *testing.T) {
 			f := startTokenRouter(t)
 			f.oidc.GroupNames = tc.format
 			admin := auth.Admin{Pool: f.pool}
-			id, err := admin.SyncIdentity(t.Context(), f.provider.issuer, "nested", "nested", "", []string{"staff"})
+			id, err := admin.SyncIdentity(t.Context(), f.provider.issuer, "nested", "nested", "", []string{"staff"}, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,7 +233,7 @@ func TestGroupSyncDisablesAndRegroups(t *testing.T) {
 	type person struct{ sub, id, key string }
 	var people []*person
 	for _, sub := range []string{"stays", "disabled", "deleted", "regrouped"} {
-		id, err := admin.SyncIdentity(t.Context(), f.provider.issuer, sub, sub, "", []string{"staff"})
+		id, err := admin.SyncIdentity(t.Context(), f.provider.issuer, sub, sub, "", []string{"staff"}, false)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -330,7 +330,11 @@ them under *Accounts of previous identity providers*. Disable those users under
 its accounts and sessions usable again.
 
 For trusted forwarders, username and email lookup selects exactly one enabled account
-without a pending password change. Disable accounts from the previous issuer so their
+without a pending password change. Email matching additionally requires an SSO
+`email_verified: true` assertion; operator-assigned local addresses are trusted. Stored
+SSO addresses without verification remain visible but cannot receive forwarded calls.
+After upgrading, existing SSO users need a fresh verified sign-in or access token before
+email-based forwarding can select them. Disable accounts from the previous issuer so their
 matching names do not make the new account ambiguous. Several eligible accounts follow
 the configured unknown-user policy; matches that are all disabled or awaiting a password
 change always return 403. This lookup does not merge accounts or transfer their usage.

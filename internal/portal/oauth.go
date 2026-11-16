@@ -157,11 +157,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	var username, email, party string
 	var groups []string
+	var emailVerified bool
 	decode := func(name string, value any) bool {
 		raw, ok := claims[name]
 		return !ok || json.Unmarshal(raw, value) == nil
 	}
-	if !decode(settings.UsernameClaim, &username) || !decode("email", &email) || !decode(settings.GroupsClaim, &groups) || !decode("azp", &party) || (party != "" && party != sso.oauth.ClientID) || (len(id.Audience) > 1 && party != sso.oauth.ClientID) {
+	if !decode(settings.UsernameClaim, &username) || !decode("email", &email) || !decode("email_verified", &emailVerified) || !decode(settings.GroupsClaim, &groups) || !decode("azp", &party) || (party != "" && party != sso.oauth.ClientID) || (len(id.Audience) > 1 && party != sso.oauth.ClientID) {
 		fail(w, 400, "invalid_request_error", "invalid identity claims")
 		return
 	}
@@ -173,7 +174,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		username = id.Subject
 	}
 	groups = auth.GroupNames(groups, settings.GroupNames)
-	userID, err := (&auth.Admin{Pool: h.pool}).SyncIdentity(r.Context(), id.Issuer, id.Subject, username, email, groups)
+	userID, err := (&auth.Admin{Pool: h.pool}).SyncIdentity(r.Context(), id.Issuer, id.Subject, username, email, groups, emailVerified)
 	if errors.Is(err, auth.ErrNotFound) {
 		fail(w, 403, "permission_error", "user is disabled")
 		return

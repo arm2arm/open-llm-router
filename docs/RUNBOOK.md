@@ -558,12 +558,25 @@ Each call with the header is authorized against the end user's groups, counts ag
 limits and quotas, and is recorded with `usage.forwarded_for` set to them, so it appears in
 their portal and they can delete it. Users must exist in the router — they have signed in to
 the portal once, or were added with `olr admin user add` — and the mapped value must identify
-exactly one enabled account that has no pending password change. Disabled and
+exactly one eligible account across all local and SSO issuers. The account must be
+enabled and have no pending password change. Disabled and
 password-change-pending accounts do not make an enabled match ambiguous. No match or several
 enabled matches is refused with 403 (`unknown_user: reject`) or served as the forwarder's
-own (`forwarder_policy`). If all matches are disabled or awaiting a password change, the
-request is always refused. The mapped headers are removed
+own (`forwarder_policy`). If all matches are disabled, awaiting a password change, or
+ineligible because their email is unverified, the request is always refused. The mapped headers are removed
 before the call reaches a backend, and ignored from keys without the flag.
+
+For `email` mapping, an SSO ID token or API access token must explicitly assert
+`email_verified: true`; a missing or false claim is insufficient. The address remains
+visible in the profile, but an unverified SSO match cannot receive forwarded calls or
+make a verified match ambiguous. Local addresses assigned by an operator are trusted.
+Email comparison ignores case; username comparison is exact. Two eligible local/SSO
+accounts sharing a username or email are ambiguous, even if they represent the same
+person. Prefer an `id` mapping when the application can send the router user's UUID.
+
+Existing SSO records start unverified after this upgrade. Their users must sign in again
+with a verified address, or use a newly issued verified access token, before email-based
+forwarding can select them. Username and ID mapping continue to work without this claim.
 
 The protected local administrator cannot be named as a forwarded end user by username,
 email or ID. Such a request returns 403 under either `unknown_user` policy, including when
