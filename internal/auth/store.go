@@ -311,22 +311,22 @@ func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) 
 // refreshing its claims only when they changed, so that frequent callers such
 // as API tokens do not clear every router's caches. Disabled users give
 // ErrNotFound.
-func (a Admin) EnsureIdentity(ctx context.Context, issuer, sub, username, email string, groups []string) (string, error) {
+func (a Admin) EnsureIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool) (string, error) {
 	var id, oldName, oldEmail string
 	var oldGroups []string
-	var enabled bool
-	err := a.Pool.QueryRow(ctx, `SELECT id, username, email, groups, enabled FROM users WHERE issuer = $1 AND sub = $2`, issuer, sub).
-		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled)
+	var enabled, oldVerified bool
+	err := a.Pool.QueryRow(ctx, `SELECT id, username, email, groups, enabled, email_verified FROM users WHERE issuer = $1 AND sub = $2`, issuer, sub).
+		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &oldVerified)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:
 		return "", errors.New("user lookup failed")
 	case !enabled:
 		return "", ErrNotFound
-	case oldName == username && oldEmail == email && slices.Equal(oldGroups, groups):
+	case oldName == username && oldEmail == email && oldVerified == emailVerified && slices.Equal(oldGroups, groups):
 		return id, nil
 	}
-	return a.SyncIdentity(ctx, issuer, sub, username, email, groups)
+	return a.SyncIdentity(ctx, issuer, sub, username, email, groups, emailVerified)
 }
 
 // TokenIdentity maps an API access token to its router user. Group claims are
@@ -335,16 +335,16 @@ func (a Admin) EnsureIdentity(ctx context.Context, issuer, sub, username, email 
 // can only narrow them, so a removed grant is never restored by an old token
 // and an added group needs a new token. A token newer than the stored state
 // updates it like a login. A token without iat counts as old.
-func (a Admin) TokenIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, issued time.Time) (string, []string, error) {
+func (a Admin) TokenIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, issued time.Time, emailVerified bool) (string, []string, error) {
 	var id, oldName, oldEmail string
 	var oldGroups []string
-	var enabled bool
+	var enabled, oldVerified bool
 	var synced time.Time
-	err := a.Pool.QueryRow(ctx, `SELECT id,username,email,groups,enabled,synced_at FROM users WHERE issuer=$1 AND sub=$2`, issuer, sub).
-		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &synced)
+	err := a.Pool.QueryRow(ctx, `SELECT id,username,email,groups,enabled,synced_at,email_verified FROM users WHERE issuer=$1 AND sub=$2`, issuer, sub).
+		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &synced, &oldVerified)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		id, err := a.SyncIdentity(ctx, issuer, sub, username, email, groups)
+		id, err := a.SyncIdentity(ctx, issuer, sub, username, email, groups, emailVerified)
 		return id, groups, err
 	case err != nil:
 		return "", nil, errors.New("user lookup failed")
@@ -352,10 +352,10 @@ func (a Admin) TokenIdentity(ctx context.Context, issuer, sub, username, email s
 		return "", nil, ErrNotFound
 	case issued.IsZero() || !issued.After(synced):
 		return id, slices.DeleteFunc(slices.Clone(groups), func(g string) bool { return !slices.Contains(oldGroups, g) }), nil
-	case oldName == username && oldEmail == email && slices.Equal(oldGroups, groups):
+	case oldName == username && oldEmail == email && oldVerified == emailVerified && slices.Equal(oldGroups, groups):
 		return id, groups, nil
 	}
-	id, err = a.SyncIdentity(ctx, issuer, sub, username, email, groups)
+	id, err = a.SyncIdentity(ctx, issuer, sub, username, email, groups, emailVerified)
 	return id, groups, err
 }
 
@@ -372,7 +372,7 @@ func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) (e
 
 // SyncIdentity refreshes claims without re-enabling disabled accounts or linking
 // by email. API key caches observe new memberships before this returns.
-func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string) (id string, err error) {
+func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool) (id string, err error) {
 	if a.Actor.Type == "" {
 		a.Actor = audit.Actor{Type: "identity_provider"}
 	}
@@ -382,10 +382,10 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 		groups = []string{}
 	}
 	err = a.changeWith(ctx, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at)
-			VALUES($1,$2,$3,$4,$5,clock_timestamp()) ON CONFLICT(issuer,sub) DO UPDATE SET
-			username=EXCLUDED.username,email=EXCLUDED.email,groups=EXCLUDED.groups,synced_at=EXCLUDED.synced_at
-			WHERE users.enabled RETURNING id`, issuer, sub, username, email, groups).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified)
+			VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6) ON CONFLICT(issuer,sub) DO UPDATE SET
+			username=EXCLUDED.username,email=EXCLUDED.email,groups=EXCLUDED.groups,synced_at=EXCLUDED.synced_at,email_verified=EXCLUDED.email_verified
+			WHERE users.enabled RETURNING id`, issuer, sub, username, email, groups, emailVerified).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}

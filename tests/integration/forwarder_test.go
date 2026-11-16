@@ -235,14 +235,14 @@ func TestForwarderLookupIgnoresUnavailableDuplicates(t *testing.T) {
 			var old []string
 			for _, sub := range []string{"old-one", "old-two", "old-three"} {
 				id := user(t, f.pool, "https://old-idp.example/realm", sub)
-				execSQL(t, f.pool, `UPDATE users SET username='shared',email='shared@example.org',groups='{staff}' WHERE id=$1`, id)
+				execSQL(t, f.pool, `UPDATE users SET username='shared',email='shared@example.org',email_verified=true,groups='{staff}' WHERE id=$1`, id)
 				if err := admin.DisableUser(t.Context(), id); err != nil {
 					t.Fatal(err)
 				}
 				old = append(old, id)
 			}
 			active := user(t, f.pool, "https://current-idp.example/realm", "active")
-			execSQL(t, f.pool, `UPDATE users SET username='shared',email='shared@example.org',groups='{staff}' WHERE id=$1`, active)
+			execSQL(t, f.pool, `UPDATE users SET username='shared',email='shared@example.org',email_verified=true,groups='{staff}' WHERE id=$1`, active)
 			headers := []map[string]string{{"X-OLR-End-User": "shared"}, {"X-OpenWebUI-User-Email": "SHARED@example.org"}}
 			assertStatus := func(want int) {
 				t.Helper()
@@ -302,7 +302,7 @@ func TestForwarderLookupIgnoresPasswordChangePendingDuplicates(t *testing.T) {
 				t.Fatal(err)
 			}
 			active := user(t, f.pool, "https://idp.example/realm", "active")
-			execSQL(t, f.pool, `UPDATE users SET username='pending',email='pending@example.org',groups='{staff}' WHERE id=$1`, active)
+			execSQL(t, f.pool, `UPDATE users SET username='pending',email='pending@example.org',email_verified=true,groups='{staff}' WHERE id=$1`, active)
 			for _, h := range []map[string]string{{"X-OLR-End-User": "pending"}, {"X-OpenWebUI-User-Email": "PENDING@example.org"}} {
 				if resp := f.send(t, f.key, h); resp.StatusCode != 200 {
 					t.Fatal("pending duplicate hid the enabled account", resp.StatusCode)

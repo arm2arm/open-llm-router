@@ -109,18 +109,19 @@ func (v *Verifier) authenticate(ctx context.Context, raw string, hash [32]byte, 
 	}
 	var username, email string
 	var groups []string
+	var emailVerified bool
 	decode := func(name string, value any) bool {
 		raw, ok := claims[name]
 		return !ok || json.Unmarshal(raw, value) == nil
 	}
-	if !decode(v.cfg.UsernameClaim, &username) || !decode("email", &email) || !decode(v.cfg.GroupsClaim, &groups) {
+	if !decode(v.cfg.UsernameClaim, &username) || !decode("email", &email) || !decode("email_verified", &emailVerified) || !decode(v.cfg.GroupsClaim, &groups) {
 		return auth.Principal{}, auth.ErrInvalidKey
 	}
 	if username == "" {
 		username = token.Subject
 	}
 	groups = auth.GroupNames(groups, v.cfg.GroupNames)
-	id, groups, err := v.admin.TokenIdentity(ctx, token.Issuer, token.Subject, username, email, groups, token.IssuedAt)
+	id, groups, err := v.admin.TokenIdentity(ctx, token.Issuer, token.Subject, username, email, groups, token.IssuedAt, emailVerified)
 	if errors.Is(err, auth.ErrNotFound) {
 		return auth.Principal{}, auth.ErrInvalidKey // disabled in the router
 	}

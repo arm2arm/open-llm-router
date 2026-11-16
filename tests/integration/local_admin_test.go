@@ -217,7 +217,7 @@ func TestProtectedAdminRequiresCredentialAndRejectsAdoption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sso, err := admin.SyncIdentity(t.Context(), "https://idp.example/realms/test", "admin", "admin", "same@example.org", nil)
+	sso, err := admin.SyncIdentity(t.Context(), "https://idp.example/realms/test", "admin", "admin", "same@example.org", nil, false)
 	if err != nil || local == sso {
 		t.Fatal("local and SSO identities were merged", err)
 	}

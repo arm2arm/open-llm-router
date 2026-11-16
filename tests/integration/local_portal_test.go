@@ -181,7 +181,7 @@ func TestLocalPortalCredentialErrorsThrottleExpiryAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A same-name SSO identity without a local credential is never adopted.
-	if _, err := admin.SyncIdentity(t.Context(), "https://idp.example/realms/test", "sso-only", "sso-only", "same@example.org", nil); err != nil {
+	if _, err := admin.SyncIdentity(t.Context(), "https://idp.example/realms/test", "sso-only", "sso-only", "same@example.org", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	b := f.browser(t)

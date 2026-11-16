@@ -228,7 +228,13 @@ authorization remains enforced on the server regardless of browser navigation.
   and must be a valid address of at most 254 bytes. Password policy matches `/portal/password`.
   Group names must be distinct existing configured groups (maximum 64); omitted groups
   mean `[]`. Existing local usernames return 409; an SSO account with matching name/email
-  remains separate. Unknown JSON fields and invalid input return 400.
+  remains separate. With trusted forwarding, a username or email shared by two eligible
+  local/SSO accounts is ambiguous: `unknown_user: reject` returns 403, while
+  `forwarder_policy` uses the forwarder's own identity and limits. Pending-password-change
+  and disabled accounts do not make an eligible match ambiguous; email mapping also
+  excludes SSO addresses without `email_verified: true`. Operator-assigned local addresses
+  are trusted. An `id` header mapping avoids name collisions. Unknown JSON fields and
+  invalid input return 400.
 - `PUT /portal/api/admin/users/{id}/groups` with `{"groups":["staff"]}` assigns configured
   memberships to an ordinary local user. The array is required; `[]` removes all memberships.
   Returns 204, deletes all browser sessions and synchronously invalidates API-key caches
