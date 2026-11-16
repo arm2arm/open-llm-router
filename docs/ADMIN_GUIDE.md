@@ -329,6 +329,12 @@ them under *Accounts of previous identity providers*. Disable those users under
 **Users** when they should lose access. Rolling back to the previous issuer makes
 its accounts and sessions usable again.
 
+For trusted forwarders, username and email lookup selects exactly one enabled account
+without a pending password change. Disable accounts from the previous issuer so their
+matching names do not make the new account ambiguous. Several eligible accounts follow
+the configured unknown-user policy; matches that are all disabled or awaiting a password
+change always return 403. This lookup does not merge accounts or transfer their usage.
+
 Failed checks name the problem without showing secrets or provider responses
 (for example *the provider rejected the portal client ID or secret*). Checks and
 test sign-ins contact only the configured issuer, never follow redirects and
