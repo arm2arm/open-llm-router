@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -266,5 +267,126 @@ func TestAccountingFailoverRecordsOnce(t *testing.T) {
 	r := records.next(t)
 	if r.Status != "200" || r.Replica != good.URL || r.OutputTokens != 7 || len(records) != 0 {
 		t.Fatal("failover recorded more than one call or the wrong replica", r)
+	}
+}
+
+func TestAccountingUsageOptionsReachGoStructBackend(t *testing.T) {
+	var calls atomic.Int64
+	const wire = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n"
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			return
+		}
+		calls.Add(1)
+		var body struct {
+			StreamOptions struct {
+				IncludeUsage bool `json:"include_usage"`
+			} `json:"stream_options"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || !body.StreamOptions.IncludeUsage {
+			t.Error("Go backend did not receive include_usage=true")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, wire)
+	}))
+	defer backend.Close()
+	cfg := testConfig(backend.URL)
+	cfg.Groups = map[string]config.Group{"staff": {Models: []string{"*"}}}
+	records := make(recordChannel, 1)
+	_, router := accountingRouter(t, cfg, records)
+	for _, tc := range []struct {
+		options      string
+		asked, valid bool
+	}{
+		{"", false, true}, {`,"stream_options":{"include_usage":false}`, false, true}, {`,"stream_options":{"include_usage":true}`, true, true},
+		{`,"Stream_Options":{"include_usage":false}`, false, false},
+		{`,"stream_options":{"include_usage":true,"Include_Usage":false}`, false, false},
+		{`,"stream_options":{"include_usage":true},"stream_options":{"include_usage":false}`, false, false},
+		{`,"stream_options":{"include_usage":false,"include_usage":true}`, false, false},
+	} {
+		before := calls.Load()
+		resp, out := send(t, router.URL, "/v1/chat/completions", `{"model":"alias","messages":[],"stream":true`+tc.options+`}`, nil)
+		record := records.next(t)
+		if !tc.valid {
+			if resp.StatusCode != 400 || calls.Load() != before || record.InputTokens != 0 {
+				t.Fatal("ambiguous options reached backend", resp.StatusCode, record)
+			}
+			continue
+		}
+		if resp.StatusCode != 200 || record.InputTokens != 1200 || bytes.Contains(out, []byte(`"usage"`)) != tc.asked {
+			t.Fatal("usage options/accounting", resp.StatusCode, record, string(out))
+		}
+	}
+}
+
+func TestAccountingCancellationDuringPrefillChargesInput(t *testing.T) {
+	started := make(chan struct{}, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		started <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer backend.Close()
+	cfg := testConfig(backend.URL)
+	cfg.Groups = map[string]config.Group{"staff": {Models: []string{"*"}}}
+	records := make(recordChannel, 1)
+	_, router := accountingRouter(t, cfg, records)
+	body := `{"model":"chat-model","messages":[{"role":"user","content":"prompt"}],"stream":true,"stream_options":{"include_usage":true}}`
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "POST", router.URL+"/v1/chat/completions", strings.NewReader(body))
+	done := make(chan error, 1)
+	go func() {
+		resp, err := router.Client().Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("backend not reached")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("canceled client succeeded")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancel did not finish")
+	}
+	record := records.next(t)
+	if record.Status != "aborted" || record.InputTokens != int64(len(body)) || record.OutputTokens != 0 {
+		t.Fatal("prefill prompt was not charged", record)
+	}
+}
+
+func TestAccountingDoesNotEstimateUpstreamHTTPRefusals(t *testing.T) {
+	var status atomic.Int64
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(int(status.Load()))
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream refused"}}`)
+	}))
+	defer backend.Close()
+	cfg := testConfig(backend.URL)
+	cfg.Groups = map[string]config.Group{"staff": {Models: []string{"*"}}}
+	records := make(recordChannel, 1)
+	_, router := accountingRouter(t, cfg, records)
+	for _, code := range []int{400, 429, 500, 503, 504} {
+		status.Store(int64(code))
+		resp, _ := send(t, router.URL, "/v1/chat/completions", `{"model":"chat-model","messages":[],"stream":true}`, nil)
+		record := records.next(t)
+		if resp.StatusCode != code || record.InputTokens != 0 || record.OutputTokens != 0 {
+			t.Fatal("HTTP refusal received estimated charge", code, record)
+		}
 	}
 }

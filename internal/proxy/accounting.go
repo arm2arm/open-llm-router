@@ -20,20 +20,22 @@ import (
 )
 
 type accounting struct {
-	writer       *statusWriter
-	sink         usage.Recorder
-	record       usage.Record
-	json         *usage.JSON
-	stream       *usage.Stream
-	aborted      bool
-	lease        *limits.Lease
-	backendLease *backendlimits.Lease
-	began        time.Time
-	observer     *metrics.Observer
-	span         trace.Span
-	selection    time.Duration
-	capture      *requesttrace.Capture
-	live         *live
+	writer        *statusWriter
+	sink          usage.Recorder
+	record        usage.Record
+	inputEstimate int64 // serialized OpenAI streaming request bytes, once dispatched
+	inputRejected bool  // an upstream HTTP refusal must not receive an estimate
+	json          *usage.JSON
+	stream        *usage.Stream
+	aborted       bool
+	lease         *limits.Lease
+	backendLease  *backendlimits.Lease
+	began         time.Time
+	observer      *metrics.Observer
+	span          trace.Span
+	selection     time.Duration
+	capture       *requesttrace.Capture
+	live          *live
 }
 
 // live publishes metadata-only progress of one request to its user's portal.
@@ -131,6 +133,13 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 	}
 	if a.aborted || panicked || r.Context().Err() != nil {
 		a.record.Status = "aborted"
+	}
+	// A dispatched OpenAI stream may be canceled during prefill or end before
+	// its final usage event. Use the admission input bound rather than erasing
+	// its prompt charge. Provider counts (including explicit zero) always win;
+	// requests rejected locally or by the upstream are not estimated.
+	if !totals.HasInput && a.inputEstimate > 0 && !a.inputRejected && (status >= 200 && status < 300 || a.record.Status == "aborted" || status == http.StatusGatewayTimeout) {
+		totals.InputTokens = a.inputEstimate
 	}
 	a.record.InputTokens, a.record.OutputTokens = totals.InputTokens, totals.Output()
 	input, output := max(0, totals.InputTokens), max(0, totals.Output())

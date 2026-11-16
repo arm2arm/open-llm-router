@@ -49,6 +49,7 @@ type Totals struct {
 	HasInput, HasOutput       bool
 	ContentEvents             int64
 	Complete, StreamError     bool
+	anthropicInput            [3]int64 // uncached, cache read, cache creation
 }
 
 func (t Totals) Output() int64 {

@@ -154,7 +154,7 @@ func (s *Stream) inspect(event []byte) bool {
 		case "message_start":
 			s.Totals.readUsage(field(field(data, "message"), "usage"), s.Protocol, true, false)
 		case "message_delta":
-			s.Totals.readUsage(field(data, "usage"), s.Protocol, false, true)
+			s.Totals.readUsage(field(data, "usage"), s.Protocol, true, true)
 		case "content_block_delta":
 			switch string(field(field(data, "delta"), "type")) {
 			case `"text_delta"`, `"thinking_delta"`, `"input_json_delta"`:
