@@ -20,11 +20,13 @@ admin_api:
   trusted_proxy_cidrs: []
 ```
 
-For Helm, place this section under `config.admin_api` in your values file.
+The Helm chart enables this feature by default with
+`config.admin_api.enabled: true`. Set it to `false` in your values file to disable
+it; place any additional settings from this section under `config.admin_api`.
 
-The feature is disabled by default. Host/listener settings, proxy trust, database
-credentials and software deployments remain operator configuration; agents cannot
-change them through this API. Use HTTPS for remote connections.
+Outside Helm, the feature is disabled by default. Host/listener settings, proxy
+trust, database credentials and software deployments remain operator configuration;
+agents cannot change them through this API. Use HTTPS for remote connections.
 
 1. Sign in to the portal and open **Agent access** in the administrator navigation.
 2. Create a named key. Start with Observer, select explicit permissions, enter the
