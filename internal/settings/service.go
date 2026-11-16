@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/idpcheck"
 	"github.com/jackc/pgx/v5"
@@ -64,8 +65,8 @@ type Service[D any, P document[D]] struct {
 	// Current returns the configuration in use: the import baseline and the
 	// base of candidate configurations. nil: File.
 	Current func() *config.Config
-	// Tokens resolves backend credential references; nil: Lookup.
-	Tokens func(string) (string, bool)
+	// Tokens resolves backend credentials for their approved origins; nil: the file policy.
+	Tokens func(name, origin string) (string, bool)
 	// Verify adds environment checks of a candidate configuration, such as
 	// outbound destination policy; problems are recorded like validation.
 	Verify func(context.Context, *config.Config) []string
@@ -192,11 +193,15 @@ func (s *Service[D, P]) current() *config.Config {
 	return s.File
 }
 
-func (s *Service[D, P]) tokens() func(string) (string, bool) {
+func (s *Service[D, P]) tokens() func(name, origin string) (string, bool) {
 	if s.Tokens != nil {
 		return s.Tokens
 	}
-	return s.lookup
+	policy, err := backendpolicy.New(s.File, s.lookup)
+	if err != nil {
+		return func(string, string) (string, bool) { return "", false }
+	}
+	return policy.Token
 }
 
 func decodeDocument[D any, P document[D]](data []byte) (P, error) {
@@ -285,6 +290,14 @@ func (s *Service[D, P]) resolve(ctx context.Context, q querier, doc P) (map[stri
 		switch {
 		case ref.Env != "":
 			st.Reference, st.Env = "environment", ref.Env
+			allowed, err := s.environmentConnectionAllowed(ctx, q, doc, binding)
+			if err != nil {
+				return out, nil, nil, err
+			}
+			if !allowed {
+				problems = append(problems, binding.name+": connection changed; clear or replace the client secret")
+				break
+			}
 			v, ok := s.lookup(ref.Env)
 			if ok && v != "" && !strings.ContainsAny(v, "\r\n") {
 				value, st.Available = v, true
@@ -297,12 +310,20 @@ func (s *Service[D, P]) resolve(ctx context.Context, q querier, doc P) (map[stri
 			var sealed []byte
 			var created time.Time
 			err := q.QueryRow(ctx, `SELECT name,ciphertext,key_id,created_at FROM managed_secrets WHERE id=$1`, ref.Stored).Scan(&name, &sealed, &keyID, &created)
-			if errors.Is(err, pgx.ErrNoRows) || err == nil && name != s.domain()+"."+binding.name {
+			if errors.Is(err, pgx.ErrNoRows) {
 				problems = append(problems, binding.name+": the stored secret does not exist")
 				break
 			}
 			if err != nil {
 				return out, nil, nil, ErrStorage
+			}
+			allowed, err := s.storedConnectionAllowed(ctx, q, doc, binding, name)
+			if err != nil {
+				return out, nil, nil, err
+			}
+			if !allowed {
+				problems = append(problems, binding.name+": secret belongs to a different connection; clear or replace it")
+				break
 			}
 			st.CreatedAt = &created
 			plain, err := s.Cipher.open(ref.Stored, name, keyID, sealed)
@@ -587,7 +608,7 @@ func (s *Service[D, P]) SaveDraft(ctx context.Context, domain string, expected i
 			if err != nil {
 				return ErrStorage
 			}
-			secretName := domain + "." + name
+			secretName := s.storedSecretName(doc, name)
 			sealed, err := s.Cipher.seal(id, secretName, secrets[name])
 			if err != nil {
 				return ErrStorage

@@ -362,6 +362,7 @@ export type AuthenticationView = {
     issuer: string
     enabled_users: number
     active_keys: number
+    active_admin_keys: number
   }[]
   can_change: boolean
   change_requirement?: string

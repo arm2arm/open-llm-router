@@ -3,6 +3,7 @@ package backendpolicy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -16,10 +17,11 @@ import (
 )
 
 type Policy struct {
-	requireTLS bool
-	trusted    map[string]bool
-	networks   []netip.Prefix
-	tokens     map[string]string
+	requireTLS   bool
+	trusted      map[string]bool
+	networks     []netip.Prefix
+	tokens       map[string]string
+	tokenOrigins map[string]map[string]bool
 }
 
 type privateDestination struct{}
@@ -36,13 +38,14 @@ func WithPrivateNetwork(ctx context.Context, origin string) context.Context {
 }
 
 func New(cfg *config.Config, lookup func(string) (string, bool)) (*Policy, error) {
-	p := &Policy{requireTLS: cfg.Security.RequireTLS, trusted: map[string]bool{}, tokens: map[string]string{}}
+	p := &Policy{requireTLS: cfg.Security.RequireTLS, trusted: map[string]bool{}, tokens: map[string]string{}, tokenOrigins: map[string]map[string]bool{}}
 	for _, model := range cfg.Models {
 		for _, r := range model.Pool {
 			u, _ := url.Parse(r.URL)
 			p.trusted[address(u)] = true
 			if r.BearerTokenEnv != "" {
 				p.tokens[r.BearerTokenEnv] = r.BearerToken
+				p.bindToken(r.BearerTokenEnv, r.URL)
 			}
 		}
 	}
@@ -68,7 +71,37 @@ func New(cfg *config.Config, lookup func(string) (string, bool)) (*Policy, error
 			p.tokens[name] = token
 		}
 	}
+	// Extra references need explicit deployment-owned destinations. A name
+	// alone must never authorize an editor to send a secret to a new host.
+	if raw, _ := lookup("OLR_BACKEND_TOKEN_ORIGINS"); raw != "" {
+		var bindings map[string][]string
+		if json.Unmarshal([]byte(raw), &bindings) != nil || bindings == nil {
+			return nil, errors.New("OLR_BACKEND_TOKEN_ORIGINS must map backend credential references to arrays of HTTP(S) origins")
+		}
+		for name, origins := range bindings {
+			if _, ok := p.tokens[name]; !ok || len(origins) == 0 {
+				return nil, errors.New("OLR_BACKEND_TOKEN_ORIGINS must name available backend credentials and nonempty origin lists")
+			}
+			for _, origin := range origins {
+				if !p.bindToken(name, origin) {
+					return nil, errors.New("OLR_BACKEND_TOKEN_ORIGINS contains an invalid backend origin")
+				}
+			}
+		}
+	}
 	return p, nil
+}
+
+func (p *Policy) bindToken(name, raw string) bool {
+	origin, err := config.NormalizeBackendURL(raw)
+	if err != nil {
+		return false
+	}
+	if p.tokenOrigins[name] == nil {
+		p.tokenOrigins[name] = map[string]bool{}
+	}
+	p.tokenOrigins[name][origin] = true
+	return true
 }
 
 func address(u *url.URL) string {
@@ -83,7 +116,16 @@ func address(u *url.URL) string {
 	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
-func (p *Policy) Token(name string) (string, bool) { token, ok := p.tokens[name]; return token, ok }
+// Token resolves credentials only for deployment-approved origins. File
+// replicas establish bindings automatically; additional bindings are explicit.
+func (p *Policy) Token(name, raw string) (string, bool) {
+	origin, err := config.NormalizeBackendURL(raw)
+	if err != nil || !p.tokenOrigins[name][origin] {
+		return "", false
+	}
+	token, ok := p.tokens[name]
+	return token, ok
+}
 func (p *Policy) References() []string {
 	names := []string{}
 	for name := range p.tokens {

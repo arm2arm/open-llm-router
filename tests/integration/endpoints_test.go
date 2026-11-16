@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
@@ -20,6 +21,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/portal"
 	"github.com/arm2arm/open-llm-router/internal/proxy"
 	"github.com/arm2arm/open-llm-router/internal/server"
+	"github.com/arm2arm/open-llm-router/internal/settings"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -315,4 +317,67 @@ func TestEndpointActivationPreservesCommittedStreamAndUserAdmission(t *testing.T
 		var count int
 		return f.pool.QueryRow(t.Context(), `SELECT count(*) FROM usage WHERE user_id=$1 AND model='chat-model' AND status LIKE '2%'`, f.owner).Scan(&count) == nil && count == 2
 	})
+}
+
+func TestBackendCredentialCannotFollowEditedOrigin(t *testing.T) {
+	var attempts atomic.Int64
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"control"}]}`))
+	}))
+	defer sink.Close()
+	f := startEndpointPortal(t, mockllm.New(mockllm.Options{Tokens: 2}))
+	// The recording server is an allowed file destination with no credential.
+	// Destination permission must not grant use of another backend's token.
+	cfg := *f.cfg
+	cfg.Models = maps.Clone(f.cfg.Models)
+	cfg.Models["allowed-sink"] = config.Model{Protocols: []string{"openai"}, TimeoutS: 5, Pool: []config.Replica{{URL: sink.URL, Weight: 1, MaxInflight: 2}}}
+	policy, err := backendpolicy.New(&cfg, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.service.Base, f.service.Policy = &cfg, policy
+	f.forwarder.ConfigureDestinations(policy)
+	if result, err := f.service.Discover(t.Context(), "chat-model", []endpoints.ModelSource{{URL: sink.URL}}); err != nil || !result.Complete {
+		t.Fatal("no-key control", err)
+	}
+	attempts.Store(0)
+	if _, err := f.service.Discover(t.Context(), "chat-model", []endpoints.ModelSource{{URL: sink.URL, BearerTokenEnv: "ENDPOINT_GPU_TOKEN"}}); err == nil {
+		t.Fatal("discovery accepted mismatched credential")
+	}
+	bad := f.replacement
+	bad.Pool = append([]config.Replica(nil), bad.Pool...)
+	bad.Pool[0].URL = sink.URL
+	if _, err := f.service.Test(t.Context(), "chat-model", bad); err == nil {
+		t.Fatal("health test accepted mismatched credential")
+	}
+	if _, err := f.service.Save(t.Context(), "chat-model", 0, bad, -1, f.owner); err == nil {
+		t.Fatal("saved mismatched credential")
+	}
+	routing := &settings.RoutingService{DB: f.pool, File: &cfg, Tokens: policy.Token}
+	actor := audit.Actor{Type: "operator_cli", Name: "credential-test"}
+	view, err := routing.Import(t.Context(), settings.DomainRouting, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := *view.Active.Document
+	doc.Models["chat-model"] = bad
+	raw, _ := json.Marshal(doc)
+	view, err = routing.SaveDraft(t.Context(), settings.DomainRouting, view.Version, raw, nil, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Draft.Validation.Valid {
+		t.Fatal("routing draft accepted mismatched credential")
+	}
+	if _, _, err := routing.Candidate(t.Context(), settings.DomainRouting, view.Draft.ID); err == nil {
+		t.Fatal("routing candidate accepted mismatched credential")
+	}
+	if _, err := routing.Activate(t.Context(), settings.DomainRouting, view.Version, view.Draft.ID, actor, false); err == nil {
+		t.Fatal("activated mismatched credential")
+	}
+	if attempts.Load() != 0 {
+		t.Fatal("mismatched backend credential reached recording server")
+	}
 }

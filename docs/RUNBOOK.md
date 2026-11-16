@@ -199,7 +199,8 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | OTLP/HTTP traces |
 | `OLR_TRACE_USER_ID` | add the user ID to spans (default false) |
 | `OLR_BACKEND_ALLOWED_CIDRS` | comma-separated private GPU networks allowed for new Admin endpoints; empty by default (dev Compose: `192.168.0.0/16`) |
-| `OLR_BACKEND_TOKEN_ENVS` | comma-separated additional backend-token environment names selectable by Admin; supply values in the process environment too |
+| `OLR_BACKEND_TOKEN_ENVS` | comma-separated additional backend-token environment names; supply values and explicit origin bindings below |
+| `OLR_BACKEND_TOKEN_ORIGINS` | JSON object mapping backend-token names to allowed HTTP(S) origin arrays, e.g. `{"GPU_TOKEN":["http://gpu:8000"]}`; YAML replicas bind their own credential origins automatically. No binding means no delivery |
 | any name in `bearer_token_env` | a backend's API key — **secret** |
 
 ### Kubernetes
@@ -354,11 +355,45 @@ Changes apply at the user's next request, for API keys and OIDC access tokens al
 | Secret | How |
 |---|---|
 | Postgres password | `ALTER ROLE olr PASSWORD '…'`, update `OLR_DATABASE_URL`, recreate the Compose container |
-| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, recreate the Compose container; logins in progress must start again, sessions stay. With managed settings, store the new value with `olr admin settings draft -secret`, activate and recreate |
+| `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | regenerate in Keycloak, update the environment, recreate the Compose container; logins in progress must start again, sessions stay. With managed settings, keep the old environment value while storing the new value with `olr admin settings draft -secret`; activate first, then remove the old environment value and recreate |
+| `OLR_SETTINGS_ENCRYPTION_KEY` | use the coordinated maintenance procedure below; changing only this key makes earlier ciphertext unreadable |
 | `OLR_METRICS_TOKEN` | set the new token in the router and in Prometheus's credentials file, recreate/restart the affected services so they read it |
 | backend tokens (`bearer_token_env`) | configure the backend to accept old and new, update the router environment, recreate the Compose container, drop the old one |
 | API keys | users create a new key and revoke the old one; keys expire after `auth.default_key_lifetime_days` |
 | Local administrator password | `olr admin password change` with private current/new files; retire the bootstrap source after first change; if lost, `olr admin recover` |
+
+### Rotate the settings encryption key
+
+The cipher accepts one key, with no previous-key fallback. Secret rows and
+revision documents are append-only; changing `OLR_SETTINGS_ENCRYPTION_KEY` does
+not re-encrypt them. Old revisions remain readable only with their original key
+and cannot be rollback targets under the new key. Retain old keys separately
+from database backups when historical recovery is required.
+
+1. Verify protected local administrator recovery, take a database backup, and
+   export each managed domain's active document using `olr admin settings show`
+   while the old key works. Obtain the plaintext of **every** stored client and
+   backend secret from your secret manager; a masked reference is insufficient.
+   Keep private secret files owner-only. Environment references are unaffected.
+2. Schedule maintenance and stop router replicas. Configure the new base64
+   32-byte key in every router and in the operator CLI environment. Never run
+   processes with different keys against an active stored-secret revision.
+3. For each managed domain containing stored secrets, use the exported document
+   with `olr admin settings draft -domain DOMAIN -document FILE -expect-version N`
+   and repeated `-secret NAME=PRIVATE_FILE` options to replace **all** stored
+   references. Use the setting names shown in that revision's `secrets` list.
+   Activate the valid new draft with the CLI using its new version and revision
+   IDs. The CLI can recover this state without starting the portal or SSO.
+4. Start all replicas with the new key. Verify local sign-in, SSO, synchronization
+   and backend calls. Treat the new revisions as the rollback baseline; an old
+   stored-secret revision requires its old key and a coordinated recovery.
+
+If the old encryption key may have leaked, regenerate the actual portal, sync
+and backend credentials at their providers as well, then store those new values
+in step 3. Rotating only the encryption key does not revoke plaintext already
+exposed: the old ciphertext remains in immutable rows and backups and can still
+be decrypted with the leaked key. Expire backups under the site's retention
+policy. Do not delete or rewrite history triggers to rotate a key.
 
 ### Back up Postgres
 

@@ -12,7 +12,7 @@ import (
 
 func TestManagedDestinationAndCredentialPolicy(t *testing.T) {
 	cfg := &config.Config{Models: map[string]config.Model{"m": {Pool: []config.Replica{{URL: "http://127.0.0.1:8000", BearerTokenEnv: "BACKEND_TOKEN", BearerToken: "backend-secret"}}}}}
-	env := map[string]string{"OLR_BACKEND_ALLOWED_CIDRS": "192.168.178.0/24,fc00::/7", "OLR_BACKEND_TOKEN_ENVS": "SECOND_TOKEN", "SECOND_TOKEN": "second-secret", "DATABASE_PASSWORD": "database-secret"}
+	env := map[string]string{"OLR_BACKEND_ALLOWED_CIDRS": "192.168.178.0/24,fc00::/7", "OLR_BACKEND_TOKEN_ENVS": "SECOND_TOKEN", "OLR_BACKEND_TOKEN_ORIGINS": `{"SECOND_TOKEN":["https://second.example"]}`, "SECOND_TOKEN": "second-secret", "DATABASE_PASSWORD": "database-secret"}
 	policy, err := New(cfg, func(name string) (string, bool) { v, ok := env[name]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
@@ -28,13 +28,13 @@ func TestManagedDestinationAndCredentialPolicy(t *testing.T) {
 			t.Errorf("unsafe destination/error: %s", url)
 		}
 	}
-	if _, ok := policy.Token("DATABASE_PASSWORD"); ok {
+	if _, ok := policy.Token("DATABASE_PASSWORD", "http://127.0.0.1:8000"); ok {
 		t.Fatal("unrelated process credential exposed")
 	}
-	if value, ok := policy.Token("BACKEND_TOKEN"); !ok || value != "backend-secret" {
+	if value, ok := policy.Token("BACKEND_TOKEN", "http://127.0.0.1:8000"); !ok || value != "backend-secret" {
 		t.Fatal("file credential lost")
 	}
-	if value, ok := policy.Token("SECOND_TOKEN"); !ok || value != "second-secret" {
+	if value, ok := policy.Token("SECOND_TOKEN", "https://second.example"); !ok || value != "second-secret" {
 		t.Fatal("allowlisted credential lost")
 	}
 	if len(policy.References()) != 2 {
@@ -119,5 +119,34 @@ func TestPrivateClusterHTTPIsScopedAndRechecked(t *testing.T) {
 	}
 	if _, err := p.addresses(ctx, "10.1.2.4:8000"); err == nil {
 		t.Fatal("private grant escaped its host")
+	}
+}
+
+func TestCredentialBindingsRequireExactCanonicalOrigin(t *testing.T) {
+	cfg := &config.Config{Models: map[string]config.Model{"m": {Pool: []config.Replica{{URL: "https://GPU.EXAMPLE:443", BearerTokenEnv: "GPU_TOKEN", BearerToken: "secret"}}}}}
+	env := map[string]string{"OLR_BACKEND_TOKEN_ENVS": "EXTRA_TOKEN,UNBOUND_TOKEN", "EXTRA_TOKEN": "extra-secret", "UNBOUND_TOKEN": "unbound-secret", "OLR_BACKEND_TOKEN_ORIGINS": `{"EXTRA_TOKEN":["http://extra.example:8080"]}`}
+	p, err := New(cfg, func(n string) (string, bool) { v, ok := env[n]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		ref, origin string
+		allowed     bool
+	}{
+		{"GPU_TOKEN", "https://gpu.example", true}, {"GPU_TOKEN", "https://gpu.example:443/v1", true},
+		{"GPU_TOKEN", "http://gpu.example", false}, {"GPU_TOKEN", "https://gpu.example:444", false}, {"GPU_TOKEN", "https://other.example", false},
+		{"EXTRA_TOKEN", "http://extra.example:8080/v1/models", true}, {"EXTRA_TOKEN", "http://extra.example", false}, {"UNBOUND_TOKEN", "https://gpu.example", false},
+	} {
+		value, ok := p.Token(test.ref, test.origin)
+		if ok != test.allowed || !ok && value != "" {
+			t.Error("unexpected credential binding", test.ref, test.origin, ok)
+		}
+	}
+	for _, raw := range []string{`null`, `[]`, `{"EXTRA_TOKEN":[]}`, `{"MISSING":["https://extra.example"]}`, `{"EXTRA_TOKEN":["https://user:secret@extra.example"]}`} {
+		env["OLR_BACKEND_TOKEN_ORIGINS"] = raw
+		_, err := New(cfg, func(n string) (string, bool) { v, ok := env[n]; return v, ok })
+		if err == nil || strings.Contains(err.Error(), "user:secret") {
+			t.Error("invalid credential binding/error", raw)
+		}
 	}
 }

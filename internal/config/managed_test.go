@@ -19,7 +19,7 @@ func TestManagedModelsAreValidatedCopiedAndRedacted(t *testing.T) {
 	model.Pool[0].BearerTokenEnv = "GPU_TOKEN"
 	model.Pool[0].BearerToken = "untrusted-in-memory-value"
 	models["chat-model"] = model
-	next, err := WithModels(base, models, lookupIn(map[string]string{"GPU_TOKEN": "resolved-backend-secret"}))
+	next, err := WithModels(base, models, func(string, string) (string, bool) { return "resolved-backend-secret", true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestManagedModelsAreValidatedCopiedAndRedacted(t *testing.T) {
 	}
 	model.Pool[0].URL = "http://user:private-token@backend"
 	models["chat-model"] = model
-	if _, err := WithModels(base, models, lookupIn(nil)); err == nil || strings.Contains(err.Error(), "private-token") {
+	if _, err := WithModels(base, models, func(string, string) (string, bool) { return "", false }); err == nil || strings.Contains(err.Error(), "private-token") {
 		t.Fatal("credential URL validation leaked its value")
 	}
 }
@@ -88,7 +88,7 @@ func TestPoliciesCopyAndValidateTheWholeRevision(t *testing.T) {
 	}
 	one := 7
 	groups := map[string]Group{"managed": {Models: []string{"chat-model"}, RPM: &one}}
-	next, err := WithPolicies(base, base.Models, base.Aliases, groups, lookupIn(validEnv))
+	next, err := WithPolicies(base, base.Models, base.Aliases, groups, func(name, _ string) (string, bool) { v, ok := validEnv[name]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPoliciesCopyAndValidateTheWholeRevision(t *testing.T) {
 		t.Fatal("revision mutated deployment baseline")
 	}
 	groups["managed"] = Group{Models: []string{"nonexistent"}}
-	if _, err = WithPolicies(base, base.Models, base.Aliases, groups, lookupIn(validEnv)); err == nil {
+	if _, err = WithPolicies(base, base.Models, base.Aliases, groups, func(name, _ string) (string, bool) { v, ok := validEnv[name]; return v, ok }); err == nil {
 		t.Fatal("accepted unknown model grant")
 	}
 }

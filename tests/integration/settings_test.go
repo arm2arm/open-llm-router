@@ -293,7 +293,7 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 			t.Fatal("undecryptable secret did not disable SSO safely", snapshot.Problem)
 		}
 	}
-	// A conflicting environment at startup is rejected; the active revision applies.
+	// A stored secret is authoritative; the retired environment value is ignored.
 	conflict := managedEnvironment(settingsKey(7))
 	conflict[config.EnvOIDCSyncSecret] = "environment-sync-secret"
 	conflictFile := managedConfig(t, conflict)
@@ -301,7 +301,7 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 	var logs bytes.Buffer
 	snapshot, err = settings.Apply(ctx, pool, conflictFile, cipher, func(name string) (string, bool) { value, ok := conflict[name]; return value, ok },
 		slog.New(slog.NewJSONHandler(&logs, nil)))
-	if err != nil || snapshot.Config.OIDCSyncSecret != secretValues[1] || !strings.Contains(logs.String(), "sync_client_secret: OIDC_SYNC_CLIENT_SECRET") ||
+	if err != nil || snapshot.Config.OIDCSyncSecret != secretValues[1] || strings.Contains(logs.String(), "sync_client_secret: OIDC_SYNC_CLIENT_SECRET") ||
 		strings.Contains(logs.String(), "environment-sync-secret") {
 		t.Fatal("startup conflict handling", err, logs.String())
 	}

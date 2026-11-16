@@ -74,7 +74,11 @@ func TestLiveAuthenticationActivationRollbackAndIssuerSeparation(t *testing.T) {
 			cfg.AuthSources[setting.Name] = config.SourceDefault
 		}
 		cfg.AuthSources["portal_client_secret"] = config.SourceEnvironment
-		h.Settings = &settings.AuthenticationService{DB: pool, File: cfg, Lookup: func(name string) (string, bool) { value, ok := environment[name]; return value, ok }}
+		cipher, err := settings.LoadCipher(func(string) string { return settingsKey(9) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.Settings = &settings.AuthenticationService{DB: pool, File: cfg, Cipher: cipher, Lookup: func(name string) (string, bool) { value, ok := environment[name]; return value, ok }}
 		h.AuthServices = services
 	}})
 	providerA, providerB, providerC := f.provider, newIdentityProvider(t), newIdentityProvider(t)
@@ -128,7 +132,11 @@ func TestLiveAuthenticationActivationRollbackAndIssuerSeparation(t *testing.T) {
 		if mutate != nil {
 			mutate(&document)
 		}
-		view = call("PUT", "/draft", map[string]any{"version": view.Settings.Version, "document": document}, 200)
+		body := map[string]any{"version": view.Settings.Version, "document": document}
+		if issuer != nil && issuer.issuer != view.Settings.Active.Document.Issuer {
+			body["secrets"] = map[string]string{"portal_client_secret": "test-secret"}
+		}
+		view = call("PUT", "/draft", body, 200)
 		id := view.Settings.Draft.ID
 		if check {
 			call("POST", "/checks", map[string]any{"revision": id}, 200)

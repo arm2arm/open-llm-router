@@ -177,7 +177,7 @@ func TestConflictsNameSourcesNotValues(t *testing.T) {
 			}
 		}
 	}
-	want := []string{"issuer@OIDC_ISSUER", "portal_client_id@oidc.portal_client_id", "portal_client_secret@" + config.EnvOIDCClientSecret}
+	want := []string{"issuer@OIDC_ISSUER", "portal_client_id@oidc.portal_client_id"}
 	if !slices.Equal(names, want) {
 		t.Fatal(names)
 	}
@@ -207,7 +207,7 @@ func TestRoutingDocument(t *testing.T) {
 	added := doc
 	added.Models = map[string]config.Model{"m": doc.Models["m"], "n": doc.Models["m"]}
 	added.Aliases = map[string]string{"default": "n"}
-	cfg, err := added.apply(file, applyInput{tokens: func(string) (string, bool) { return "", false }})
+	cfg, err := added.apply(file, applyInput{tokens: func(string, string) (string, bool) { return "", false }})
 	if err != nil || cfg.Aliases["default"] != "n" || len(cfg.Models) != 2 {
 		t.Fatal("apply", err)
 	}
@@ -216,7 +216,7 @@ func TestRoutingDocument(t *testing.T) {
 	}
 	// Removing a model still used by an alias or a group policy is refused.
 	removed := Routing{Models: map[string]config.Model{"n": doc.Models["m"]}, Aliases: map[string]string{"default": "m"}}
-	_, err = removed.apply(file, applyInput{tokens: func(string) (string, bool) { return "", false }})
+	_, err = removed.apply(file, applyInput{tokens: func(string, string) (string, bool) { return "", false }})
 	if err == nil || !strings.Contains(err.Error(), `aliases.default: "m" is not a configured model`) || !strings.Contains(err.Error(), `groups.staff.models: "m" is not a configured model`) {
 		t.Fatal("dependency check", err)
 	}
