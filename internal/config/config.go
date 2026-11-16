@@ -392,13 +392,24 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	// Header names match without regard to case; X-OLR-End-User always works
 	// and names a username unless the map says otherwise.
 	headers := map[string]string{http.CanonicalHeaderKey(EndUserHeader): "username"}
-	for header, attribute := range cfg.Forwarders.HeaderMap {
-		headers[http.CanonicalHeaderKey(header)] = attribute
+	originals := make(map[string]string)
+	for _, header := range slices.Sorted(maps.Keys(cfg.Forwarders.HeaderMap)) {
+		canonical := http.CanonicalHeaderKey(header)
+		if original, duplicate := originals[canonical]; duplicate {
+			problems = append(problems, fmt.Sprintf("forwarders.header_map: %q and %q name the same header", original, header))
+		} else {
+			originals[canonical] = header
+		}
+		headers[canonical] = cfg.Forwarders.HeaderMap[header]
 	}
-	cfg.Forwarders.HeaderMap = headers
-	if problems = cfg.validate(); len(problems) > 0 {
+	// Validate the original entries too: a collision must not hide an invalid
+	// attribute. The built-in default is not an entry from the file, so one
+	// explicit mapping may still override it.
+	problems = append(problems, cfg.validate()...)
+	if len(problems) > 0 {
 		return nil, problems
 	}
+	cfg.Forwarders.HeaderMap = headers
 	location, err := time.LoadLocation(cfg.Limits.Timezone)
 	if err != nil || cfg.Limits.Timezone == "" || cfg.Limits.Timezone == "Local" {
 		return nil, Problems{"limits.timezone: must be an explicit IANA time zone, such as UTC or Europe/Berlin"}
@@ -669,7 +680,7 @@ func (c *Config) validate() Problems {
 			at := fmt.Sprintf("%s.pool[%d]", at, i)
 			switch {
 			case !isBackendURL(r.URL):
-				add("%s.url: must be an http or https URL, got %q", at, r.URL)
+				add("%s.url: must be an HTTP(S) origin without credentials, path, query or fragment", at)
 			case seen[r.URL]:
 				add("%s.url: %s is listed twice in this pool", at, r.URL)
 			}

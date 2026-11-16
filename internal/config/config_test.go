@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -258,7 +259,7 @@ func TestParseRejects(t *testing.T) {
 			want: []string{"models.m.pool: at least one replica is required"}},
 		{name: "replica URL without scheme",
 			yaml: change(t, "http://backend-b:8000", "backend-b:8000"),
-			want: []string{"models.chat-model.pool[1].url:", `"backend-b:8000"`}},
+			want: []string{"models.chat-model.pool[1].url:", "HTTP(S) origin without credentials, path, query or fragment"}},
 		{name: "replica listed twice",
 			yaml: change(t, "http://backend-b:8000", "http://backend-a:8000"),
 			want: []string{"models.chat-model.pool[1].url:", "listed twice"}},
@@ -500,6 +501,79 @@ func TestForwarders(t *testing.T) {
 		if _, err := Parse([]byte(valid+bad), lookupIn(validEnv)); err == nil || !strings.Contains(err.Error(), "forwarders.") {
 			t.Errorf("%q: %v", bad, err)
 		}
+	}
+}
+
+func TestRejectedBackendURLDoesNotExposeCredentials(t *testing.T) {
+	for _, url := range []string{
+		"https://private-user:private-password@backend.example:8000",
+		"https://backend.example:8000?token=private-query",
+		"https://backend.example:8000#private-fragment",
+		"https://private-user:private-password@backend.example:8000/v1?token=private-query#private-fragment",
+		"http://backend.example:8000/v1",
+	} {
+		for _, source := range []string{"literal", "environment"} {
+			t.Run(source+"/"+url, func(t *testing.T) {
+				env := map[string]string{"OIDC_ISSUER": validEnv["OIDC_ISSUER"], "BACKEND_URL": url}
+				value := url
+				if source == "environment" {
+					value = "${BACKEND_URL}"
+				}
+				_, err := Parse([]byte(change(t, "http://backend-a:8000", strconv.Quote(value))), lookupIn(env))
+				if err == nil {
+					t.Fatal("accepted backend URL that is not an origin")
+				}
+				message := err.Error()
+				if strings.Contains(message, "private-") || strings.Contains(message, url) {
+					t.Fatal("rejected URL appeared in the diagnostic", message)
+				}
+				if !strings.Contains(message, "models.chat-model.pool[0].url") || !strings.Contains(message, "origin without credentials, path, query or fragment") {
+					t.Fatal("diagnostic does not explain the origin rule", message)
+				}
+			})
+		}
+	}
+}
+
+func TestForwarderHeaderCollisionsAreAlwaysRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name, mappings, invalidHeader string
+	}{
+		{"different attributes", "{X-User: id, x-user: email}", ""},
+		{"same attribute", "{X-User: id, x-user: id}", ""},
+		{"invalid first", "{X-User: phone, x-user: email}", "X-User"},
+		{"invalid second", "{X-User: id, x-user: phone}", "x-user"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var first string
+			for range 100 {
+				_, err := Parse([]byte(valid+"forwarders:\n  header_map: "+tc.mappings+"\n"), lookupIn(validEnv))
+				if err == nil {
+					t.Fatal("accepted case-insensitive header collision")
+				}
+				message := err.Error()
+				if !strings.Contains(message, `"X-User" and "x-user" name the same header`) {
+					t.Fatal("collision diagnostic does not name both keys", message)
+				}
+				if tc.invalidHeader != "" && !strings.Contains(message, "forwarders.header_map."+tc.invalidHeader+": must be id, username or email") {
+					t.Fatal("colliding entry hid an invalid attribute", message)
+				}
+				if first != "" && message != first {
+					t.Fatalf("diagnostic changed between parses: %q vs %q", first, message)
+				}
+				first = message
+			}
+		})
+	}
+}
+
+func TestForwarderDefaultHeaderCanBeOverriddenOnce(t *testing.T) {
+	cfg, err := Parse([]byte(valid+"forwarders:\n  header_map: {x-olr-end-user: id, x-openwebui-user-email: email}\n"), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Forwarders.HeaderMap) != 2 || cfg.Forwarders.HeaderMap["X-Olr-End-User"] != "id" || cfg.Forwarders.HeaderMap["X-Openwebui-User-Email"] != "email" {
+		t.Fatal("explicit mapping did not override the built-in default", cfg.Forwarders.HeaderMap)
 	}
 }
 
