@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,48 @@ func TestAccountingErrorsAndAbort(t *testing.T) {
 				}
 				if failure == mockllm.FailDropMidStream && r.OutputTokens != 10 {
 					t.Fatal("broken stream content estimate", r)
+				}
+			})
+		}
+	}
+}
+
+func TestAccountingReasoningStreams(t *testing.T) {
+	for _, field := range []string{"reasoning", "reasoning_content"} {
+		for _, complete := range []bool{false, true} {
+			t.Run(field+"/complete="+strconv.FormatBool(complete), func(t *testing.T) {
+				wire := strings.Repeat(`data: {"choices":[{"delta":{"`+field+`":"thinking"}}]}`+"\n\n", 4)
+				if complete {
+					wire += "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":42}}\n\ndata: [DONE]\n\n"
+				}
+				backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/health" {
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, wire)
+				}))
+				defer backend.Close()
+				cfg := testConfig(backend.URL)
+				cfg.Groups = map[string]config.Group{"staff": {Models: []string{"*"}}}
+				records := make(recordChannel, 1)
+				_, router := accountingRouter(t, cfg, records)
+				resp, err := router.Client().Post(router.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"chat-model","stream":true,"stream_options":{"include_usage":true}}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, readErr := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != 200 || string(body) != wire || (readErr == nil) != complete {
+					t.Fatalf("status=%d read=%v body=%q", resp.StatusCode, readErr, body)
+				}
+				record := records.next(t)
+				wantStatus, wantOutput := "aborted", int64(4)
+				if complete {
+					wantStatus, wantOutput = "200", 42
+				}
+				if record.Status != wantStatus || record.OutputTokens != wantOutput {
+					t.Fatalf("reasoning accounting = %+v", record)
 				}
 			})
 		}

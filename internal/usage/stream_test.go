@@ -102,6 +102,22 @@ func TestStreamFallbackCountsContentOnly(t *testing.T) {
 	}
 }
 
+func TestStreamReasoningFallbackPreservesBytes(t *testing.T) {
+	for _, delta := range []string{`"reasoning":"thinking"`, `"reasoning_content":"thinking"`, `"reasoning":"thinking","reasoning_content":"thinking"`} {
+		for _, eol := range []string{"\n", "\r\n", "\r"} {
+			wire := []byte(strings.ReplaceAll(strings.Repeat("data: {\"choices\":[{\"delta\":{"+delta+"}}]}\n\n", 3), "\n", eol))
+			for _, hide := range []bool{false, true} {
+				for split := 0; split <= len(wire); split++ {
+					output, totals := observeStream(t, config.ProtocolOpenAI, hide, wire[:split], wire[split:])
+					if !bytes.Equal(output, wire) || totals.Output() != 3 || totals.HasOutput || totals.Complete {
+						t.Fatalf("delta=%s eol=%q hide=%t split=%d: %+v output=%q", delta, eol, hide, split, totals, output)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestStreamDoesNotDropUsageOnContentOrInvalidCounts(t *testing.T) {
 	for _, event := range []string{
 		"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n",

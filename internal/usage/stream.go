@@ -192,7 +192,7 @@ func openAIContent(choice []byte) bool {
 		return true
 	}
 	delta := field(choice, "delta")
-	for _, key := range []string{"content", "reasoning_content", "refusal"} {
+	for _, key := range []string{"content", "reasoning", "reasoning_content", "refusal"} {
 		if nonemptyString(field(delta, key)) {
 			return true
 		}
