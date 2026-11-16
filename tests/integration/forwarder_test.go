@@ -42,8 +42,12 @@ type forwarderSetup struct {
 	alice      string
 }
 
-func startForwarder(t *testing.T, unknown string) *forwarderSetup {
+func startForwarder(t *testing.T, unknown string, mappings ...map[string]string) *forwarderSetup {
 	t.Helper()
+	headers := map[string]string{"X-Olr-End-User": "username", "X-Openwebui-User-Email": "email"}
+	if len(mappings) > 0 {
+		headers = mappings[0]
+	}
 	seen := &seenHeaders{}
 	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
@@ -54,7 +58,7 @@ func startForwarder(t *testing.T, unknown string) *forwarderSetup {
 	})
 	f := startUsageRouter(t, backend, usageOptions{
 		group:      &config.Group{Models: []string{"*"}, RPM: limitPtr(100)},
-		forwarders: &config.Forwarders{UnknownUser: unknown, HeaderMap: map[string]string{"X-Olr-End-User": "username", "X-Openwebui-User-Email": "email"}},
+		forwarders: &config.Forwarders{UnknownUser: unknown, HeaderMap: headers},
 	})
 	admin := auth.Admin{Pool: f.pool}
 	webui, err := admin.AddUser(t.Context(), "open-webui", "", []string{"staff"})
@@ -72,9 +76,79 @@ func startForwarder(t *testing.T, unknown string) *forwarderSetup {
 	return &forwarderSetup{usageRouter: f, seen: seen, webui: webui, key: key, alice: alice}
 }
 
-func (f *forwarderSetup) send(t *testing.T, key string, headers map[string]string) *http.Response {
+func TestProtectedAdministratorCannotBeForwarded(t *testing.T) {
+	for _, unknown := range []string{config.UnknownUserReject, config.UnknownForwarderPolicy} {
+		t.Run(unknown, func(t *testing.T) {
+			f := startForwarder(t, unknown, map[string]string{
+				"A-End-User": "username", "X-Olr-End-User": "username",
+				"X-Openwebui-User-Email": "email", "Z-End-User": "id",
+			})
+			admin := auth.Admin{Pool: f.pool}
+			root, _, err := admin.BootstrapLocalAdmin(t.Context(), []byte(initialAdminPassword))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := admin.ChangeLocalPassword(t.Context(), root.ID, []byte(initialAdminPassword), []byte(rotatedAdminPassword)); err != nil {
+				t.Fatal(err)
+			}
+			execSQL(t, f.pool, `UPDATE users SET email='root@example.org' WHERE id=$1`, root.ID)
+			for name, headers := range map[string]map[string]string{
+				"username":      {"X-OLR-End-User": "admin"},
+				"email":         {"X-OpenWebUI-User-Email": "ROOT@example.org"},
+				"id":            {"Z-End-User": root.ID},
+				"unknown first": {"A-End-User": "unknown", "X-OLR-End-User": "admin"},
+				"unknown last":  {"X-OLR-End-User": "admin", "X-OpenWebUI-User-Email": "unknown@example.org"},
+			} {
+				t.Run(name, func(t *testing.T) {
+					for _, path := range []string{"/v1/chat/completions", "/v1/messages"} {
+						if resp := f.send(t, f.key, headers, path); resp.StatusCode != http.StatusForbidden {
+							t.Fatal("protected administrator was accepted", resp.StatusCode)
+						}
+					}
+				})
+			}
+			// A protected match must not be hidden behind LIMIT 2 or ambiguity.
+			for _, sub := range []string{"duplicate-one", "duplicate-two", "duplicate-three"} {
+				id := user(t, f.pool, "https://idp.example/realm", sub)
+				execSQL(t, f.pool, `UPDATE users SET username='admin',email='root@example.org' WHERE id=$1`, id)
+			}
+			for _, headers := range []map[string]string{{"X-OLR-End-User": "admin"}, {"X-OpenWebUI-User-Email": "root@example.org"}} {
+				if resp := f.send(t, f.key, headers); resp.StatusCode != http.StatusForbidden {
+					t.Fatal("ambiguous protected match was accepted", resp.StatusCode)
+				}
+			}
+			// A normal API key still acts as its own user, ignoring forwarded names.
+			if resp := f.send(t, f.usageRouter.key, map[string]string{"X-OLR-End-User": "admin"}); resp.StatusCode != http.StatusOK {
+				t.Fatal("ordinary key changed identity", resp.StatusCode)
+			}
+			if resp := f.send(t, f.key, map[string]string{"X-OLR-End-User": "alice"}); resp.StatusCode != http.StatusOK {
+				t.Fatal("ordinary forwarded user refused", resp.StatusCode)
+			}
+			rootKey, err := admin.CreateKey(t.Context(), root.ID, "own-access", time.Hour)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp := f.send(t, rootKey, nil); resp.StatusCode != http.StatusOK {
+				t.Fatal("administrator's own key refused", resp.StatusCode)
+			}
+			f.stop()
+			if f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1`, root.ID) != 0 ||
+				f.rows(t, `SELECT count(*) FROM usage WHERE user_id=$1 AND forwarded_for IS NOT NULL`, root.ID) != 0 ||
+				f.rows(t, `SELECT count(*) FROM usage WHERE forwarded_for=$1`, f.alice) != 1 ||
+				f.writer.Counters().Written != 3 {
+				t.Fatal("unexpected usage attribution", f.writer.Counters())
+			}
+		})
+	}
+}
+
+func (f *forwarderSetup) send(t *testing.T, key string, headers map[string]string, paths ...string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+"/v1/chat/completions", strings.NewReader(`{"model":"chat-model","messages":[]}`))
+	path := "/v1/chat/completions"
+	if len(paths) > 0 {
+		path = paths[0]
+	}
+	req, err := http.NewRequestWithContext(t.Context(), "POST", f.router.URL+path, strings.NewReader(`{"model":"chat-model","messages":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

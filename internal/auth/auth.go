@@ -295,6 +295,8 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			switch {
 			case errors.Is(err, errUnknownEndUser), errors.Is(err, errDisabledEndUser):
 				apierr.Write(w, protocol, 403, "permission_error", "the end user is unknown or disabled")
+			case errors.Is(err, errProtectedEndUser):
+				apierr.Write(w, protocol, 403, "permission_error", "the protected administrator cannot be a forwarded end user")
 			case errors.Is(err, errEndUserConflict):
 				apierr.Write(w, protocol, 400, "invalid_request_error", "end-user headers must name one user")
 			default:
