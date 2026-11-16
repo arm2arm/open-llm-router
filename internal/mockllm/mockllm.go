@@ -169,6 +169,7 @@ func New(opts Options) *Server {
 
 	s.mux.HandleFunc("GET /v1/models", s.api(openAI, s.models))
 	s.mux.HandleFunc("POST /v1/chat/completions", s.api(openAI, s.chatCompletions))
+	s.mux.HandleFunc("POST /v1/responses", s.api(openAI, s.responses))
 	s.mux.HandleFunc("POST /v1/completions", s.api(openAI, s.completions))
 	s.mux.HandleFunc("POST /v1/embeddings", s.api(openAI, s.embeddings))
 	s.mux.HandleFunc("POST /v1/messages", s.api(anthropic, s.messages))

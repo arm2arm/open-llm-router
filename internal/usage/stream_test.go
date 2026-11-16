@@ -149,14 +149,14 @@ func TestContentEventsAllocateNoJSONObjects(t *testing.T) {
 }
 
 func FuzzStreamPreservesBytes(f *testing.F) {
-	for _, seed := range []string{openAIContentEvent + openAIUsageEvent + "data: [DONE]\n\n", "event: ping\r\ndata: {}\r\n\r\n", "data: x\r\rdata: partial", "\x00\xff\n\n"} {
+	for _, seed := range []string{openAIContentEvent + openAIUsageEvent + "data: [DONE]\n\n", "event: ping\r\ndata: {}\r\n\r\n", "data: x\r\rdata: partial", "\x00\xff\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":7}}}\n\n"} {
 		f.Add([]byte(seed), uint16(7))
 	}
 	f.Fuzz(func(t *testing.T, wire []byte, width uint16) {
 		if len(wire) > 2*maxEvent {
 			t.Skip()
 		}
-		for _, protocol := range []string{config.ProtocolOpenAI, config.ProtocolAnthropic} {
+		for _, protocol := range []string{config.ProtocolOpenAI, config.ProtocolAnthropic, Responses} {
 			whole, expected := observeStream(t, protocol, false, wire)
 			var parts [][]byte
 			step := int(width)%257 + 1

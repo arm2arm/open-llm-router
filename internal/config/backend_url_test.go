@@ -16,6 +16,7 @@ func TestManagedBackendURLsAcceptHostsAndAPIPaths(t *testing.T) {
 		"http://141.33.4.201:8081/v1/models": "http://141.33.4.201:8081",
 		" https://GPU.EXAMPLE:443/v1/ ":      "https://gpu.example",
 		"https://gpu.example/v1/messages":    "https://gpu.example",
+		"https://gpu.example/v1/responses":   "https://gpu.example",
 		"gpu.cluster:8000/v1":                "http://gpu.cluster:8000",
 		"http://[fd00::1]:80/api/tags":       "http://[fd00::1]",
 	} {

@@ -467,8 +467,15 @@ func TestSlowReplicaReceivesLessAndCapsHold(t *testing.T) {
 }
 
 func TestHeaderAndIdleTimeouts(t *testing.T) {
-	for _, idle := range []bool{false, true} {
-		t.Run(map[bool]string{false: "headers", true: "idle"}[idle], func(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		idle bool
+	}{
+		{"/v1/chat/completions", false}, {"/v1/chat/completions", true},
+		{"/v1/responses", false}, {"/v1/responses", true},
+	} {
+		idle := tc.idle
+		t.Run(tc.path+"/"+map[bool]string{false: "headers", true: "idle"}[idle], func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/health" {
 					return
@@ -484,7 +491,7 @@ func TestHeaderAndIdleTimeouts(t *testing.T) {
 			cfg := &config.Config{Models: map[string]config.Model{"chat-model": {Protocols: []string{"openai"}, TimeoutS: 1, IdleTimeoutS: 1, Pool: []config.Replica{{URL: backend.URL, Weight: 1, MaxInflight: 4}}}}}
 			h, router := configured(t, cfg)
 			start := time.Now()
-			resp, err := http.Post(router.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"chat-model"}`))
+			resp, err := http.Post(router.URL+tc.path, "application/json", strings.NewReader(`{"model":"chat-model"}`))
 			if err != nil {
 				t.Fatal(err)
 			}

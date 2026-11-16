@@ -7,7 +7,8 @@ import (
 )
 
 // maxEvent bounds inspection memory. Oversized events still pass through in
-// full, but their metadata is not inspected or filtered.
+// full. Responses metadata is inspected incrementally; other oversized events
+// are not inspected or filtered.
 const maxEvent = 1 << 20
 
 // Stream splits SSE on blank lines, preserving every byte of each event,
@@ -15,22 +16,29 @@ const maxEvent = 1 << 20
 // injected OpenAI usage-only event may be omitted. emit must consume its slice
 // before returning; the buffer is reused.
 type Stream struct {
-	Protocol  string
-	HideUsage bool
-	Totals    Totals
-	emit      func([]byte) error
-	buffer    []byte
-	data      []byte
-	lineLen   int
-	cr        bool
-	opaque    bool
+	Protocol       string
+	HideUsage      bool
+	Totals         Totals
+	emit           func([]byte) error
+	buffer         []byte
+	data           []byte
+	lineLen        int
+	cr             bool
+	opaque         bool
+	response       JSON
+	responsePrefix int
+	responseData   bool
+	responseSkip   bool
 }
 
 func NewStream(protocol string, hideUsage bool, emit func([]byte) error) *Stream {
-	return &Stream{Protocol: protocol, HideUsage: hideUsage, emit: emit}
+	return &Stream{Protocol: protocol, HideUsage: hideUsage, emit: emit, response: JSON{Protocol: Responses, UsageDepth: 2}}
 }
 
 func (s *Stream) append(p []byte) error {
+	if s.Protocol == Responses {
+		s.observeResponse(p)
+	}
 	if !s.opaque && len(s.buffer)+len(p) <= maxEvent {
 		s.buffer = append(s.buffer, p...)
 		return nil
@@ -50,6 +58,9 @@ func (s *Stream) endLine() error {
 	s.lineLen = 0
 	if !blank {
 		return nil
+	}
+	if s.Protocol == Responses {
+		s.finishResponse()
 	}
 	if !s.opaque && !s.inspect(s.buffer) {
 		if err := s.emit(s.buffer); err != nil {
@@ -115,6 +126,9 @@ func (s *Stream) Finish() error {
 }
 
 func (s *Stream) inspect(event []byte) bool {
+	if s.Protocol == Responses {
+		return false
+	}
 	var name, data []byte
 	haveData := false
 	s.data = s.data[:0]

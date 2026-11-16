@@ -78,7 +78,7 @@ and the [pilot checklist](docs/PILOT.md).
 
 | Area | Available today |
 |---|---|
-| Routing | OpenAI and Anthropic native APIs; SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
+| Routing | OpenAI Chat Completions and stateless Responses, plus Anthropic Messages and token counting ([API coverage](docs/API_COMPATIBILITY.md)); SSE streaming and cancellation; weighted balancing, queueing, session affinity and priority classes |
 | Accounts and keys | Keycloak SSO, including brokered identity providers; independent local login and protected admin with an operator recovery CLI; Keycloak connection drafts, checks, test sign-in, live activation and rollback in Admin; routing revisions for models, endpoints, aliases and group policies in Admin; searchable administration history; local user management; expiring hash-only per-user keys with site lifetime/count limits |
 | Access and limits | Group model grants; per-user overrides in Admin; concurrency, RPM, TPM and daily/monthly token quotas, including strict reservation |
 | Endpoint administration | Add/edit/remove replicas for existing logical models; remote model detection; health tests; persisted revisions, live application and restore |

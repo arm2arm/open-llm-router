@@ -154,6 +154,7 @@ instance, per-user concurrency counters move to Redis (or Postgres advisory lock
 | Path | Protocol | Notes |
 |---|---|---|
 | `POST /v1/chat/completions`, `/v1/completions` | OpenAI | stream + non-stream |
+| `POST /v1/responses` | OpenAI | native stateless HTTP/SSE, tools, reasoning; backend support required |
 | `POST /v1/embeddings` | OpenAI | if an embedding model is configured |
 | `GET  /v1/models` | OpenAI | only models the caller may use |
 | `POST /v1/messages`, `/v1/messages/count_tokens` | Anthropic | stream, tools, thinking |

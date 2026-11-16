@@ -19,7 +19,7 @@ func NormalizeBackendURL(raw string) (string, error) {
 		return "", errors.New("enter an HTTP(S) backend URL without credentials, query or fragment")
 	}
 	switch strings.TrimRight(u.Path, "/") {
-	case "", "/v1", "/v1/models", "/v1/chat/completions", "/v1/messages", "/api/tags":
+	case "", "/v1", "/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/messages", "/api/tags":
 	default:
 		return "", errors.New("enter the host URL or its /v1 API base")
 	}

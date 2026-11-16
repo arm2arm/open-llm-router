@@ -3,6 +3,8 @@
 Behaviour of the router in detail. Operations are in [RUNBOOK.md](RUNBOOK.md), the portal's
 JSON API in [PORTAL_API.md](PORTAL_API.md), metrics and traces in
 [OBSERVABILITY.md](OBSERVABILITY.md), clients in [CLIENTS.md](CLIENTS.md).
+Supported provider endpoints and known gaps are in
+[API_COMPATIBILITY.md](API_COMPATIBILITY.md).
 
 ## API keys and bootstrap administration
 
@@ -71,7 +73,7 @@ Direct SQL edits are picked up within the cache TTL; use the admin commands for 
 
 ## API behavior
 
-The router serves `POST /v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
+The router serves `POST /v1/chat/completions`, `/v1/responses`, `/v1/completions`, `/v1/embeddings`,
 `/v1/messages` and `/v1/messages/count_tokens`. Request bodies are limited to 4 MiB by default (`limits.max_body_bytes`).
 Unknown fields and client protocol headers pass through. Client credentials and cookies are
 removed; replicas can use their own bearer token via `bearer_token_env` in the config.
@@ -219,12 +221,35 @@ For streaming calls, derive output tokens/second as
 `output_tokens * 1000 / (latency_ms - ttfb_ms)` when the denominator is positive;
 this rate is not meaningful for non-stream responses that arrive all at once.
 
-OpenAI streams request `stream_options.include_usage: true`. If the caller omitted it or
+OpenAI Chat Completions and legacy Completions streams request `stream_options.include_usage: true`. If the caller omitted it or
 set it to false, the router removes only the extra event with empty `choices` and numeric
 usage; all other events keep their original bytes. If the caller requested usage, that
 event is delivered unchanged. Duplicate or case-variant `stream_options` or nested
 `include_usage` keys return 400 before forwarding; a backend cannot interpret another
 spelling as an override. Unknown request fields and stream options remain intact.
+
+Responses uses native `input_tokens` and `output_tokens`, including the usage
+inside SSE `response.completed`, `response.incomplete` and `response.failed`.
+Cached input and reasoning output detail fields are already included in those
+totals and are not added again. A provider-declared incomplete response is a
+valid terminal event; a missing terminal event aborts the connection. Failed
+responses and error events are recorded as errors. Without final usage, text,
+refusal, reasoning and function/custom-tool argument delta events provide the
+output fallback, and the dispatched-stream input estimate below still applies.
+Responses does not receive Chat Completions usage injection or event filtering.
+
+`POST /v1/responses` forwards native input/output items, function results,
+multimodal input, structured output, reasoning and supported provider tools.
+The model must enable `openai`, and every replica must implement Responses.
+This is stateless HTTP/SSE support: `store` defaults to `false`; `store:true`,
+`background:true`, nonempty `previous_response_id`/`conversation` and stored item
+references return 400 before contacting the backend. State-control keys must be
+unique and lower-case. Send complete history items for every turn. Strict quota
+requires `max_output_tokens`; `max_tokens` and `max_completion_tokens` cannot
+replace it. Stored-response retrieval/deletion/cancellation, Conversations and
+WebSocket transport are not implemented. Provider-hosted tool availability is
+determined by the backend, not by OLR.
+
 Anthropic input is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`.
 Streaming counts begin at `message_start`; input components present in a later
 `message_delta` replace their earlier values, while omitted components are retained.
@@ -245,7 +270,9 @@ The same resulting input value is used in request/daily records, the quota ledge
 TPM and usage reports. Locally rejected requests and upstream HTTP errors do not
 receive this estimate. Other missing input usage remains zero. Non-stream JSON is inspected incrementally
 without retaining content. Inspection buffers at most 1 MiB per SSE event and 64 KiB per
-usage object; oversized events pass through unchanged without inspection or filtering.
+usage object; oversized events pass through unchanged without filtering. Responses
+terminal-event usage and type are inspected incrementally even above the event
+buffer limit, because those events can embed the full generated answer.
 
 Four writer goroutines drain a 1,024-record queue. Each insert and its `usage_daily` upsert
 commit in one transaction, using the request's start date in `limits.timezone` (default UTC).
