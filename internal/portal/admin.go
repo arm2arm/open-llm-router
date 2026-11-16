@@ -222,6 +222,12 @@ func (h *Handler) setEnabled(w http.ResponseWriter, r *http.Request, by user) {
 		fail(w, 400, "invalid_request_error", "you cannot disable yourself")
 		return
 	}
+	if _, agent := r.Context().Value(agentContext{}).(agentIdentity); agent && *body.Enabled {
+		administrator, ok := h.targetAdministrator(w, r, id)
+		if !ok || !allowAdministratorAuthority(w, r, by, administrator) {
+			return
+		}
+	}
 	err := (auth.Admin{Pool: h.pool}).SetEnabled(r.Context(), id, *body.Enabled)
 	if errors.Is(err, auth.ErrProtectedAdmin) {
 		fail(w, 403, "permission_error", "the protected local administrator cannot be disabled")
@@ -310,5 +316,5 @@ func pathUUID(w http.ResponseWriter, r *http.Request, name, missing string) (str
 		fail(w, 404, "not_found_error", missing)
 		return "", false
 	}
-	return r.PathValue(name), true
+	return id.String(), true
 }

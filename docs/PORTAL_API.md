@@ -244,6 +244,14 @@ authorization remains enforced on the server regardless of browser navigation.
 - The group/password routes return 403 for Keycloak identities and the protected local
   administrator; their source/protection checks also run in the store transaction.
   Creating the reserved local `admin` returns 403. There is no portal deletion API.
+- Creating/promoting a local administrator or resetting a local administrator's
+  password requires a local sign-in within 15 minutes; SSO and stale local sessions
+  receive 403 `reauthentication_required`. The same gate protects routing changes
+  that newly grant administrator authority. Ordinary local-user operations remain
+  available to SSO administrators. For agent keys, administrator resets and
+  enablement require `admin_keys:delegate`, checked at preview and apply.
+- Accepted user UUID spellings are normalized to lowercase dashed text before
+  self-disable checks and audit recording.
 - `DELETE /portal/api/admin/users/{id}/keys/{key}` with `{}` returns 204 after revoking a
   key belonging to that user. Unknown/mismatched owners return 404. Metadata and usage
   remain; browser sessions remain active. API-key caches invalidate on every router.

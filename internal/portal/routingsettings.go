@@ -263,6 +263,11 @@ func (h *Handler) switchRouting(w http.ResponseWriter, r *http.Request, u user, 
 		return
 	}
 	running, _ := h.RoutingRuntime.Snapshot()
+	for name, group := range cfg.Groups {
+		if group.Admin && !running.Groups[name].Admin && !allowAdministratorAuthority(w, r, u, true) {
+			return
+		}
+	}
 	publish, states, err := h.RoutingRuntime.PrepareRouting(r.Context(), cfg, changedModels(running, cfg), kind == "activate")
 	if err != nil {
 		_ = h.routingChecks(r, revision, probeResults(states), u)

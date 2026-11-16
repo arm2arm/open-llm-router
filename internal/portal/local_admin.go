@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/policy"
 )
 
 func (h *Handler) localGroups(w http.ResponseWriter, groups []string) ([]string, bool) {
@@ -62,6 +63,9 @@ func (h *Handler) createLocalUser(w http.ResponseWriter, r *http.Request, by use
 	if !ok {
 		return
 	}
+	if !allowAdministratorAuthority(w, r, by, policy.Resolve(h.routingConfig().Groups, groups).Admin) {
+		return
+	}
 	if !h.allowPassword(w, r, "admin:"+by.ID) {
 		return
 	}
@@ -75,7 +79,7 @@ func (h *Handler) createLocalUser(w http.ResponseWriter, r *http.Request, by use
 	respond(w, http.StatusCreated, map[string]any{"id": id, "must_change_password": true})
 }
 
-func (h *Handler) setLocalGroups(w http.ResponseWriter, r *http.Request, _ user) {
+func (h *Handler) setLocalGroups(w http.ResponseWriter, r *http.Request, by user) {
 	var body struct {
 		Groups *[]string `json:"groups"`
 	}
@@ -94,6 +98,9 @@ func (h *Handler) setLocalGroups(w http.ResponseWriter, r *http.Request, _ user)
 	if !ok {
 		return
 	}
+	if !allowAdministratorAuthority(w, r, by, policy.Resolve(h.routingConfig().Groups, groups).Admin) {
+		return
+	}
 	if localAdminError(w, (auth.Admin{Pool: h.pool}).SetLocalGroups(r.Context(), id, groups)) {
 		return
 	}
@@ -109,6 +116,10 @@ func (h *Handler) resetLocalPassword(w http.ResponseWriter, r *http.Request, by 
 	}
 	id, ok := pathUUID(w, r, "id", "user not found")
 	if !ok {
+		return
+	}
+	administrator, ok := h.targetAdministrator(w, r, id)
+	if !ok || !allowAdministratorAuthority(w, r, by, administrator) {
 		return
 	}
 	if !h.allowPassword(w, r, "admin:"+by.ID) {

@@ -14,14 +14,15 @@ import (
 )
 
 type agentOperation struct {
-	Name        string         `json:"name"`
-	Permission  string         `json:"permission"`
-	Additional  []string       `json:"additional_permissions,omitempty"`
-	Write       bool           `json:"write"`
-	Description string         `json:"description"`
-	Params      []string       `json:"parameters"`
-	BodySchema  map[string]any `json:"body_schema"`
-	handler     func(http.ResponseWriter, *http.Request, user)
+	Name                          string         `json:"name"`
+	Permission                    string         `json:"permission"`
+	Additional                    []string       `json:"additional_permissions,omitempty"`
+	Write                         bool           `json:"write"`
+	Description                   string         `json:"description"`
+	Params                        []string       `json:"parameters"`
+	BodySchema                    map[string]any `json:"body_schema"`
+	AdministratorTargetPermission string         `json:"administrator_target_permission,omitempty"`
+	handler                       func(http.ResponseWriter, *http.Request, user)
 }
 type agentArguments struct {
 	Parameters map[string]string `json:"parameters,omitempty"`
@@ -122,6 +123,10 @@ func (h *Handler) operations() []agentOperation {
 		}
 	}
 	for i := range ops {
+		if slices.Contains([]string{"reset_user_password", "set_user_enabled"}, ops[i].Name) {
+			ops[i].AdministratorTargetPermission = "admin_keys:delegate"
+			ops[i].Description += "; resetting or enabling an administrator also requires admin_keys:delegate"
+		}
 		if strings.HasSuffix(ops[i].Permission, ":write") {
 			ops[i].Additional = append(ops[i].Additional, strings.TrimSuffix(ops[i].Permission, ":write")+":read")
 		}
