@@ -43,11 +43,18 @@ type JSON struct {
 }
 
 func (j *JSON) Write(p []byte) {
+	j.scan(p, nil)
+}
+
+// scan reports a bounded usage object just before its closing brace is emitted.
+// The offset refers to p, so callers can splice an extension without buffering
+// the response or re-encoding provider fields.
+func (j *JSON) scan(p []byte, found func(int, []byte)) {
 	usageDepth := j.UsageDepth
 	if usageDepth == 0 {
 		usageDepth = 1
 	}
-	for _, c := range p {
+	for i, c := range p {
 		if j.scalarName != "" {
 			j.scalar = append(j.scalar, c)
 			if len(j.scalar) > 256 {
@@ -130,6 +137,9 @@ func (j *JSON) Write(p []byte) {
 			if j.capture && j.depth == usageDepth {
 				if len(j.value) <= maxUsage {
 					j.Totals.readUsage(j.value, j.Protocol, true, true)
+					if found != nil {
+						found(i, j.value)
+					}
 				}
 				j.capture = false
 				j.value = j.value[:0]

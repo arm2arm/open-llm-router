@@ -224,9 +224,17 @@ this rate is not meaningful for non-stream responses that arrive all at once.
 OpenAI Chat Completions and legacy Completions streams request `stream_options.include_usage: true`. If the caller omitted it or
 set it to false, the router removes only the extra event with empty `choices` and numeric
 usage; all other events keep their original bytes. If the caller requested usage, that
-event is delivered unchanged. Duplicate or case-variant `stream_options` or nested
+event is delivered unchanged unless usage timing is explicitly enabled below. Duplicate or case-variant `stream_options` or nested
 `include_usage` keys return 400 before forwarding; a backend cannot interpret another
 spelling as an override. Unknown request fields and stream options remain intact.
+
+`X-OLR-Usage-Timing: true` opts Chat Completions and Responses into two additional
+numeric usage fields: `olr_observed_output_tokens_per_second` and
+`olr_observed_elapsed_seconds`. The API rate uses authoritative output tokens over
+elapsed request time up to the usage snapshot, including queue/prefill/network
+time. This differs from the stored latency-minus-TTFB estimate above; neither is
+a GPU-only decode measurement. Native bodies remain unchanged by default. See
+[client setup, bounds and partial/tool-turn semantics](CLIENTS.md#open-webui-response-throughput).
 
 Responses uses native `input_tokens` and `output_tokens`, including the usage
 inside SSE `response.completed`, `response.incomplete` and `response.failed`.

@@ -420,6 +420,61 @@ Quirks found with vLLM:
   set, OpenCode selected the wrong project and did not find `olr/chat-model`.
 - OpenCode exits zero when the session ends early or the model's edit is wrong.
 
+## Open WebUI response throughput
+
+The supported and tested baseline for this integration is **Open WebUI 0.13.3**.
+Earlier clients may preserve usage extensions, but are not verified here.
+In **Admin → Settings → Connections**, edit the OLR OpenAI connection and add
+this JSON to its **Headers** field (merge it with any existing custom headers):
+
+```json
+{"X-OLR-Usage-Timing":"true"}
+```
+
+In **Workspace → Models**, edit the model/preset and enable **Capabilities →
+Usage**. This asks Chat Completions streams for `stream_options.include_usage:true`.
+Keep the usage/Info control visible in chat. Generate a **new response** and hover
+or tap **ⓘ**. Existing messages are not recalculated. The tooltip includes numeric
+fields such as:
+
+```text
+olr_observed_output_tokens_per_second: 48.25
+olr_observed_elapsed_seconds: 4
+```
+
+This is **router-observed request throughput**, calculated as the provider's
+authoritative output-token count divided by elapsed time from OLR's inference
+handler entry to forwarding that usage snapshot. It includes request upload,
+admission/queue time, backend prefill, network/stream delivery and any retry.
+It is not GPU-only decode speed, time to first token, or browser rendering speed.
+Reasoning tokens count when they are included in the provider's output count.
+Provider timings and cached/reasoning usage details remain unchanged.
+
+Open WebUI adds token totals across tool calls but retains the **latest supplied
+OLR rate and duration**. Those fields describe that call's usage snapshot, not the
+whole tool loop. A later call with no usage may leave the earlier snapshot in the
+client. A reported snapshot does not establish successful completion: interrupted
+streams still abort, and partial/failed generations may report partial usage.
+OLR never invents token counts or adds a rate for missing, invalid or oversized
+usage. Backend usage objects larger than 64 KiB pass through without extension.
+
+The header explicitly enables these two extra fields for successful native
+**Chat Completions and stateless Responses, JSON and SSE**. Absent or `false`
+leaves native response bodies unchanged; malformed/duplicate values are rejected
+on these routes. Other endpoints ignore the option. OLR strips the header before
+contacting a backend. Upstream HTTP errors and compressed bodies pass through
+without extension; existing fields with either OLR timing name are never replaced.
+No Helm flag or change to quotas/accounting is required.
+
+The integration was checked with a disposable Open WebUI 0.13.3 instance and the
+OLR/mock backend fixtures, including a streamed tool turn and the actual ⓘ
+tooltip at desktop and mobile sizes. This does not imply `ai.aip.de` has been
+upgraded or its connection headers changed.
+
+References: [Open WebUI connection headers](https://docs.openwebui.com/reference/env-configuration/#custom-forwarded-headers-per-connection),
+[model capabilities](https://docs.openwebui.com/features/workspace/models/#capabilities-and-bindings),
+[0.13.3 usage normalization](https://github.com/open-webui/open-webui/blob/v0.13.3/backend/open_webui/utils/response.py).
+
 ## Open WebUI Responses connections
 
 In **Admin → Settings → Connections**, add or edit an OpenAI connection:
