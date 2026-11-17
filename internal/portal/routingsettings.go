@@ -59,6 +59,21 @@ func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user
 }
 
 func (h *Handler) respondRoutingView(w http.ResponseWriter, r *http.Request, view settings.RoutingView, committed bool) {
+	if !agentCanReadUsers(r) {
+		clearActor := func(revision *settings.Revision[settings.Routing]) *settings.Revision[settings.Routing] {
+			if revision == nil {
+				return nil
+			}
+			copy := *revision
+			copy.CreatedBy = ""
+			return &copy
+		}
+		view.Active, view.Draft = clearActor(view.Active), clearActor(view.Draft)
+		view.History = slices.Clone(view.History)
+		for i := range view.History {
+			view.History[i].CreatedBy = ""
+		}
+	}
 	out := routingView{Settings: view, AffectedUsers: []policyImpact{}, CredentialReferences: []string{}, AllowedPrivateNetworks: []string{}, GroupGrants: map[string][]string{}}
 	out.EncryptionKeyConfigured = h.Routing.Cipher != nil
 	running, _ := h.RoutingRuntime.Snapshot()
@@ -71,7 +86,7 @@ func (h *Handler) respondRoutingView(w http.ResponseWriter, r *http.Request, vie
 	if h.Endpoints != nil && h.Endpoints.Policy != nil {
 		out.CredentialReferences, out.AllowedPrivateNetworks = h.Endpoints.Policy.References(), h.Endpoints.Policy.Networks()
 	}
-	if !committed && view.Draft != nil {
+	if !committed && view.Draft != nil && agentCanReadUsers(r) {
 		candidate, _, err := h.Routing.Candidate(r.Context(), settings.DomainRouting, view.Draft.ID)
 		var invalid *settings.ValidationError
 		if err != nil && !errors.As(err, &invalid) {

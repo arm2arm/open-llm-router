@@ -1,7 +1,9 @@
 package portal
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
@@ -38,10 +40,70 @@ func TestPreviewRedactionAndCanonicalBinding(t *testing.T) {
 	if strings.Contains(string(b), "private-") {
 		t.Fatal("preview exposed secrets")
 	}
-	a, _ := argumentHash(json.RawMessage(`{"body":{"enabled":false},"parameters":{"id":"x"}}`))
-	b2, _ := argumentHash(json.RawMessage(`{"parameters":{"id":"x"},"body":{"enabled":false}}`))
+	a, _ := argumentHash(json.RawMessage(`{"body":{"enabled":false},"parameters":{"id":"x"}}`), "synthetic-admin-key")
+	b2, _ := argumentHash(json.RawMessage(`{"parameters":{"id":"x"},"body":{"enabled":false}}`), "synthetic-admin-key")
 	if string(a) != string(b2) {
 		t.Fatal("object order changed digest")
+	}
+	other, _ := argumentHash(json.RawMessage(`{"body":{"enabled":false},"parameters":{"id":"x"}}`), "another-synthetic-key")
+	if bytes.Equal(a, other) {
+		t.Fatal("preview binding did not depend on the authenticated key")
+	}
+	plain := sha256.Sum256([]byte(`{"body":{"enabled":false},"parameters":{"id":"x"}}`))
+	if bytes.Equal(a, plain[:]) {
+		t.Fatal("preview retained an unkeyed argument digest")
+	}
+	metadata := sanitizeAgent(map[string]any{"tokens_per_day": float64(123), "tokens_per_month": nil, "has_local_password": true, "must_change_password": false, "password": "private-password", "tokens_per_day_bad": "private-token"}).(map[string]any)
+	if metadata["tokens_per_day"] != float64(123) || metadata["tokens_per_month"] != nil || metadata["has_local_password"] != true || metadata["must_change_password"] != false || metadata["password"] != "will change" || metadata["tokens_per_day_bad"] != "will change" {
+		t.Fatal("preview confused public quota/password metadata with secret values")
+	}
+}
+
+func TestMCPWriteSchemaUsesObjectRootAndDiscoverableOperations(t *testing.T) {
+	h := &Handler{}
+	identity := agentIdentity{Key: adminaccess.Key{Permissions: adminaccess.Permissions}}
+	r := httptest.NewRequest("POST", "http://router/api/admin/v1/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r = r.WithContext(agentTestContext(r.Context(), identity))
+	w := httptest.NewRecorder()
+	h.agentMCP(w, r, identity)
+	var response struct {
+		Result struct {
+			Tools []struct {
+				Name        string
+				InputSchema map[string]any
+			}
+		}
+	}
+	if json.Unmarshal(w.Body.Bytes(), &response) != nil || w.Code != 200 {
+		t.Fatal("tools discovery failed")
+	}
+	found := false
+	for _, tool := range response.Result.Tools {
+		if tool.InputSchema["type"] != "object" {
+			t.Fatal("tool input root is not an object", tool.Name)
+		}
+		for _, union := range []string{"oneOf", "anyOf", "allOf"} {
+			if _, exists := tool.InputSchema[union]; exists {
+				t.Fatal("tool has a root union", tool.Name, union)
+			}
+		}
+		if tool.Name == "preview_change" {
+			found = true
+			properties := tool.InputSchema["properties"].(map[string]any)
+			operation := properties["operation"].(map[string]any)
+			names := operation["enum"].([]any)
+			if len(names) == 0 {
+				t.Fatal("write operations are not discoverable")
+			}
+			args := properties["arguments"].(map[string]any)
+			if len(args["anyOf"].([]any)) != len(names) {
+				t.Fatal("operation argument schemas missing")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("write key has no preview tool")
 	}
 }
 
@@ -53,6 +115,8 @@ func TestMCPProtocolEnvelope(t *testing.T) {
 	}{
 		{"negotiated", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`, "", `"protocolVersion":"2025-06-18"`, 200},
 		{"fallback", `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"future"}}`, "", `"protocolVersion":"2025-11-25"`, 200},
+		{"old revision renegotiates", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`, "", `"protocolVersion":"2025-11-25"`, 200},
+		{"batch revision unsupported", `[{"jsonrpc":"2.0","id":1,"method":"ping"}]`, "2025-03-26", "unsupported MCP protocol version", 400},
 		{"unsupported header", `{"jsonrpc":"2.0","id":1,"method":"ping"}`, "1999-01-01", "unsupported MCP protocol version", 400},
 		{"invalid id", `{"jsonrpc":"2.0","id":{},"method":"ping"}`, "", `"code":-32600`, 200},
 		{"null id", `{"jsonrpc":"2.0","id":null,"method":"ping"}`, "", `"code":-32600`, 200},

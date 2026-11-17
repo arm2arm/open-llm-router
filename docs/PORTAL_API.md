@@ -325,7 +325,8 @@ authorization remains enforced on the server regardless of browser navigation.
   key belonging to that user. Unknown/mismatched owners return 404. Metadata and usage
   remain; browser sessions remain active. API-key caches invalidate on every router.
 - `PUT /portal/api/admin/users/{id}/overrides/{field}` with `{"value":N,"reason":"…"}` (`null` for
-  unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`;
+  unlimited) sets an override, recorded as `set_by: "portal:<admin username>"`.
+  The same operation through an administration key records `set_by: "agent:<key UUID>"`;
   `DELETE …/overrides/{field}` with `{}` clears it. Both return 204 and take effect at the user's
   next request on every router, including cached OIDC access-token principals.
 - `PUT /portal/api/admin/users/{id}/enabled` with `{"enabled":false}` disables a user (sessions

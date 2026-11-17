@@ -90,6 +90,12 @@ its own egress address the source unless deployed as an explicitly trusted proxy
 | `admin_keys:read`, `admin_keys:write` | Own administration-key metadata, narrowing and revocation |
 | `admin_keys:delegate` | Child issuance and operations capable of granting admin authority |
 
+Routing access alone does not include stored user identities or per-user
+memberships and overrides. `get_routing` omits affected users and revision actor
+identities without `users:read`. Policy previews can evaluate supplied hypothetical
+memberships, but selecting a stored `user_id` and listing affected users require
+`users:read` as well.
+
 Writes also require the corresponding read permission. User creation requires
 credential and delegation permission; group assignment and complete routing
 policy changes require delegation permission because they can grant admin rights.
@@ -176,6 +182,15 @@ also retain their existing revision checks. Structural argument validation runs
 before preview persistence; domain validation and connection checks run at apply.
 A preview is not a human approval: scoped agents may preview and apply autonomously.
 
+Argument bindings use domain-separated HMAC-SHA-256 keyed by the authenticating
+administration credential. The raw credential is never persisted, so a copy of
+`admin_changes` cannot be used to test temporary-password guesses at SHA-256 speed.
+Existing previews created before this binding upgrade must be prepared again.
+Unchanged SSO profile refreshes preserve the administration-state version; real
+changes to memberships, enabled state and other administrative fields still
+invalidate previews. Before-images retain numeric token quotas and public
+password-state flags while secret values remain omitted.
+
 Apply claims the change before executing. Retries return operation metadata,
 never repeat a claimed mutation or recover a secret. After disconnection, query
 change status and inspect the affected target. A crash between claim and outcome
@@ -209,17 +224,24 @@ mcp_servers:
 ```
 
 Keep TLS verification enabled. Generic MCP clients use the same URL and bearer
-header. The router negotiates the `2025-03-26`, `2025-06-18` and `2025-11-25`
+header. The router negotiates the `2025-06-18` and `2025-11-25`
 protocol revisions with initialize,
 ping, tool discovery and tool calls. It does not expose a shell, inference tools,
 server-side sampling, browser sessions or arbitrary HTTP execution. Unsupported
 protocol headers fail with HTTP 400, as required by the [Streamable HTTP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports). Tool discovery
 is permission-filtered; execution independently checks permissions again.
+An older initialize request is offered `2025-11-25`; the client must accept that
+revision or stop. The router does not advertise `2025-03-26`, whose required batch
+transport is not implemented. JSON-RPC batching was removed in
+[the 2025-06-18 revision](https://modelcontextprotocol.io/specification/2025-06-18/changelog).
 
 Read tools include identity, service status, users, routing and history. Write
-operations are offered through a schema-discriminated `preview_change` tool,
+operations are offered through a `preview_change` tool with a plain object root,
+an operation-name enum and nested, titled argument alternatives,
 followed by `apply_change` and `get_change_status`. Observer keys do not advertise
 write tools. Read annotations are accurate; apply is marked destructive.
+Read tools with no arguments accept an omitted `arguments` member, `null` or `{}`.
+Operation-specific arguments are validated again on the server.
 
 Suggested agent instruction:
 
