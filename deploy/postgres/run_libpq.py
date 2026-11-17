@@ -6,7 +6,7 @@ PGPASSWORD, remove pgx-only options, and preserve TLS/service options.
 """
 import os
 import sys
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 
 PGX_ONLY = {"statement_cache_capacity", "description_cache_capacity", "default_query_exec_mode"}
 
@@ -19,7 +19,7 @@ def libpq_url(raw):
              if not key.startswith("pool_") and key not in PGX_ONLY]
     if parts.fragment:
         raise ValueError("database URL fragments are unsupported")
-    suffix = "?" + urlencode(query) if query else ""
+    suffix = "?" + urlencode(query, quote_via=quote) if query else ""
     return parts.scheme + "://" + parts.netloc + parts.path + suffix
 
 
@@ -38,7 +38,7 @@ def connection(raw):
             password = value
         else:
             query.append((key, value))
-    suffix = "?" + urlencode(query) if query else ""
+    suffix = "?" + urlencode(query, quote_via=quote) if query else ""
     return parts.scheme + "://" + authority + parts.path + suffix, password
 
 

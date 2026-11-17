@@ -40,6 +40,10 @@ class LibpqURLTests(unittest.TestCase):
         self.assertEqual(url, "postgres://user@one:5432,two:5433/olr")
         self.assertEqual(password, "new&value")
 
+    def test_libpq_uri_uses_percent_encoding_for_spaces_and_literal_plus(self):
+        result = libpq.libpq_url("postgres://user@db/olr?sslrootcert=%2Fprivate%2Froot+ca%2B1.pem&pool_max_conns=8")
+        self.assertEqual(result, "postgres://user@db/olr?sslrootcert=%2Fprivate%2Froot%20ca%2B1.pem")
+
     @unittest.skipUnless(os.environ.get("OLR_DOCS_POSTGRES_CONTAINER"), "set a disposable PostgreSQL container for the real dump/restore check")
     def test_documented_backup_and_restore_with_pool_options(self):
         container = os.environ["OLR_DOCS_POSTGRES_CONTAINER"]
@@ -56,13 +60,14 @@ class LibpqURLTests(unittest.TestCase):
             env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
             def call(database, command, *args, data=None):
                 parts = urlsplit(base)
-                query = parts.query + "&pool_max_conns=7&pool_min_conns=1"
+                query = parts.query + "&pool_max_conns=7&pool_min_conns=1&application_name=backup+check%2Bdocs"
                 env["OLR_DATABASE_URL"] = parts._replace(path="/" + database, query=query).geturl()
                 result = subprocess.run([sys.executable, str(ROOT / "deploy/postgres/run_libpq.py"), command, *args], env=env, input=data, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
                 return result.stdout
             original = urlsplit(base).path.lstrip("/")
             try:
+                self.assertEqual(call(original, "psql", "-Atc", "SELECT current_setting('application_name')").strip(), b"backup check+docs")
                 for name in [source, target]:
                     call(original, "psql", "-c", "CREATE DATABASE " + name)
                 call(source, "psql", "-c", "CREATE TABLE backup_example(value integer); INSERT INTO backup_example VALUES(42)")
