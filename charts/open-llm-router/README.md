@@ -129,6 +129,14 @@ Add other OIDC, backend, metrics or OTLP secrets as needed. To use an external
 database while generating the other credentials in Helm, leave `existingSecret`
 empty, set `postgresql.enabled: false` and supply `externalDatabase.url`.
 
+For chart-managed credentials, configure the settings key under
+`secrets.env.OLR_SETTINGS_ENCRYPTION_KEY`. Once set, upgrades retain the existing
+key when this entry is omitted or empty and reject a different key. Stored backend
+API keys require the original key; generating a replacement cannot recover them.
+Back up the key with the database. Rolling back to a historical manifest from
+before the key was configured can still remove it; restore the original key before
+restarting the router in that case.
+
 ### Public ingress
 
 The chart uses standard Kubernetes `Ingress` and `NetworkPolicy` resources and assumes
