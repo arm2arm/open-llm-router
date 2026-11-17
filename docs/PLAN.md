@@ -7,16 +7,12 @@ Owner: A. Khalatyan. License: MIT.
 Site-specific values (hostnames, realms, GPU layout, quotas) are **not** kept in this public repository.
 They live in a private deployment file that sets the same configuration keys as `config.example.yaml`.
 
-The current administration interfaces and setup are described in
-[ADMIN_GUIDE.md](ADMIN_GUIDE.md). The proposed extension for a protected local
-administrator, dual login, Admin-managed Keycloak connections, endpoints and group
-policies is tracked separately in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md);
-These extend the first release. Protected credentials (#72) and independent local
-session APIs (#73), browser sign-in/password flows (#74) and local user/key
-administration (#75) are implemented. Admin can also edit endpoint pools and model
-parameters for existing logical models, with persisted revisions and live activation.
-Protected-admin recovery, Keycloak settings, logical model/alias creation and group
-policy editors remain in the linked delivery plan.
+The current interfaces and setup are described in [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
+Protected local administration and recovery, dual login, Admin-managed Keycloak
+connections, named backends, logical models/aliases, group policies and append-only
+history are implemented. [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md) records
+that delivery and the remaining platform extensions. This is the historical design;
+use the API/reference documentation for current behavior.
 
 ## 0. Changes
 
@@ -88,7 +84,8 @@ A small, maintainable router in front of **locally hosted** LLMs that
 - lets users **self-serve**: log in, create/revoke keys, see their usage and limits,
 - enforces **per-user quotas, rate and concurrency limits** by group,
 - **balances load** over many replicas of the same model, including mixed GPU types,
-- records **usage metadata** per user (never prompts or responses),
+- records **usage metadata** per user; optional personal content tracing stores
+  prompts/responses only when the site gate and that user's consent are both enabled,
 - **traces every call** (tokens, time to first token, tokens per second) and adds **no measurable
   latency or throughput loss** to token streaming.
 
@@ -341,7 +338,7 @@ replica (systemd unit or container), listening on an internal interface, firewal
 | M2 | Auth: API keys, Keycloak tokens, groups, forwarders | invalid/expired/revoked → 401; forbidden model → 403; `/v1/models` filtered; forwarded user attributed; untrusted header ignored | 0.5 d |
 | M3 | Quotas, rpm/tpm, concurrency, usage records, `/v1/me/usage` | token counts equal backend `usage`; 429 with reset time at each limit; concurrent overshoot within bound | 0.5 d |
 | M4 | Portal (keys, my usage, my requests, snippets, admin) + brokered login | test user logs in through `upstream-idp` → `olr-dev`, creates key, uses it from Claude Code, opencode, curl; user without required claim is refused | 1 d |
-| M5 | Hardening: security review, load test, metrics, runbook, privacy notice | independent review findings closed; 256 concurrent streams through router without errors; Grafana shows pools | 1–2 d |
+| M5 | Hardening: security review, load test, metrics, runbook, privacy notice | automated review findings tracked and validated; 256 concurrent streams through router without errors; Grafana shows pools | 1–2 d |
 | M6 | Pilot on a production Keycloak + real GPU pools; then Kubernetes manifests | pilot users active for 2 weeks; switch to production IdP was config-only | — |
 
 The estimates in this table are superseded by [WEEK1.md](WEEK1.md): about 7 working days to a
@@ -356,7 +353,7 @@ parallel and set the actual go-live date.
 - Client quirks (Anthropic beta headers, prompt-caching fields) → forward unknown fields; test each client.
 - Quota overshoot under concurrency → bounded by `max_concurrent`; strict mode reserves `max_tokens`.
 - Keycloak/claim naming differs per site → all claim names configurable; tested with the brokered dev realm.
-- Security of a self-built auth layer → independent review (M5), key hashing, constant-time compare,
+- Security of a self-built auth layer → scoped automated security checks (M5), key hashing, constant-time compare,
   no secrets in logs, dependency pinning.
 
 ## 17. Open questions

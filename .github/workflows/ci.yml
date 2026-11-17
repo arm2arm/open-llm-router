@@ -71,6 +71,10 @@ jobs:
           cache: true
       - name: Format, vet and staticcheck
         run: make lint
+      - name: Verify documented PostgreSQL backup and restore
+        env:
+          OLR_DOCS_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: python3 tests/security/check_libpq_url.py
       - name: Vulnerability check
         run: make vuln
       - name: Install the administration MCP interoperability client

@@ -12,7 +12,10 @@ PostgreSQL, Keycloak SSO and a mock model backend in one release. Neither method
 
 Run commands from the repository root unless a step says otherwise. The examples
 use a POSIX shell (Linux, macOS, or WSL). Keep one router process: rate limits,
-concurrency counters, queueing and affinity are not shared across instances.
+concurrency counters, daily/monthly token quotas, queueing and affinity are not
+shared across instances. With N processes, each can admit against its own limit,
+so aggregate quota/admission can reach N times the configured per-user allowance.
+Read [change and upgrade notes](../CHANGELOG.md) before updating.
 
 ## Local Docker Compose
 
@@ -36,7 +39,6 @@ umask 077
 # Keep an existing .env; it may contain your installation's secrets/settings.
 test -f .env || cp .env.example .env
 chmod 600 .env
-openssl rand -base64 32
 ```
 
 Edit `.env` before the first start:
@@ -44,15 +46,16 @@ Edit `.env` before the first start:
 ```dotenv
 # Choose a unique temporary password, at least 15 characters.
 OLR_BOOTSTRAP_ADMIN_PASSWORD=REPLACE_WITH_A_PRIVATE_TEMPORARY_PASSWORD
-# Paste the generated base64 value; keep it stable and back it up separately.
-OLR_API_KEY_ENCRYPTION_KEY=REPLACE_WITH_GENERATED_BASE64_VALUE
-# Optional, a second generated value: only needed to store SSO client secrets
+# Optional: generate a value with openssl rand -base64 32 to store SSO client secrets
 # in managed settings (olr admin settings). Keep it stable and backed up too.
 # OLR_SETTINGS_ENCRYPTION_KEY=REPLACE_WITH_ANOTHER_GENERATED_BASE64_VALUE
 ```
 
-Enable encryption before issuing keys if admins should be able to copy them
-later. Older hash-only keys cannot be recovered. The bootstrap creates a local
+API keys are shown once at creation and stored as hashes. A lost key needs a
+replacement and revocation; administrators cannot recover it.
+Retired setting: remove `OLR_API_KEY_ENCRYPTION_KEY` from older deployments. It is
+obsolete and is separate from the managed-settings encryption key.
+The bootstrap creates a local
 router account named `admin`, independently of Keycloak, with no default password.
 
 ### 2. Start the complete stack
@@ -195,7 +198,7 @@ git pull --ff-only
 docker compose up --build -d --wait --wait-timeout 180
 ```
 
-Back up PostgreSQL and the encryption key before upgrading an installation with
+Back up PostgreSQL and the managed-settings encryption key before upgrading an installation with
 data you need. Do not add `--volumes` to `down` unless you intend to delete its
 database and Keycloak state. See the [backup/restore runbook](RUNBOOK.md).
 
@@ -204,8 +207,8 @@ database and Keycloak state. See the [backup/restore runbook](RUNBOOK.md).
 The default [chart](../charts/open-llm-router) installs the **complete demo stack
 in one Helm release**: router and portal, persistent PostgreSQL 17, persistent
 development Keycloak with a configured SSO client and `staff` user, and a mock
-model backend serving `chat-model`. Passwords and the API-key encryption key are
-generated automatically. No database setup, separate manifests or GPU is needed.
+model backend serving `chat-model`. Bootstrap, database and demo SSO passwords are
+generated automatically; API keys are stored as hashes. No database setup, separate manifests or GPU is needed.
 
 ### 1. Prepare the cluster and images
 
@@ -378,6 +381,51 @@ config:
           max_inflight: 1
 ```
 
+The chart enables NetworkPolicy by default. In addition to its DNS and bundled
+service rules, allow the router pod to reach each external backend, database and
+IdP. Browser or node connectivity does not prove pod connectivity. For example,
+adapt these selectors/addresses to your site (the IPs below are documentation
+placeholders):
+
+```yaml
+networkPolicy:
+  enabled: true
+  egress:
+    # Ollama in another namespace:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: models
+          podSelector:
+            matchLabels:
+              app: ollama
+      ports:
+        - protocol: TCP
+          port: 11434
+    # External PostgreSQL:
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.20/32
+      ports:
+        - protocol: TCP
+          port: 5432
+    # External HTTPS identity provider:
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.30/32
+      ports:
+        - protocol: TCP
+          port: 443
+```
+
+For a trusted installation that deliberately permits every destination and port,
+use `networkPolicy.egress: [{}]` instead. An empty list adds no external egress.
+Keep this in the values file actually passed by the deployment pipeline; a manual
+policy patch can be replaced or conflict with Helm. After upgrading, inspect
+`helm -n NAMESPACE get values RELEASE --all` and the live policy, then test the
+backend's `/v1/models` from the router pod. If unrestricted egress still times out,
+check pod routing/SNAT and the backend firewall separately from node connectivity.
+
 For an authenticated backend, add its token under `secrets.env.GPU_API_TOKEN` and
 `bearer_token_env: GPU_API_TOKEN` to the pool entry. `localhost` inside a pod is
 that pod; use a Service DNS name or another reachable server address. Use `/` for
@@ -389,7 +437,8 @@ For public production access, start with the
 [production values example](../charts/open-llm-router/examples/production.yaml).
 It disables the bundled demo backend, development Keycloak and PostgreSQL, and
 uses external services with a pre-existing `olr-secrets` Secret containing
-`OLR_DATABASE_URL`, bootstrap/encryption credentials, and any OIDC/backend secrets.
+`OLR_DATABASE_URL`, the bootstrap password, the managed-settings encryption key
+when used, and any OIDC/backend secrets.
 You may keep bundled PostgreSQL enabled if you provide its required Secret keys
 and manage its backups. The [chart reference](../charts/open-llm-router/README.md)
 lists the Secret contract and external-database alternative.
@@ -410,7 +459,7 @@ controller, certificates or GPU workloads.
 
 ### Upgrade and rollback
 
-Keep the release name, namespace, database identity and encryption key stable.
+Keep the release name, namespace, database identity and managed-settings encryption key stable.
 Back up PostgreSQL, Keycloak state, the credentials Secret and your private values
 before an upgrade; see the [backup/restore runbook](RUNBOOK.md). Choose a tested
 checkout, build its images, update their tags/digests, and apply the complete file:
@@ -471,16 +520,16 @@ development stack or use the development credentials on a public server.
 | Symptom | Practical check |
 |---|---|
 | Bundled database or Keycloak stays Pending | Check `kubectl -n olr get pvc` and `kubectl -n olr describe pod POD_NAME`; choose an available StorageClass and sufficient cluster memory. |
-| Router never becomes ready | `docker compose logs --tail=100 router` or `kubectl -n olr logs deployment/olr-open-llm-router --tail=100`; check database URL/TLS, backend DNS/routing and health paths. Every configured model needs a healthy replica. |
+| Router never becomes ready | `docker compose logs --tail=100 router` or `kubectl -n olr logs deployment/olr-open-llm-router --tail=100`; check database URL/TLS, database egress and startup migrations/init containers. Backend health is separate. |
 | `ImagePullBackOff` / wrong architecture | Check the repository/tag/digest, registry pull Secret and that the image architecture matches the nodes. |
 | `404 model not found` | Use `/v1/models` with a router key. Distinguish the public `chat-model` from the exact upstream model name. Use Admin model detection against every replica. |
-| `403` on inference | The user's local memberships or Keycloak groups must match a configured model grant. Admin authority and model access are separate. |
+| `403` on inference | The user's local memberships or Keycloak groups must match a configured model grant. Group-admin authority and model grants are separate; the protected local administrator has all models. |
 | `503` on inference | Check replica health and capacity. A full single-GPU pool queues only for `queue_timeout_s`; increase it for long competing jobs or add capacity. |
 | All output appears at once | Send `stream: true`, use `curl -N`, and disable proxy buffering. Check client streaming/display settings and allow time for model loading/prompt processing. |
 | Login loops or cookies are refused | Match `portal.baseURL` / `PORTAL_BASE_URL` to the browser origin. Use HTTPS with secure cookies; explicitly disable them only for local HTTP. Check Keycloak redirect URLs. |
 | Keycloak is unavailable | Use `/portal/login/local`. Check issuer discovery and client settings; local admin and API-key access work independently. |
 | Changed YAML pool has no effect | A saved Admin endpoint revision takes precedence; restore to file configuration. YAML group/alias/OIDC changes need a process recreation. |
-| Copy key is disabled | Issue a replacement for a hash-only key or restore the original encryption key. Do not rotate the encryption key casually; normal hashed-key authentication and key recovery are separate. |
+| API key was lost | Create a replacement and revoke the old key. Only its hash is stored; no administrator can retrieve it. |
 
 Next: [administrator tasks](ADMIN_GUIDE.md), [client configuration](CLIENTS.md),
 [operations and backups](RUNBOOK.md), [metrics/traces](OBSERVABILITY.md), and

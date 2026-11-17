@@ -419,8 +419,8 @@ export function AdminUserKeys({
       <h3 className="font-semibold mb-3">API keys</h3>
       <Failure error={revoke.error} />
       <p className="subtitle mb-3">
-        Copy is available for keys issued with encryption enabled. Older keys
-        need replacement; they continue to work until revoked.
+        API keys are shown once when created. If a key is lost, create a
+        replacement and revoke the old key.
       </p>
       <div className="table-wrap">
         <table>

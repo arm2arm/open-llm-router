@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def api(path, *args):
-    return json.loads(subprocess.check_output(["gh", "api", path, *args], text=True))
+    output = subprocess.check_output(["gh", "api", path, *args], text=True)
+    return json.loads(output) if output.strip() else None
 
 
 def verify_branch(actual, expected):
@@ -73,7 +74,11 @@ def main():
     for key in ("secret_scanning", "secret_scanning_push_protection", "dependabot_security_updates"):
         assert settings[key]["status"] == "enabled", key
     assert api(f"repos/{args.repository}/actions/permissions")["sha_pinning_required"] is True
-    print("Verified main/release-tag protections, configured approval mode, secret scanning, Dependabot and Action SHA policy")
+    private_reporting = f"repos/{args.repository}/private-vulnerability-reporting"
+    if args.apply and not api(private_reporting)["enabled"]:
+        api(private_reporting, "--method", "PUT")
+    assert api(private_reporting)["enabled"], "private vulnerability reporting disabled"
+    print("Verified main/release-tag protections, configured approval mode, private reporting, secret scanning, Dependabot and Action SHA policy")
 
 
 if __name__ == "__main__":

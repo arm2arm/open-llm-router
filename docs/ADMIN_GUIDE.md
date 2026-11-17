@@ -6,8 +6,8 @@ before continuing with administration below.
 This guide describes local administration and the backend workspace (14 November 2026). Start here
 for setup, endpoint connections, group policies and user limits. Detailed operations
 are in [RUNBOOK.md](RUNBOOK.md); production acceptance is in [PILOT.md](PILOT.md).
-The [admin feature plan](ADMIN_FEATURE_PLAN.md) separates missing features from
-working functionality.
+The implemented interfaces are documented here; historical design decisions and
+remaining platform limits are summarized in [PLAN.md](PLAN.md).
 
 ## Personal request tracing
 
@@ -52,7 +52,10 @@ router identity `(local, admin)`. Its admin authority is stored independently of
 groups. API, CLI and database guards prevent deleting, disabling or demoting it,
 removing its credential, renaming it or converting it into an SSO identity.
 Database superusers, schema changes and intentional database destruction are
-outside this guarantee. Ordinary local and SSO users keep their normal lifecycle.
+outside this guarantee. The protected local administrator also has every
+inference model and unlimited limits independently of editable groups; its keys
+are privileged. Per-user overrides on this account are refused. Ordinary local
+and SSO users keep their normal group policies and lifecycle.
 
 With a built `olr` binary and `OLR_DATABASE_URL` pointing at the intended database,
 create an owner-only secret file outside the checkout using your secret manager.
@@ -167,15 +170,19 @@ never contains credentials or file paths:
 {"time":"…","level":"INFO","msg":"admin audit","event":{"time":"…","action":"local_admin.recover","actor":{"type":"operator_cli","name":"nonroot","host":"…"},"target_id":"…","result":"succeeded","details":{"credential_revision":3,"keys_revoked":0,"sessions_revoked":1}}}
 ```
 
-Keep standard error in your operations log. A persistent, searchable
-administration history is tracked in
-[#84](https://github.com/arm2arm/open-llm-router/issues/84).
+Keep standard error in your operations log. Recovery is also committed to the
+append-only administration history, visible in Admin and through `olr admin history`.
+A database outage cannot record its own failed attempt; retain the redacted CLI log.
 
 **Backups and restore.** Restoring a PostgreSQL backup returns the protected
 administrator's credential to the state in that backup: the password valid at
-backup time works again, and sessions or keys created later are gone. If that
-password is unknown, run recovery after the restore. Backups contain password
-hashes; protect them as secrets.
+backup time works again, and sessions or keys created later are gone. Later key
+revocations (including administration keys), user disablements, erasures and
+override reductions are also undone. Keep restricted, scheduled administration
+history exports outside the database, reapply those actions and rotate compromised
+credentials before reopening traffic. If the restored password is unknown, run
+recovery after the restore. Backups contain password hashes; protect them as secrets.
+Follow [the restore procedure](RUNBOOK.md#backups-and-restore).
 
 ### Manage authentication settings in the database
 
@@ -264,8 +271,8 @@ table with actor, revision, result and changed setting names. Database triggers
 refuse `UPDATE`, `DELETE` and `TRUNCATE` on revisions (except their check
 result), activations, stored secrets and audit events. Database superusers,
 schema changes and intentional database destruction are outside this
-guarantee, as for the protected administrator. A searchable history view is
-[#84](https://github.com/arm2arm/open-llm-router/issues/84).
+guarantee, as for the protected administrator. Search these events in
+**Admin → History** or through `olr admin history`.
 
 ### Configure and test Keycloak in Admin
 
@@ -666,8 +673,9 @@ docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" logs
 without a database or network; it does not probe backends or the identity provider.
 Startup opens/migrates the database and configures OIDC. Poll `/healthz` and
 `/readyz` through the HTTPS origin with a bounded retry period; both must return
-200. Readiness requires the database and a healthy replica for **every** configured
-model. Then complete the production checks in [PILOT.md](PILOT.md#acceptance-before-onboarding).
+200. Readiness checks database availability. Separately check each backend in
+Admin service status (or `olr_replica_healthy`) and make an authenticated request
+for each exposed logical model. Then complete the production checks in [PILOT.md](PILOT.md#acceptance-before-onboarding).
 
 ## 3. Add endpoints and assign them to groups
 
@@ -1327,8 +1335,8 @@ Full erasure is an operator CLI operation; see [RUNBOOK.md](RUNBOOK.md#erase-a-u
 | Keycloak unavailable | Open `/portal/login/local` or use the local API/operator CLI; inspect `/portal/api/auth` for SSO availability |
 
 Protected credentials, local sessions, independent portal startup, dual-login
-browser forms and local user/key administration are implemented. Admin-managed external Keycloak configuration remains in
-[ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md). For issue #21,
+browser forms and local user/key administration are implemented. Admin-managed external Keycloak configuration, group policies, logical models and
+aliases, protected recovery and searchable administration history are implemented. For issue #21,
 local tests and this documentation do not replace deployed acceptance and two
 weeks of real user activity.
 
@@ -1495,6 +1503,6 @@ creates a separate project with free ports and tears it down, including its test
 volume. Restore dumps stay in process memory and are never uploaded as artifacts.
 CI's [images job](../.github/workflows/ci.yml) runs the browser suite, local-only
 install, bundled/brokered logins and SDK/accounting tests. Go tests use isolated
-databases. The [security review follow-up](SECURITY_REVIEW.md#local-administration-follow-up-83-85)
+databases. The [security review follow-up](SECURITY_REVIEW.md#local-administration-follow-up-8385)
 records the authorization review and resolved install finding. Multi-router live
 configuration/shared admission and dedicated cloud adapters remain deferred.

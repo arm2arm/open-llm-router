@@ -265,7 +265,9 @@ See [REQUEST_TRACING.md](REQUEST_TRACING.md) for bounds and supported field sema
 Members of a group with `admin: true` in the active routing policy and the protected local administrator
 get `"admin": true` in `/portal/api/me` and these routes; everyone else gets 403.
 Membership and protected status are read from the database on each request. Protected
-authority does not grant inference model access; normal model policies still apply.
+authority also grants every inference model with unlimited limits, independently of
+editable groups. Overrides on this account are refused. Treat its inference keys
+as privileged credentials; ordinary accounts use their normal group policies.
 Local session APIs and browser sign-in/password forms work without Keycloak.
 The browser gates workspace/Admin on completing a required first password change,
 labels the identity source and offers local rotation under **Account**. API

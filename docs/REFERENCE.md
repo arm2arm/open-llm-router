@@ -89,8 +89,10 @@ returned to the caller. Unsupported model/protocol combinations give a protocol-
 
 Pools choose the healthy replica with the smallest `inflight / weight` and randomize ties.
 Slots last until completion or disconnect. Full or unhealthy pools return 503 with `Retry-After: 1`,
-or, with `queue_timeout_s`, after waiting that long in a priority-ordered queue (runbook). `/readyz` needs a healthy replica for every configured model and a successful
-database ping, regardless of whether replica slots are currently full. The database check is
+or, with `queue_timeout_s`, after waiting that long in a priority-ordered queue (runbook).
+`/readyz` checks database availability independently of backend health or available
+replica slots. Check Admin service status or `olr_replica_healthy` and make an
+authenticated inference call to verify each backend. The database check is
 bounded to 2 seconds and returns 503 on failure; `/healthz` remains a process liveness check.
 Health probes use each replica's `health_path` (default
 `/health`; use `/` for Ollama), at startup and every 5 seconds with a 2-second timeout:
@@ -538,7 +540,9 @@ CI runs on pushes and pull requests. It uses the same `make lint`, `make vuln` a
 commands with a Postgres 17 service, while a parallel job builds both runtime images, starts
 Compose and runs the frontend checks, Playwright self-service journey, `make smoke`,
 `make portal-check`, and official SDK checks against the router and both mocks. The Go
-job has a five-minute timeout and the image/browser job fifteen minutes. Dependencies are cached.
+workflow also covers Helm, network isolation, security mutations and release policy.
+Job timeouts and the current check inventory are defined in
+[ci.yml](../.github/workflows/ci.yml); dependencies are cached.
 
 
 

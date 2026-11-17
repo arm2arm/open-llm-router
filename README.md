@@ -163,6 +163,9 @@ test containers and database volume. See the [acceptance matrix](docs/ADMIN_GUID
 
 | Document | Content |
 |---|---|
+| [Security policy](SECURITY.md) | private vulnerability reporting, supported versions and response targets |
+| [Contributing](CONTRIBUTING.md) | development workflow and required validation |
+| [Change and upgrade notes](CHANGELOG.md) | user-visible changes and migration requirements |
 | [docs/INSTALL.md](docs/INSTALL.md) | step-by-step Compose and Kubernetes/Helm install, first login, real backends, upgrades and troubleshooting |
 | [Helm chart](charts/open-llm-router) | one-release demo stack, initial passwords/keys, real endpoints and an HTTPS production example |
 | [docs/AGENT_ADMINISTRATION.md](docs/AGENT_ADMINISTRATION.md) | IP-restricted administration keys, REST/MCP management and Hermes setup |

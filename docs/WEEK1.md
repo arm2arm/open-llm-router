@@ -85,7 +85,9 @@ the API and the router queue; the current state is in
 - Plain SQL with pgx; idempotent `schema.sql` embedded and applied at startup.
 - The backend does the OIDC login and keeps the session; no token reaches the browser. The React
   app talks only to `/portal/api/*`.
-- Tracing is metadata only: tokens, timing, model, replica. Prompts and responses are never recorded.
+- Tracing is metadata only: tokens, timing, model, replica. Prompts and responses are excluded from metadata traces; personal content capture
+  exists only with both the site tracing gate and individual opt-in. This is a
+  historical delivery plan; see [REQUEST_TRACING.md](REQUEST_TRACING.md) for current controls.
 - A user is identified by issuer plus `sub`; the router never merges users by email (that is
   Keycloak account linking).
 - Users can delete their own per-request records; daily totals stay for quotas and accounting.

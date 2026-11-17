@@ -10,7 +10,8 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "docs:check": "node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs"
   },
   "overrides": {
     "minimatch": "11.0.1",
@@ -42,6 +43,8 @@
     "eslint": "9.39.5",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react-hooks": "7.1.1",
+    "github-slugger": "2.0.0",
+    "mdast-util-from-markdown": "2.1.0",
     "prettier": "3.9.10",
     "tailwindcss": "4.3.5",
     "typescript": "npm:@typescript/typescript6@6.0.2",

@@ -20,6 +20,15 @@ NAME = "trial-open-llm-router"
 
 
 class HelmChart(unittest.TestCase):
+    def test_retired_api_key_encryption_setting_has_actionable_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = Path(directory) / "obsolete.yaml"
+            values.write_text(yaml.safe_dump({"secrets": {"env": {"OLR_API_KEY_ENCRYPTION_KEY": "obsolete-synthetic-value"}}}))
+            result = self.invoke("template", "trial", CHART, "-f", values)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("is obsolete: remove it", result.stderr)
+            self.assertNotIn("use its dedicated credential value", result.stderr)
+
     def test_router_startup_does_not_wait_for_optional_keycloak(self):
         for values in [{}, {"postgresql": {"enabled": False}, "externalDatabase": {"url": "postgres://user:pass@db.invalid/olr"}}]:
             rendered = self.render(values)

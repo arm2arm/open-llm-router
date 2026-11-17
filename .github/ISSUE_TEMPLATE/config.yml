@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/arm2arm/open-llm-router/security/advisories/new
+    about: Use the private security advisory form; do not disclose credentials or exploit details in public issues.

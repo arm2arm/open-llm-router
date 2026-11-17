@@ -7,6 +7,19 @@ The exact supported endpoints and known gaps are listed in
 [API_COMPATIBILITY.md](API_COMPATIBILITY.md); SDK success does not mean complete
 OpenAI or Anthropic platform compatibility.
 
+## Browser integration and CORS
+
+`/v1` does not implement cross-origin browser CORS or anonymous preflight handling.
+An `OPTIONS` request may receive 401, and adding a key in browser code does not
+solve a failed preflight. No wildcard origin is enabled by default.
+
+Use a server-side client/forwarder, such as Open WebUI's backend connection, that
+keeps the router key on the server. A site may instead operate a CORS-handling
+reverse proxy with an explicit origin allowlist and narrow allowed methods/headers;
+that policy belongs to the proxy, not an OLR setting. Never embed a shared router
+key in a public browser bundle. Portal cookies authenticate the same-origin portal
+API and do not authenticate `/v1` inference.
+
 ## Result for #8
 
 **Go**, recorded in [issue #1](https://github.com/arm2arm/open-llm-router/issues/1). Both
