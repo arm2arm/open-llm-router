@@ -561,6 +561,49 @@ Users see their own limits and use in the portal and at `/v1/me/usage`.
 
 ## Erase a user on request
 
+For an access request or before an authorized erasure, export a private snapshot
+on an operator host with `OLR_DATABASE_URL` configured:
+
+```sh
+olr admin user export -id <uuid> -output ./user-export.json
+```
+
+The destination must be new; the CLI creates it with mode 0600, refuses overwrites
+and removes an incomplete file on failure. For a container-only installation,
+stream to a private new host file:
+
+```sh
+(
+  umask 077
+  set -C
+  docker compose exec -T router olr admin user export -id <uuid> > ./user-export.json
+)
+```
+
+Check the exit status and remove a partial stdout export on failure. Transfer
+it only through the approved data-access process and remove working copies.
+The command uses a consistent read-only database snapshot and streams rows without a record
+count cap. It includes identity, credential metadata (never credential hashes,
+passwords or session/device tokens), overrides, attributed per-request records,
+daily totals, personal traces with current default sanitization and related
+administration events. A trusted forwarder's calls appear in the named end user's
+export; the forwarder owner's export includes only their direct calls. Expired or
+erased data cannot be recovered by export. Administration recipients and content
+exports require the site's privacy procedures.
+
+Disabled accounts are retained until an operator erases them, including after
+departure or IdP removal. Review the site's chosen age threshold explicitly:
+
+```sh
+docker compose exec -T router olr admin user list -disabled -older-than 2160h
+```
+
+This lists accounts disabled for more than 90 days, including `disabled_at`; it
+does not delete them. Review the IDs, then use the individual delete command below.
+Repeated disabling preserves the original age; re-enabling clears it. Pre-0028
+disabled accounts begin aging at upgrade because their actual disable date is
+unknown. Changing groups or disabling alone does not start automatic erasure.
+
 Find the user, then delete them. Deletion removes the account with its inference
 and administration keys (active, revoked or expired), delegated descendants, their
 preview rows, sessions, per-request records (including calls a trusted forwarder

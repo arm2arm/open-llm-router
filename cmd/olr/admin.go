@@ -18,6 +18,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/retention"
+	"github.com/arm2arm/open-llm-router/internal/userdata"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -28,7 +29,8 @@ const adminUsage = `usage:
   olr admin user add -username NAME [-email EMAIL] [-groups staff,admins]
   olr admin user disable -id USER_UUID
   olr admin user delete -id USER_UUID
-  olr admin user list [-match TEXT]
+  olr admin user list [-match TEXT] [-disabled [-older-than 2160h]]
+  olr admin user export -id USER_UUID [-output NEW_PRIVATE_FILE]
   olr admin key create -user USER_UUID [-label LABEL] [-class interactive|batch] [-trusted-forwarder] [-lifetime 2160h] [-config FILE]
   olr admin key list -user USER_UUID
   olr admin key revoke -id KEY_UUID
@@ -90,9 +92,9 @@ func admin(args []string, out, errout io.Writer) error {
 	fs := flag.NewFlagSet("olr admin "+command, flag.ContinueOnError)
 	fs.SetOutput(errout)
 	var username, email, groups, userID, id, label, configPath, match, class, field, value, reason, by string
-	var passwordFile, currentPasswordFile string
-	var lifetime time.Duration
-	var trusted bool
+	var passwordFile, currentPasswordFile, exportFile string
+	var lifetime, olderThan time.Duration
+	var trusted, disabled bool
 	switch command {
 	case "password change":
 		fs.StringVar(&userID, "user", "", "local user UUID (required)")
@@ -104,6 +106,11 @@ func admin(args []string, out, errout io.Writer) error {
 		fs.StringVar(&groups, "groups", "", "comma-separated group names")
 	case "user list":
 		fs.StringVar(&match, "match", "", "part of a username or email, ignoring case")
+		fs.BoolVar(&disabled, "disabled", false, "only disabled accounts")
+		fs.DurationVar(&olderThan, "older-than", 0, "disabled for longer than this duration; requires -disabled, e.g. 2160h")
+	case "user export":
+		fs.StringVar(&id, "id", "", "user UUID (required)")
+		fs.StringVar(&exportFile, "output", "", "new private output file (0600); default stdout")
 	case "user disable", "user delete", "key revoke":
 		fs.StringVar(&id, "id", "", "record UUID (required)")
 	case "key create":
@@ -172,10 +179,19 @@ func admin(args []string, out, errout io.Writer) error {
 			return errors.New("-user must be a user UUID")
 		}
 	}
-	if command == "key revoke" || command == "user disable" || command == "user delete" {
+	if command == "key revoke" || command == "user disable" || command == "user delete" || command == "user export" {
 		if !validUUID(id) {
 			return errors.New("-id must be a record UUID")
 		}
+	}
+	olderThanSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "older-than" {
+			olderThanSet = true
+		}
+	})
+	if command == "user list" && olderThanSet && (olderThan <= 0 || !disabled) {
+		return errors.New("-older-than must be positive and requires -disabled")
 	}
 	keyPolicy := config.Auth{MaxKeyLifetimeDays: config.DefaultMaxKeyLifetimeDays, MaxActiveKeysPerUser: config.DefaultMaxActiveKeysPerUser}
 	if command == "key create" {
@@ -225,6 +241,9 @@ func admin(args []string, out, errout io.Writer) error {
 	if command == "retention run" {
 		timeout = 30 * time.Minute // a first run may delete a large backlog
 	}
+	if command == "user export" {
+		timeout = 10 * time.Minute
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	pool, err := db.Open(ctx, os.Getenv(config.EnvDatabaseURL))
@@ -258,11 +277,34 @@ func admin(args []string, out, errout io.Writer) error {
 	case "user delete":
 		return manager.DeleteUser(ctx, id)
 	case "user list":
-		users, err := manager.ListUsers(ctx, match)
+		filter := auth.UserFilter{Match: match, Disabled: disabled}
+		if olderThan > 0 {
+			before := time.Now().Add(-olderThan)
+			filter.DisabledBefore = &before
+		}
+		users, err := manager.ListUsersFiltered(ctx, filter)
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(out).Encode(users)
+	case "user export":
+		if exportFile == "" {
+			return userdata.Export(ctx, pool, id, out)
+		}
+		file, err := os.OpenFile(exportFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return errors.New("create private export file failed; choose a new path")
+		}
+		if err := userdata.Export(ctx, pool, id, file); err != nil {
+			file.Close()
+			os.Remove(exportFile)
+			return err
+		}
+		if err := file.Close(); err != nil {
+			os.Remove(exportFile)
+			return errors.New("close private export file failed")
+		}
+		return nil
 	case "key create":
 		create := manager.CreateKeyOfClass
 		if trusted {

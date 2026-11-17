@@ -14,7 +14,7 @@ and P3; dependencies may change that order.
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
-| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation: PR #301; audit minimization: PR #302; churn protection (#248) in this change; departed-user tooling (#239) pending |
+| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation: PR #301; audit minimization: PR #302; churn protection: PR #303; data export/departed-user lifecycle (#239) in this change |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
@@ -227,3 +227,23 @@ and P3; dependencies may change that order.
   exactly 30 successful key events, zero missing-key events and five denied-source
   events, while other users and allowed sources still work. The Admin Guide
   documents process/replica scope and capacity planning/offline archive policy.
+
+## Data access and departed-account evidence
+
+- **#239:** The privacy notice lists administration history and residual
+  attribution, group names in exported spans, and authorized `users:read` agent
+  clients/operators as recipients of identity and metadata. Operator export uses
+  a streaming, consistent read-only snapshot of account data, credential metadata
+  without hashes/secrets, overrides, session/device timestamps, attributed usage,
+  daily totals, sanitized traces and related history. Private-file mode is 0600,
+  refuses overwrite and removes failed partial exports. Actual-CLI tests verify
+  structured JSON encoding preserves quoted/backslash-containing identity fields
+  without concatenating untrusted values into JSON. They also verify
+  203 forwarded calls plus a direct call in the end user's export, exclusion of
+  others' calls from the service owner's export, credential exclusion and safe
+  files. Snapshot regression excludes concurrently added requests. Disabled dates
+  are tracked independently of identity sync; old unknown dates start at upgrade.
+  `user list -disabled -older-than DURATION` supports reviewed departures without
+  automatic deletion. CLI tests remove an older candidate and cascaded records,
+  retain a fresh account and confirm repeated disabling preserves age while
+  re-enabling resets it. Runbook/pilot instructions rehearse export and age review.
