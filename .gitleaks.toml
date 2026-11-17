@@ -2,8 +2,8 @@
 useDefault = true
 
 [[allowlists]]
-description = "Blank example client secret consumes the next public env-var name"
+description = "Blank example client secret consumes the next public env-var name or example audience assignment"
 condition = "AND"
 paths = ['''^deploy/compose/pilot\.env\.example$''']
 regexTarget = "secret"
-regexes = ['''^OIDC_AUDIENCE$''']
+regexes = ['''^OIDC_AUDIENCE(?:=olr-api)?$''']

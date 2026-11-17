@@ -12,8 +12,27 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/mockllm"
 	"github.com/arm2arm/open-llm-router/internal/server"
 )
+
+func TestKeylessBackendNeverReceivesCallerCredentials(t *testing.T) {
+	mock := mockllm.New(mockllm.Options{})
+	backend := httptest.NewServer(mock)
+	defer backend.Close()
+	_, router := configured(t, testConfig(backend.URL))
+	response, _ := send(t, router.URL, "/v1/chat/completions", `{"model":"chat-model","messages":[]}`, http.Header{
+		"Authorization": {"Bearer router-private-key"}, "X-Api-Key": {"another-private-key"}, "Cookie": {"portal=private"},
+	})
+	if response.StatusCode != 200 {
+		t.Fatal(response.StatusCode)
+	}
+	for _, name := range []string{"Authorization", "X-Api-Key", "Cookie"} {
+		if mock.Stats().Last.Header.Get(name) != "" {
+			t.Fatal("caller credential reached a keyless backend:", name)
+		}
+	}
+}
 
 func TestParseRequestRefusesAmbiguousRoutingFields(t *testing.T) {
 	for body, want := range map[string]requestMeta{

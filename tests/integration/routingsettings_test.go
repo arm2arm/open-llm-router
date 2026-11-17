@@ -50,6 +50,11 @@ func TestAdminRoutingRevisions(t *testing.T) {
 		h.RoutingRuntime = forwarder
 		h.Endpoints = &endpoints.Service{DB: pool, Base: cfg, Policy: policy, Runtime: forwarder}
 	}})
+	defer func() {
+		for _, action := range []string{"settings.apply", "settings.validate"} {
+			requireAuditAction(t, f.pool, action)
+		}
+	}()
 	base := f.cfg.Portal.BaseURL
 	path := "/portal/api/admin/settings/routing"
 	admin := f.browser(t)
@@ -180,6 +185,7 @@ func TestAdminRoutingRevisions(t *testing.T) {
 	if view.Runtime.Revision != draft.ID {
 		t.Fatal("runtime revision after activation", view.Runtime.Revision)
 	}
+	view = call("POST", "/apply", revisionBody(view.Settings.Version, draft.ID), 200)
 	complete("second-model", 200)
 	complete("fast", 200)
 	if second.Stats().Requests != 2 {

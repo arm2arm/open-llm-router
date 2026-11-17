@@ -12,6 +12,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  security-mutations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: olr
+          POSTGRES_DB: olr_test
+          POSTGRES_PASSWORD: olr-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U olr -d olr_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      OLR_TEST_DATABASE_URL: postgres://olr:olr-ci-only@127.0.0.1:5432/olr_test?sslmode=disable
+      OLR_REQUIRE_DATABASE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Require assertions to kill each security mutation
+        run: python3 tests/security/check_mutations.py
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -31,6 +62,7 @@ jobs:
           --health-retries 15
     env:
       OLR_TEST_DATABASE_URL: postgres://olr:olr-ci-only@127.0.0.1:5432/olr_test?sslmode=disable
+      OLR_REQUIRE_DATABASE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -58,6 +90,7 @@ jobs:
       - name: SSE splitter and usage timing fuzz tests
         run: |
           go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=10s -parallel=2
+          go test ./internal/proxy -run '^$' -fuzz '^FuzzRequestModelExtraction$' -fuzztime=20s -parallel=2
           go test ./internal/usage -run '^$' -fuzz '^FuzzTimingPreservesProviderBytes$' -fuzztime=10s -parallel=2
       - name: Client verification helpers
         run: make test-clients
@@ -199,6 +232,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v4.3.1
@@ -212,7 +248,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Check pinned image and tool update coverage
+        run: python3 tests/security/check_pinned_updates.py
       - name: Scan repository for provider and generic secrets
         run: |
           go install github.com/zricethezav/gitleaks/v8@v8.30.1
           gitleaks dir --redact --no-banner
+          python3 deploy/release/scan_history.py
+          python3 tests/security/check_secret_history.py

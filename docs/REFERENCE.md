@@ -429,6 +429,7 @@ bounded fuzz run in CI. To run a longer local fuzz check:
 
 ```sh
 go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=30s -parallel=2
+go test ./internal/proxy -run '^$' -fuzz '^FuzzRequestModelExtraction$' -fuzztime=30s -parallel=2
 ```
 
 ## Running outside Compose
@@ -499,9 +500,23 @@ request or response bodies.
 
 ## Tests
 
+CI also runs `python3 tests/security/check_mutations.py` with the same disposable
+PostgreSQL role. It removes 44 guards independently, including all 16 named audit
+actions, and requires an actual failing test assertion for every mutation. Build
+errors and tests that never ran do not count. Each restored test must pass again.
+The runner changes a temporary copy, preserves valid SQL parameters, and refuses
+to continue when a guard anchor changes. Use `--case NAME` to investigate one
+case and `--report PATH` for JSON evidence. The guard/test mapping lives in
+`tests/security/mutation_cases.py`; add cases when introducing a new security
+boundary.
+
 Unit tests live next to their code. HTTP streaming and disconnect tests use
 `httptest.NewServer` and real sockets, without requiring a running Compose stack.
-Postgres integration tests in `tests/integration` skip when `OLR_TEST_DATABASE_URL` is unset.
+Postgres integration tests in `tests/integration` and `internal/loadtest` skip locally
+when `OLR_TEST_DATABASE_URL` is unset. With `CI=true` or `OLR_REQUIRE_DATABASE=1`, both
+packages fail before running tests if that variable is missing. The CI checks job sets
+the requirement explicitly, so removing its database environment cannot turn coverage
+into successful skips. The role must create disposable databases; never use production.
 Each test creates and drops its own database, leaving the supplied database intact. The test
 role needs `CREATEDB` and permission to terminate its own connections (the Compose and CI
 roles have these permissions). Tests cover schema initialization/restarts, issuer-scoped

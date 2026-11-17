@@ -23,8 +23,8 @@ and P3; dependencies may change that order.
 | #195 Agent administration | #195, #245, #261 | Completed in PR #313 |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Completed in PR #314 |
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Completed in PR #315 |
-| #237 Startup diagnostics | #237, #238, #241 | Implemented; local health/sync/rule checks pass; CI pending |
-| #223 Regression coverage | #222, #223, #243, #246 | Pending |
+| #237 Startup diagnostics | #237, #238, #241 | Completed in PR #316 |
+| #223 Regression coverage | #222, #223, #243, #246 | Implemented; focused checks pass; CI pending |
 | #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Pending |
 
 ## Authentication evidence
@@ -545,3 +545,9 @@ immutable release-tag rules, optional approval mode, secret scanning and Action 
   buckets extend through 7200 seconds, with a regression for a 125-second observation.
 - **#241:** Completed in PR #310: separate connection and migration deadlines with
   migration version/name/duration logging and slow/stalled-migration tests.
+
+- **#223:** CI now requires its database setting, model extraction and SSE corpora
+  run under bounded fuzzing, Gitleaks scans added commit history, and the weekly
+  pinned-dependency watcher supplements Dependabot. The security mutation job
+  checks all 21 reported guarantee groups through 44 independent removals,
+  including each of the 16 audit actions, with passing restored baselines.

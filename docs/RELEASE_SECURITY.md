@@ -134,11 +134,44 @@ reviewers for the repository administrator to select.
 Repository secret scanning, push protection, Dependabot security updates and mandatory
 Action SHA pinning are enabled. CodeQL scans Go and JavaScript/TypeScript on PRs, main
 pushes and weekly; dependency review rejects high/critical vulnerable additions.
-Dependabot proposes weekly Go, npm, Docker and Action updates. CI also runs Gitleaks
-with its default provider/generic rules and redacted output. GitHub currently reports
+Dependabot proposes weekly Go module, npm, root Dockerfile base-image and Action
+updates. It does not update our Compose/Helm images or `go run`/`go install` tool
+pins; the weekly watcher below covers those. CI runs Gitleaks with its default
+provider/generic rules and redacted output, both against the checkout and every
+commit added by a PR or push. An added-then-deleted secret therefore still fails
+the history scan. Initial pushes without a base scan all reachable history. The
+synthetic history regression test verifies this without printing its fixture.
+GitHub currently reports
 non-provider patterns and validity checks disabled; Gitleaks supplies the generic-secret
-alternative. Its only allowlist matches a specific public variable name consumed after
-an empty example secret; it does not exempt a file or actual credential value.
+alternative. Its only allowlist matches the public `OIDC_AUDIENCE` name or its exact `=olr-api` example
+assignment consumed after an empty example secret; it does not exempt a file or actual credential value.
+
+### Pinned image and tool updates
+
+`pinned-updates.yml` checks official upstream release records every Monday and
+can also run manually. It opens one maintenance review issue for a new upstream
+snapshot, updates that issue while open, and leaves reviewed snapshots closed.
+Lookup failures fail the workflow instead of producing an incomplete report.
+CI rejects any new digest-pinned image or Go tool without an inventoried update
+source. The inventory is in `deploy/release/pinned_updates.py`:
+
+| Pins | Update path |
+| --- | --- |
+| Root Dockerfile Node, Go and distroless images | Weekly Dependabot Docker PRs |
+| Helm PostgreSQL and Keycloak | Weekly upstream tag/release review issue, including PostgreSQL maintenance branches |
+| Compose Prometheus, Grafana and Jaeger | Weekly upstream release review issue |
+| Optional digest-only vLLM CPU fixture | Weekly vLLM release review issue; manually select the corresponding CPU build and verify its digest |
+| Gitsign, Gitleaks, go-licenses, staticcheck and govulncheck | Weekly upstream release/module-tag review issue |
+| Site-provided router/custom image digests in deployment examples | Manually maintained by the site operator; verify each replacement with the deployment signature gate |
+
+For each review, compare the listed upstream versions to the pins in its source
+files. Update version and digest together from the official registry, verify
+upstream provenance, and run the relevant image build, license, client,
+Compose/Helm render and vulnerability checks. Major upgrades need compatibility
+review. Record the accepted upgrade or reason for retaining a version in the
+review issue, then close it. These proposals never auto-merge or deploy.
+`python3 deploy/release/pinned_updates.py` prints a read-only report using the
+GitHub CLI; publishing is limited to the scheduled workflow's issue permission.
 
 Code-scanning alert [#1](https://github.com/arm2arm/open-llm-router/security/code-scanning/1)
 classifies the load-test API key as a password. This is a false positive: `auth.Generate`

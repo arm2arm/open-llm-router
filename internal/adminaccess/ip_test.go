@@ -52,3 +52,27 @@ func TestNetworksAndDelegation(t *testing.T) {
 		t.Fatal("delegation expanded authority")
 	}
 }
+
+func TestForwardedHeaderLinesCannotChooseAnAllowlistedAddress(t *testing.T) {
+	r := httptest.NewRequest("POST", "http://router", nil)
+	r.RemoteAddr = "10.0.0.1:8000"
+	r.Header.Add("X-Forwarded-For", "192.0.2.4")
+	r.Header.Add("X-Forwarded-For", "203.0.113.9")
+	if _, err := ClientIP(r, []string{"10.0.0.0/24"}); err == nil {
+		t.Fatal("multiple forwarded lines accepted an attacker-selected address")
+	}
+}
+
+func TestDelegationCannotWidenPrefixAtSameNetworkAddress(t *testing.T) {
+	if Subnets([]string{"10.0.0.0/16"}, []string{"10.0.0.0/24"}) {
+		t.Fatal("child widened its parent's network")
+	}
+}
+
+func TestAdministrationKeyLifetimeBounds(t *testing.T) {
+	for _, days := range []int{-1, 0, 91} {
+		if _, err := Validate(Create{Label: "bounded", Days: days, Permissions: []string{"service:read"}, Networks: []string{"192.0.2.4"}}, 90); err != ErrInput {
+			t.Fatalf("accepted lifetime %d: %v", days, err)
+		}
+	}
+}
