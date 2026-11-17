@@ -166,7 +166,7 @@ export function AgentAccessPage() {
     URL.revokeObjectURL(url)
   }
   return (
-    <section className="grid gap-6">
+    <section className="agent-access grid min-w-0 gap-6">
       <div>
         <h1 className="text-2xl font-semibold">Agent access</h1>
         <p className="subtitle">
@@ -267,7 +267,7 @@ export function AgentAccessPage() {
                       </p>
                     )}
                     {!k.revoked && (
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           variant="outline"
                           disabled={!data.enabled}
@@ -305,7 +305,14 @@ export function AgentAccessPage() {
               Put OLR_ADMIN_API_KEY in the agent profile’s secret environment.
               The downloaded configuration contains a placeholder.
             </p>
-            <pre className="overflow-auto text-sm">{hermes}</pre>
+            <pre
+              role="region"
+              aria-label="Hermes client configuration"
+              tabIndex={0}
+              className="overflow-auto text-sm"
+            >
+              {hermes}
+            </pre>
             <Button variant="outline" onClick={() => download()}>
               Download Hermes configuration
             </Button>
@@ -313,7 +320,14 @@ export function AgentAccessPage() {
               Download generic MCP example
             </Button>
             <h3 className="font-semibold">Verify from the agent host</h3>
-            <pre className="overflow-auto text-sm">{rest}</pre>
+            <pre
+              role="region"
+              aria-label="Agent verification command"
+              tabIndex={0}
+              className="overflow-auto text-sm"
+            >
+              {rest}
+            </pre>
             <p>
               Check the returned source IP and permissions. Then ask the agent
               to inspect service health, preview a change, explain its effects,
@@ -367,7 +381,7 @@ export function AgentAccessPage() {
                     placeholder="Hermes operations"
                   />
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -531,7 +545,7 @@ export function AgentAccessPage() {
                 {error}
               </p>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {step > 0 && step < 4 && (
                 <Button
                   type="button"

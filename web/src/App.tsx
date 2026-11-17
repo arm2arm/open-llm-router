@@ -150,6 +150,27 @@ function CopyButton({
 
 export default function App() {
   const location = useLocation()
+  useEffect(() => {
+    const path = location.pathname
+    const view = path.startsWith('/requests/')
+      ? 'Request details'
+      : path.startsWith('/admin')
+        ? `Administration · ${({ users: 'Users', presets: 'Backend presets', keycloak: 'Keycloak', advanced: 'Advanced routing', history: 'History', agents: 'Agent access' } as Record<string, string>)[path.split('/')[2]] ?? 'Backends'}`
+        : path.startsWith('/sign-in')
+          ? 'Sign in'
+          : ((
+              {
+                '/': 'Overview',
+                '/keys': 'API keys',
+                '/usage': 'Usage',
+                '/requests': 'My requests',
+                '/connect': 'Client setup',
+                '/account': 'Account',
+                '/password': 'Change password',
+              } as Record<string, string>
+            )[path] ?? 'Portal')
+    document.title = `${view} · Open LLM Router`
+  }, [location.pathname])
   const session = useQuery({
     queryKey: ['session'],
     queryFn: () => request<Session>('auth/session'),
@@ -880,7 +901,11 @@ function UsagePage() {
             <section className="panel">
               <div className="panel-head">
                 <h2 className="panel-title">Activity by model</h2>
-                <div className="segmented" aria-label="Usage period">
+                <div
+                  role="group"
+                  className="segmented"
+                  aria-label="Usage period"
+                >
                   {(['today', 'month'] as const).map((value) => (
                     <Button
                       key={value}
@@ -1083,7 +1108,11 @@ function Connect() {
                 <code>{query.data.router_url}</code>
               </p>
             </div>
-            <div className="segmented mb-6" aria-label="Client examples">
+            <div
+              role="group"
+              className="segmented mb-6"
+              aria-label="Client examples"
+            >
               {clients.map((value) => (
                 <Button
                   key={value}

@@ -827,7 +827,10 @@ function Content({ block, term, rendered, byID }: Ctx & { block: Block }) {
             />
           </pre>
         ) : (
-          <Structured value={(call ? block.arguments : block.text) ?? ''} />
+          <Structured
+            value={(call ? block.arguments : block.text) ?? ''}
+            label={`${call ? 'Tool call' : 'Tool result'} ${name ?? ''} ${run?.key ?? block.id ?? ''}`}
+          />
         )}
       </div>
     )
@@ -921,7 +924,12 @@ function Tools({
               </span>
             </summary>
             {t.schema !== undefined ? (
-              <JsonTree value={t.schema} title="Parameters schema" open={3} />
+              <JsonTree
+                value={t.schema}
+                title="Parameters schema"
+                label={`${t.name} parameters schema`}
+                open={3}
+              />
             ) : (
               <p className="trace-secondary">
                 {t.truncated ? 'Schema above the 8 KiB limit.' : 'No schema.'}
@@ -982,7 +990,11 @@ function RunCard({
           <h4>Arguments</h4>
           {run.arguments !== undefined ? (
             parseJSON(run.arguments) !== undefined ? (
-              <JsonTree value={parseJSON(run.arguments)} open={3} />
+              <JsonTree
+                value={parseJSON(run.arguments)}
+                label={`${run.name} ${run.key} arguments`}
+                open={3}
+              />
             ) : (
               <pre className="trace-plain">{run.arguments || '—'}</pre>
             )
@@ -993,7 +1005,10 @@ function RunCard({
         <div>
           <h4>Result</h4>
           {run.result !== undefined ? (
-            <Structured value={run.result} />
+            <Structured
+              value={run.result}
+              label={`${run.name} ${run.key} result`}
+            />
           ) : (
             <p className="trace-secondary">—</p>
           )}
