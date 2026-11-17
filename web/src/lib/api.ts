@@ -299,6 +299,7 @@ export type AuthenticationDocument = {
   sync_client_id: string
   sync_client_secret: SecretRef
   sync_interval_s: number
+  sync_max_disable?: number
 }
 export type SecretState = {
   setting: string

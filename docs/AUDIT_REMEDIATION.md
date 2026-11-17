@@ -11,7 +11,7 @@ and P3; dependencies may change that order.
 
 | Package | Source findings | Progress in this pass |
 | --- | --- | --- |
-| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | #157, #187, #198 and #253 implemented; remaining findings pending |
+| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | #157, #187, #198 and #253 in PR #292; #172 and #252 implemented; #161 pending |
 | #165 Usage accounting | #165, #168, #178, #204 | Pending |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Pending |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
@@ -55,3 +55,17 @@ and P3; dependencies may change that order.
   older tokens still cannot restore removed groups. A changed email cannot
   inherit verification. `TestAccessTokenMissingClaimsPreserveStoredIdentity`
   covers a fresh slim token, retained API-key access and explicit revocation.
+
+- **#172:** Added an admin user-list preflight, explicit enabled-state validation
+  and a configurable `sync_max_disable` guard (default 10) before any account
+  writes. `TestGroupSyncAdminOutageCannotDisableUsers` covers provider-wide 404,
+  401 and 503 responses. `TestGroupSyncDisableLimitStagesAllChanges` proves an
+  excessive disable count also prevents staged group changes; confirmed bulk
+  departures can proceed after explicitly raising the guard. Existing genuine
+  user-deletion and API-key invalidation coverage remains in place.
+- **#252:** Per-user HTTP failures no longer end the scan. Failed/deferred counts
+  and safe causes appear in logs. The syncer rotates from its last attempted
+  user and reserves deadline time for completed changes. Integration tests cover
+  a persistent first-user 500 and a deadline-limited slow first user, while
+  subsequent users still lose or update access. Provider-wide authorization
+  and transport failures return before any staged account changes are written.

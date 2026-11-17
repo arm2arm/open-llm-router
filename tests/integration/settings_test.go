@@ -170,7 +170,7 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 	}
 
 	// Store a sync secret and change an unmanaged-by-file value; activate.
-	view, err = service.SaveDraft(ctx, settings.DomainAuthentication, 2, document(func(a *settings.Authentication) { a.SyncIntervalS = 300 }),
+	view, err = service.SaveDraft(ctx, settings.DomainAuthentication, 2, document(func(a *settings.Authentication) { a.SyncIntervalS = 300; a.SyncMaxDisable = 3 }),
 		map[string][]byte{"sync_client_secret": []byte(secretValues[1])}, actor)
 	if err != nil || !view.Draft.Validation.Valid || view.Draft.Document.SyncClientSecret.Stored == "" {
 		t.Fatal("valid draft", err, view.Draft)
@@ -184,7 +184,7 @@ func TestManagedSettingsLifecycleSecretsAndHistory(t *testing.T) {
 		t.Fatal("activate", err)
 	}
 	snapshot := apply(env)
-	if snapshot.Revision != first || snapshot.Config.OIDCSyncSecret != secretValues[1] || snapshot.Config.OIDC.SyncIntervalS != 300 {
+	if snapshot.Revision != first || snapshot.Config.OIDCSyncSecret != secretValues[1] || snapshot.Config.OIDC.SyncIntervalS != 300 || snapshot.Config.OIDC.SyncMaxDisable != 3 {
 		t.Fatal("activated revision not applied at startup")
 	}
 	// Rotate: a new value creates a new stored secret; the old one remains for rollback.

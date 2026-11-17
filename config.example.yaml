@@ -50,6 +50,7 @@ oidc:
   # required_claim: {name: affiliation, value: member@example.org}
   sync_client_id: olr-sync          # default
   sync_interval_s: 900              # default
+  sync_max_disable: 10              # stop before writes if more users would be disabled
 
 models:
   chat-model:

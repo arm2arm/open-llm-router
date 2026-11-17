@@ -387,6 +387,11 @@ policies together; import disables legacy endpoint writes.
 
 ## Admin authentication settings
 
+Authentication documents include `sync_max_disable` (default 10, range 1–10000).
+If a group-sync run would disable more users than this limit, it applies no
+account changes. The limit is available in the SSO editor and is retained through
+managed import, activation and rollback. Older documents that omit it use 10.
+
 `GET` requires an admin session. Every other route also requires a **local**
 administrator session established within the last 15 minutes; otherwise it
 returns 403 `reauthentication_required`. SSO sessions cannot change how people

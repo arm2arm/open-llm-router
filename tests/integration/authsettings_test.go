@@ -148,7 +148,7 @@ func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 	}
 
 	// Connection checks against the fake provider: discovery works; the sync
-	// account cannot list users there. Results name no secret.
+	// account can list users. Results name no secret.
 	var checked struct {
 		Results []struct{ Name, Status, Message string }
 	}
@@ -159,7 +159,7 @@ func TestAdminAuthenticationSettingsAPI(t *testing.T) {
 	for _, result := range checked.Results {
 		results[result.Name] = result.Status
 	}
-	if results["discovery"] != "passed" || results["logout_metadata"] != "passed" || results["sync_permissions"] != "failed" {
+	if results["discovery"] != "passed" || results["logout_metadata"] != "passed" || results["sync_permissions"] != "passed" {
 		t.Fatal("check results", checked.Results)
 	}
 	// Explicit agent grants allow masked inspection and draft workflows, but

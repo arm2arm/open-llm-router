@@ -671,6 +671,7 @@ oidc:
   audience: olr-api
   sync_client_id: olr-sync
   sync_interval_s: 900
+  sync_max_disable: 10
 models:
   chat-model:
     protocols: [openai, anthropic]

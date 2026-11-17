@@ -28,12 +28,16 @@ type identityProvider struct {
 	codes  map[string]authorization
 	// directory is what the admin API reports for each user ID (sub); a
 	// missing entry is a deleted user.
-	directory map[string]remoteUser
+	directory   map[string]remoteUser
+	adminStatus int
+	adminVisits []string
 }
 
 type remoteUser struct {
 	enabled bool
 	groups  []string
+	status  int
+	delay   time.Duration
 }
 
 // sign returns a JWT signed with the provider's key.
@@ -69,11 +73,34 @@ func (p *identityProvider) admin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
 		return
 	}
+	p.mu.Lock()
+	status := p.adminStatus
+	if status != 0 {
+		p.mu.Unlock()
+		w.WriteHeader(status)
+		return
+	}
+	if r.URL.Path == "/admin/realms/test/users" {
+		p.mu.Unlock()
+		_ = json.NewEncoder(w).Encode([]any{})
+		return
+	}
 	rest := strings.TrimPrefix(r.URL.Path, "/admin/realms/test/users/")
 	sub, groups := strings.CutSuffix(rest, "/groups")
-	p.mu.Lock()
+	p.adminVisits = append(p.adminVisits, sub)
 	u, ok := p.directory[sub]
 	p.mu.Unlock()
+	if u.delay > 0 {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(u.delay):
+		}
+	}
+	if u.status != 0 {
+		w.WriteHeader(u.status)
+		return
+	}
 	if !ok {
 		w.WriteHeader(404)
 		return
@@ -141,7 +168,7 @@ func newIdentityProvider(t *testing.T) *identityProvider {
 			compact, _ := signed.CompactSerialize()
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "private-provider-token-marker", "token_type": "Bearer", "expires_in": 300, "id_token": compact})
 		default:
-			if strings.HasPrefix(r.URL.Path, "/admin/realms/test/users/") {
+			if r.URL.Path == "/admin/realms/test/users" || strings.HasPrefix(r.URL.Path, "/admin/realms/test/users/") {
 				p.admin(w, r)
 				return
 			}
