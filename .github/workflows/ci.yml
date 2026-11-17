@@ -145,6 +145,13 @@ jobs:
         run: make up
       - name: Probe router and both mock backends
         run: make smoke
+      - name: Use Bash and curl inside the non-root router container
+        run: |
+          docker compose exec -T router /bin/bash -ec '
+            test "$(id -u)" = 65532
+            curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+            curl --fail --silent --show-error http://127.0.0.1:8080/readyz
+          '
       - name: Portal browser journeys, accessibility and reflow
         run: cd web && npm run test:e2e
       - name: Clean install without an identity provider
@@ -182,8 +189,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Cross-build ARM64 without installing emulation
+      - name: Cross-build ARM64 with runtime diagnostic packages
         run: |
           docker buildx build --platform linux/arm64 --target olr \
             --build-arg VERSION=v0.0.0-check --build-arg COMMIT="$GITHUB_SHA" \

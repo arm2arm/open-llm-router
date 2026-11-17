@@ -86,8 +86,8 @@ docker compose -f deploy/compose/pilot.yml --env-file "$OLR_PILOT_ENV_FILE" up -
 Do not merge the development Compose file into this deployment. Startup validates the
 mounted YAML, migrates Postgres and checks OIDC. Container startup alone is insufficient:
 poll `/healthz` and `/readyz` through the TLS origin until both return 200, with a bounded
-timeout. Then verify a streamed completion. The distroless image has no shell or curl for
-an in-container health check. Size-based Docker log rotation bounds disk use; configure
+timeout. Then verify a streamed completion. The router image also includes Bash and curl
+for in-container diagnostics. Size-based Docker log rotation bounds disk use; configure
 age-based retention separately to meet the published notice.
 
 Configure the host TLS proxy using [RUNBOOK.md](RUNBOOK.md#behind-a-tls-reverse-proxy),

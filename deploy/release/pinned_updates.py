@@ -23,6 +23,7 @@ IMAGES = {
     "vllm/vllm-openai-cpu": "vllm-project/vllm",
     "node": "dependabot",
     "golang": "dependabot",
+    "debian": "dependabot",
     "gcr.io/distroless/static-debian13": "dependabot",
 }
 TOOLS = {

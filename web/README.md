@@ -3,7 +3,8 @@
 Node 22.23.1+ and npm are needed. From the repository root, `make web-check`
 installs the lockfile, lints, type-checks, builds, and audits dependencies.
 `make build` builds this app before embedding it in the Go binary. The Docker
-build does the same in a Node stage; the final distroless image contains only Go.
+build does the same in a Node stage; the final image serves the embedded portal from
+Go and includes Bash and curl for diagnostics, without a Node runtime.
 Generated `dist` files stay out of Git. Its tracked `.keep` allows API-only Go
 development before a frontend build; use `make build` for a complete binary.
 

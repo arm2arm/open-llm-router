@@ -13,7 +13,7 @@ are tracked in [ADMIN_FEATURE_PLAN.md](ADMIN_FEATURE_PLAN.md).
 
 ## Deployment
 
-The router is one container image (`olr`, distroless, non-root, port 8080) plus PostgreSQL 17
+The router is one container image (`olr`, Debian slim with Bash and curl, non-root, port 8080) plus PostgreSQL 17
 and an OIDC provider (Keycloak). The image carries no configuration: mount the site's config
 file at `/etc/olr/config.yaml` and pass secrets in the environment. A private deployment file
 holds the site's values for the keys of [config.example.yaml](../config.example.yaml); it does
@@ -1146,7 +1146,7 @@ The default `networkPolicy.egress: []` adds no external outbound allowances.
 If backend model discovery fails, test from the router pod's network namespace.
 A successful request from a workstation or an unrelated pod does not test the same
 egress policy, source address or routing. For a Helm release named `olr` in namespace
-`olr`, inspect the applied router policy and attach a temporary curl container:
+`olr`, inspect the applied router policy and run curl in the router container:
 
 ```sh
 olr_policy=olr-open-llm-router-router
@@ -1157,17 +1157,30 @@ olr_pod=$(kubectl -n olr get pods \
   -l "$olr_label=open-llm-router" \
   -o jsonpath='{.items[0].metadata.name}')
 olr_url=http://BACKEND_HOST:PORT/v1/models
-kubectl -n olr debug "$olr_pod" \
-  --image=curlimages/curl:latest \
-  --profile=restricted \
-  --attach=true -- \
+kubectl -n olr exec "$olr_pod" -c router -- \
   curl -sv --connect-timeout 5 \
   --max-time 15 "$olr_url"
 ```
 
-Use the actual backend URL and supply its API key only if required. The router image
-has no shell or curl. The temporary container shares its pod network without restarting
-the router. Discovery reports connection refusal, unreachable networks, DNS failures,
+Use the actual backend URL and supply its API key only if required. The standard
+router image includes Bash, curl and CA certificates. Open an interactive shell with:
+
+```sh
+kubectl -n olr exec -it "$olr_pod" -c router -- /bin/bash
+```
+
+The shell runs as the router's non-root user (UID 65532); Helm retains its read-only
+root filesystem and dropped capabilities. Rebuild and deploy the updated image to
+get these tools. For an older image, attach a temporary diagnostic container instead:
+
+```sh
+kubectl -n olr debug "$olr_pod" \
+  --image=curlimages/curl:latest \
+  --profile=restricted --attach=true -- \
+  curl -sv --connect-timeout 5 --max-time 15 "$olr_url"
+```
+
+Discovery reports connection refusal, unreachable networks, DNS failures,
 TLS certificate failures and timeouts separately, without exposing raw transport errors.
 
 NetworkPolicy filters ports, not HTTP paths. The public inference ingress must deny

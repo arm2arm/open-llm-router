@@ -38,20 +38,22 @@ with tarfile.open(args.archive) as archive:
     assert labels["org.opencontainers.image.source"] == "https://github.com/arm2arm/open-llm-router"
     assert labels["org.opencontainers.image.licenses"] == "MIT"
     notices = {}
-    machine = None
+    machines = {}
     for layer in manifest["layers"]:
         with tarfile.open(fileobj=archive.extractfile(blob(layer)), mode="r|*") as files:
             for member in files:
                 name = member.name.removeprefix("./").lstrip("/")
                 if member.isfile() and name in ("licenses/LICENSE", "licenses/GO-LICENSE", "licenses/THIRD_PARTY_NOTICES.txt"):
                     notices[name] = files.extractfile(member).read().decode()
-                if member.isfile() and name == "usr/local/bin/olr":
+                if member.isfile() and name in ("usr/local/bin/olr", "usr/bin/bash", "usr/bin/curl"):
                     header = files.extractfile(member).read(20)
                     assert header[:4] == b"\x7fELF"
-                    machine = int.from_bytes(header[18:20], "little" if header[5] == 1 else "big")
-    assert machine == {"amd64": 62, "arm64": 183}[args.architecture], "binary architecture differs from manifest"
+                    machines[name] = int.from_bytes(header[18:20], "little" if header[5] == 1 else "big")
+    expected_machine = {"amd64": 62, "arm64": 183}[args.architecture]
+    for binary in ("usr/local/bin/olr", "usr/bin/bash", "usr/bin/curl"):
+        assert machines.get(binary) == expected_machine, f"{binary} missing or architecture differs from manifest"
     assert "MIT License" in notices["licenses/LICENSE"]
     assert "Redistribution" in notices["licenses/GO-LICENSE"]
     text = notices["licenses/THIRD_PARTY_NOTICES.txt"]
     assert "react@" in text and "prometheus" in text and len(text) > 10000
-print("OCI architecture, release labels and Go/portal license texts verified")
+print("OCI router/Bash/curl architectures, release labels and Go/portal license texts verified")

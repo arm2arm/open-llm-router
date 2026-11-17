@@ -130,7 +130,7 @@ updates for Go modules, npm, Docker digests and Actions.
   Protect database access and backups as content-bearing storage. See [REQUEST_TRACING.md](REQUEST_TRACING.md).
 - [x] Dependencies pinned (`go.sum`, `web/package-lock.json`, Actions by SHA, base images by
   digest) and scanned: `govulncheck` reports no reachable vulnerability and `npm audit`
-  reports none (both run in CI). The images run as the distroless `nonroot` user. No secrets
+  reports none (both run in CI). The images run as the `nonroot` user (UID 65532). No secrets
   in the image (`.dockerignore` admits only sources) or in Git; Compose credentials are public
   development defaults, marked as such.
 
