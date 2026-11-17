@@ -190,6 +190,9 @@ type Portal struct {
 }
 
 // Model is one model name served to clients and the replicas behind it.
+// MaxModelTimeoutS bounds conversion to durations and accidental multi-year waits.
+const MaxModelTimeoutS = 86400
+
 type Model struct {
 	Protocols     []string `yaml:"protocols" json:"protocols"`
 	UpstreamModel string   `yaml:"upstream_model" json:"upstream_model"`
@@ -378,6 +381,16 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		}
 		for i := range model.Pool {
 			r := &model.Pool[i]
+			// Keep deployment origins strict, but canonicalize equivalent spellings
+			// with the same function used for managed endpoint input.
+			if isBackendURL(r.URL) {
+				origin, err := NormalizeBackendURL(r.URL)
+				if err != nil {
+					problems = append(problems, fmt.Sprintf("models.%s.pool[%d].url: %s", name, i, err))
+				} else {
+					r.URL = origin
+				}
+			}
 			if r.BearerTokenEnv == "" {
 				continue
 			}
@@ -640,8 +653,8 @@ func (c *Config) validate() Problems {
 		if c.OIDC.SyncMaxDisable < 0 || c.OIDC.SyncMaxDisable > 10000 {
 			add("oidc.sync_max_disable: must be between 1 and 10000")
 		}
-		if c.OIDC.SyncIntervalS < 60 {
-			add("oidc.sync_interval_s: must be at least 60")
+		if c.OIDC.SyncIntervalS < 60 || c.OIDC.SyncIntervalS > 86400 {
+			add("oidc.sync_interval_s: must be between 60 and 86400")
 		}
 		if c.OIDC.BackchannelURL != "" && !isIssuerURL(c.OIDC.BackchannelURL) {
 			add("OIDC_BACKCHANNEL_URL: must be an http or https URL without credentials, query or fragment")
@@ -674,12 +687,16 @@ func (c *Config) validate() Problems {
 		}
 		if m.TimeoutS <= 0 {
 			add("%s.timeout_s: must be greater than 0", at)
+		} else if m.TimeoutS > MaxModelTimeoutS {
+			add("%s.timeout_s: must not exceed %d seconds", at, MaxModelTimeoutS)
 		}
 		if m.IdleTimeoutS <= 0 {
 			add("%s.idle_timeout_s: must be greater than 0", at)
+		} else if m.IdleTimeoutS > MaxModelTimeoutS {
+			add("%s.idle_timeout_s: must not exceed %d seconds", at, MaxModelTimeoutS)
 		}
-		if m.QueueTimeoutS < 0 || m.QueueTimeoutS > m.TimeoutS {
-			add("%s.queue_timeout_s: must be between 0 and timeout_s", at)
+		if m.QueueTimeoutS < 0 || m.QueueTimeoutS > m.TimeoutS || m.QueueTimeoutS > MaxModelTimeoutS {
+			add("%s.queue_timeout_s: must be between 0 and timeout_s (maximum %d seconds)", at, MaxModelTimeoutS)
 		}
 		if len(m.Pool) == 0 {
 			add("%s.pool: at least one replica is required", at)

@@ -91,6 +91,18 @@ func TestAdminRoutingRevisions(t *testing.T) {
 	}
 	view = call("POST", "/import", struct{}{}, 200)
 	imported := view.Settings.Active.ID
+	managedEndpoints := func() {
+		t.Helper()
+		resp, data := admin.call(t, "GET", "/portal/api/admin/endpoints", "", "")
+		var out struct {
+			Managed bool
+			Models  []json.RawMessage
+		}
+		if resp.StatusCode != 200 || json.Unmarshal(data, &out) != nil || !out.Managed || len(out.Models) != 0 {
+			t.Fatalf("managed routing exposes stale endpoint values: %d %s", resp.StatusCode, data)
+		}
+	}
+	managedEndpoints()
 	document := func(mutate func(*settings.Routing)) settings.Routing {
 		doc := *call("GET", "", nil, 200).Settings.Active.Document
 		copied := settings.Routing{Models: map[string]config.Model{}, Aliases: map[string]string{}}
@@ -206,6 +218,7 @@ func TestAdminRoutingRevisions(t *testing.T) {
 	}
 	waitFor(t, func() bool { return f.writer.Counters().Written == written+1 })
 
+	managedEndpoints()
 	// Concurrent edits conflict; rollback restores the imported routing.
 	call("PUT", "/draft", map[string]any{"version": draft.ID, "document": document(func(*settings.Routing) {})}, 409)
 	view = call("POST", "/rollback", revisionBody(call("GET", "", nil, 200).Settings.Version, imported), 200)

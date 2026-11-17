@@ -241,9 +241,12 @@ func readDocument(path string) ([]byte, error) {
 		return nil, errors.New("settings document could not be opened")
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 64<<10+1))
-	if err != nil || len(data) > 64<<10 {
-		return nil, errors.New("settings document could not be read or exceeds 64 KiB")
+	data, err := io.ReadAll(io.LimitReader(f, settings.MaxDocumentBytes+1))
+	if err != nil {
+		return nil, errors.New("settings document could not be read")
+	}
+	if len(data) > settings.MaxDocumentBytes {
+		return nil, settings.ErrDocumentSize
 	}
 	return data, nil
 }

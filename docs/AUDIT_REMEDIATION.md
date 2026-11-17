@@ -16,7 +16,7 @@ and P3; dependencies may change that order.
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
-| #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
+| #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | All eight fixes implemented; final validation pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Pending |
@@ -322,3 +322,58 @@ and P3; dependencies may change that order.
   unlimited usage, restoration with a full bucket, snapshot-only transitions,
   unlimited calls completing late, and finite calls completing both during and
   after the unlimited interval. Existing finite-bucket debt/refill checks remain.
+
+## Routing recovery DNS evidence
+
+- **#181:** Configuration validation distinguishes an unresolved hostname from
+  a forbidden destination. Unresolved origins can be restored without bypassing
+  per-connection address checks; live discovery and probes still report failure.
+  Unit checks preserve metadata, loopback, private-network and malformed-origin
+  refusals. The PostgreSQL regression restores an unresolved replica through
+  the portal, bound agent operation and actual CLI, applies it and checks its
+  unhealthy runtime state. A formerly file-trusted origin that becomes forbidden
+  remains blocked on activation, rollback and Apply.
+
+- **#208:** The endpoint response explicitly reports managed routing and omits
+  legacy per-model values in that mode. The legacy editor is hidden. API
+  regressions cover import and a later activation; the managed routing browser
+  scenario asserts the obsolete editor and buttons are absent.
+
+- **#210:** Drafts that omit groups inherit the committed active revision inside
+  the settings transaction, not a possibly stale runtime/file snapshot. Group
+  conflicts include changed, file-only and managed-only names; legacy omissions
+  do not create policy conflicts. The PostgreSQL regression deliberately leaves
+  `Current` pinned to the file and verifies the draft keeps the active override.
+
+- **#211:** The CLI, import and draft paths share a 256 KiB document limit and
+  refusal message; routing HTTP envelopes allow 512 KiB. A real CLI submission
+  above the old 64 KiB cap succeeds. PostgreSQL tests import and draft a valid
+  large document and reject an oversized import/draft consistently. File and
+  managed OIDC sync intervals both require 60..86400 seconds; accepted boundary
+  files produce authentication documents without validation problems.
+
+- **#254:** Migration 0029 treats missing/null legacy group policies as deployment
+  fallback, preserving administrator credentials on rollback. Explicit managed
+  removals still revoke non-protected administrators and now record one reasoned
+  audit event per revoked key in the same transaction. A PostgreSQL regression
+  restores both legacy shapes, verifies live credentials and resolved deployment
+  authority, then checks real demotion, protected recovery and revocation history.
+
+- **#255:** Header, idle and queue timeouts are bounded at 86400 seconds before
+  duration conversion, with field-specific errors naming the maximum. File and
+  managed tests reject both the first out-of-range value and the reported overflow
+  value. A real routed request with all three maximum values completes normally.
+
+- **#257:** Deployment origins use the managed URL normalizer before duplicate
+  detection. File and managed regressions reject trailing-slash, case and default
+  port aliases, while a single mixed-case origin is stored canonically. File URLs
+  retain their strict origin-only syntax.
+
+- **#207:** Activation/rollback construct their response on the transaction's
+  snapshot before commit. Publication no longer depends on a post-commit view
+  read; routing mutation responses avoid optional impact queries after commit.
+  Endpoint publications compare against their preparation snapshot, so a delayed
+  file-based save cannot overwrite a newer managed revision. PostgreSQL tests
+  cancel the service context immediately when the committing connection is
+  released, and stage a real endpoint save after commit while activating managed
+  policy. Unit checks cover both publication orders.

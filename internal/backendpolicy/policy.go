@@ -16,6 +16,9 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
 
+// ErrUnresolved is a reachability failure, not a destination-policy violation.
+var ErrUnresolved = errors.New("backend hostname could not be resolved")
+
 type Policy struct {
 	requireTLS   bool
 	trusted      map[string]bool
@@ -183,7 +186,7 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 	}
 	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	if err != nil || len(ips) == 0 {
-		return nil, errors.New("backend hostname could not be resolved")
+		return nil, ErrUnresolved
 	}
 	out := []string{}
 	for _, ip := range ips {
@@ -224,6 +227,17 @@ func (p *Policy) CheckBackend(ctx context.Context, origin string, private bool) 
 		ctx = WithPrivateNetwork(ctx, origin)
 	}
 	_, err = p.addresses(ctx, address(u))
+	return err
+}
+
+// CheckConfiguredBackend validates configuration without requiring a currently
+// resolvable host. DialContext still validates every resolved address before
+// traffic, and live probes report unresolved replicas as unhealthy.
+func (p *Policy) CheckConfiguredBackend(ctx context.Context, origin string, private bool) error {
+	err := p.CheckBackend(ctx, origin, private)
+	if errors.Is(err, ErrUnresolved) {
+		return nil
+	}
 	return err
 }
 

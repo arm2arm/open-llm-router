@@ -280,6 +280,7 @@ export type EndpointEntry = {
   }[]
 }
 export type EndpointSettings = {
+  managed: boolean
   models: EndpointEntry[]
   credential_references: string[]
   allowed_private_networks: string[]

@@ -341,11 +341,15 @@ These routes require a full admin browser session. Mutation requests use the
 normal JSON and same-origin checks (8 KiB body limit, unknown fields refused).
 Resolved backend secrets are excluded from all responses and revisions.
 
-- `GET /portal/api/admin/endpoints` returns `models`, `credential_references` and
+- `GET /portal/api/admin/endpoints` returns `managed`, `models`, `credential_references` and
   `allowed_private_networks`. Each entry contains `model`, `configuration`, current
   `revision` (initially `0`), `source` (`file` or `database`), `file_configuration`
   and the latest 20 `history` entries. History contains `id`, `created_at`, `file`
   and `configuration` (`null` denotes file ownership).
+  When complete routing revisions are managed, `managed` is `true` and `models`
+  is an empty array. Startup YAML values are not presented as current endpoints.
+  Read and edit the models through the routing-settings API instead; the portal
+  hides the per-model endpoint editor.
 - `POST /portal/api/admin/endpoints/test` accepts `model` and `configuration`.
   It validates and probes without saving/publishing. Health results return 200
   with `{ok, message, replicas}`; `ok:false` means the probe failed. Validation
@@ -637,3 +641,14 @@ admin sessions and the existing same-origin JSON protections:
   (RFC3339 expiration). Only reduces authority and invalidates descendants.
 - `DELETE /portal/api/admin/agent-keys/{id}`: revokes an owned key and disables its
   descendants. Browser revocation remains available when agent access is disabled.
+
+Managed settings documents are limited to 256 KiB of encoded JSON. Routing draft
+requests allow a 512 KiB envelope for the document, secrets and revision metadata.
+Import and the operator CLI enforce the same document limit.
+
+Routing activation and rollback build their settings response in the same
+transaction as the revision change. A failed response read therefore rolls back
+the change; a successful commit publishes the prepared runtime without another
+required database read. Mutation responses may omit draft impact computation;
+read the routing view again to refresh that optional preview. A delayed legacy
+endpoint save cannot overwrite a newer routing publication.

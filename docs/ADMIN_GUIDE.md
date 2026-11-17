@@ -332,6 +332,23 @@ connection.
 | **Roll back** (history) | Re-activates a previously active revision without new checks, even while that provider is down; SSO then reports unavailable and retries every 10 seconds |
 | **Apply active revision to this router** | Shown when this router runs something else, for example after `olr admin settings activate` or a rollback on another router |
 
+Settings documents may contain up to 256 KiB of encoded JSON, including
+formatting. Import and draft submission enforce this same limit; the CLI accepts
+that full size. Routing HTTP requests allow a 512 KiB envelope for the document
+and metadata. OIDC `sync_interval_s` must be between 60 and 86400 seconds in
+both deployment files and managed authentication settings.
+
+Once routing revisions manage groups, file group policies are ignored. The
+conflict list names each differing `groups.<name>` entry. A CLI draft that omits
+`groups` keeps the active revision's policies, even before this process applies
+that revision. Historical revisions without groups retain deployment policies.
+
+Routing recovery does not require every hostname to resolve. Rollback and Apply
+can restore a revision with an unresolved replica; it appears unhealthy until
+DNS and its health check recover. Newly activated routing still requires the
+changed replicas to pass their probes. Destination restrictions apply to all
+three actions, and every connection checks the resolved address again.
+
 Other router processes apply a new active revision when they restart or when
 **Apply** is used on their own Admin page. Local sign-in, recovery, API keys and
 `/readyz` never depend on the SSO configuration; the page reports SSO health

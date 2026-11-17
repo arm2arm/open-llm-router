@@ -1161,3 +1161,11 @@ and dumps are never CI artifacts.
 These checks target one router and synthetic mock inference. Dedicated provider
 adapters, multi-router live configuration/shared limits and production GPU/two-week
 pilot evidence remain outside this acceptance and are tracked separately (#21).
+
+### Group policies with managed routing
+
+Once routing is managed, edit its group policies in the routing revision. File
+group policies are ignored; the startup log and Admin conflict list name each
+differing `groups.<name>`. Omitting `groups` in a CLI draft retains the committed
+active policies, even when the running process has not applied them yet. Legacy
+revisions without groups continue to use deployment policies.

@@ -36,7 +36,11 @@ func (h *Handler) ConfigureDestinations(policy *backendpolicy.Policy) {
 // Prepare tests a replacement without changing the active snapshot. The returned
 // publication cannot fail and is called only after the database commit succeeds.
 func (h *Handler) Prepare(ctx context.Context, cfg *config.Config, model string) (func(), []pool.State, error) {
-	_, previous := h.Snapshot()
+	previousState := h.routing.Load()
+	previous := h.Pools
+	if previousState != nil {
+		previous = previousState.pools
+	}
 	next := pool.Replace(cfg, h.transport, previous)
 	checks := next.Check(ctx)[model]
 	states := next.Pools[model].Snapshot()
@@ -51,7 +55,11 @@ func (h *Handler) Prepare(ctx context.Context, cfg *config.Config, model string)
 	if err := ctx.Err(); err != nil {
 		return nil, states, errors.New("endpoint check timed out")
 	}
-	return func() { h.routing.Store(&routingSnapshot{cfg, next}) }, states, nil
+	return func() {
+		// A slow endpoint save must not replace a routing revision published since
+		// this candidate was prepared. The managed revision is authoritative.
+		h.routing.CompareAndSwap(previousState, &routingSnapshot{cfg, next})
+	}, states, nil
 }
 
 // PrepareRouting tests a complete replacement routing configuration without

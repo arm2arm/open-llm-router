@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
@@ -47,5 +48,30 @@ func TestBackendURLNormalizationRejectsUnsafeOrUnsupportedInput(t *testing.T) {
 		if _, err := NormalizeBackendURL(raw); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("unsafe input accepted or echoed: %q", raw)
 		}
+	}
+}
+
+func TestEquivalentReplicaOriginsAreRejectedAcrossFileAndManagedRouting(t *testing.T) {
+	base, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{"http://a:8000", "http://a:8000/"}, {"http://a:8000", "HTTP://A:8000"}, {"http://a", "http://A:80/"}, {"https://a:443", "HTTPS://A/"}} {
+		input := fmt.Sprintf("models:\n  m:\n    protocols: [openai]\n    timeout_s: 5\n    pool: [{url: %q, weight: 1, max_inflight: 4}, {url: %q, weight: 1, max_inflight: 4}]\n", pair[0], pair[1])
+		if _, err := Parse([]byte(input), func(string) (string, bool) { return "", false }); err == nil || !strings.Contains(err.Error(), "listed twice") {
+			t.Fatalf("file permits equivalent replicas %v: %v", pair, err)
+		}
+		models := maps.Clone(base.Models)
+		m := models["chat-model"]
+		m.Pool = []Replica{{URL: pair[0], Weight: 1, MaxInflight: 4}, {URL: pair[1], Weight: 1, MaxInflight: 4}}
+		models["chat-model"] = m
+		if _, err := WithPolicies(base, models, base.Aliases, base.Groups, func(string, string) (string, bool) { return "", false }); err == nil || !strings.Contains(err.Error(), "listed twice") {
+			t.Fatalf("managed routing permits equivalent replicas %v: %v", pair, err)
+		}
+	}
+	single := []byte("models:\n  m:\n    protocols: [openai]\n    timeout_s: 5\n    pool: [{url: 'HTTP://A:8000/', weight: 1, max_inflight: 4}]\n")
+	cfg, err := Parse(single, func(string) (string, bool) { return "", false })
+	if err != nil || cfg.Models["m"].Pool[0].URL != "http://a:8000" {
+		t.Fatal("file origin not normalized", err)
 	}
 }

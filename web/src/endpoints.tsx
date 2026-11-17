@@ -531,6 +531,7 @@ export function EndpointSettingsPanel() {
       setRestore(null)
     }
   }
+  if (query.data?.managed) return null
   return (
     <section className="panel mb-6" aria-label="Endpoint configuration">
       <div className="panel-head">

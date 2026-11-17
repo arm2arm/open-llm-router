@@ -23,7 +23,10 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
 	"github.com/arm2arm/open-llm-router/internal/policy"
+	"github.com/arm2arm/open-llm-router/internal/proxy"
+	"github.com/arm2arm/open-llm-router/internal/server"
 	"github.com/arm2arm/open-llm-router/internal/usage"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func limitPtr[T any](v T) *T { return &v }
@@ -584,5 +587,21 @@ func TestTPMLimitThroughBothProtocols(t *testing.T) {
 	requireLimit(t, f.call(t, f.key, "POST", "/v1/messages", `{"model":"chat-model","messages":[],"max_tokens":5}`), "tpm", true)
 	if s := f.currentUsage(t); s.Limits.TPM == nil || *s.Limits.TPM != 20 || s.Remaining.TPM == nil || *s.Remaining.TPM != 0 {
 		t.Fatal("tpm snapshot", s.Limits.TPM, s.Remaining.TPM)
+	}
+}
+
+func TestMaximumModelTimeoutsServeRequests(t *testing.T) {
+	f := startUsageRouter(t, mockllm.New(mockllm.Options{Tokens: 1}), usageOptions{configure: func(cfg *config.Config, _ *proxy.Handler, _ *server.Server, _ *pgxpool.Pool) {
+		m := cfg.Models["chat-model"]
+		m.TimeoutS = config.MaxModelTimeoutS
+		m.IdleTimeoutS = config.MaxModelTimeoutS
+		m.QueueTimeoutS = config.MaxModelTimeoutS
+		cfg.Models["chat-model"] = m
+	}})
+	resp := f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"chat-model","messages":[]}`)
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatal("maximum timeout overflowed", resp.StatusCode)
 	}
 }

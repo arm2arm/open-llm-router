@@ -103,6 +103,15 @@ inference success. Once response bytes have started, a broken stream is cut off 
 Successful SSE responses must end with `[DONE]` (OpenAI), `message_stop` (Anthropic), or a
 protocol error event; clean EOF without one aborts the client response and records `aborted`.
 
+Equivalent replica origins count as one destination: scheme/host case, a trailing
+slash and a default port are normalized before duplicate detection in both file
+and managed routing. A pool cannot list the same origin under these spellings.
+
+Model `timeout_s` and `idle_timeout_s` accept 1..86400 seconds (24 hours).
+`queue_timeout_s` accepts 0..86400 and cannot exceed `timeout_s`; zero disables
+waiting. File and managed routing use the same bounds and reject larger values
+before converting them to durations.
+
 `timeout_s` bounds each of the wait for response headers and, after headers arrive, the wait
 for the first body byte. Early headers therefore do not subject prompt prefill to the shorter
 `idle_timeout_s`. A first-body-byte timeout returns a protocol-shaped 504 `timeout_error`,

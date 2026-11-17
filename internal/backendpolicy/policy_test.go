@@ -150,3 +150,22 @@ func TestCredentialBindingsRequireExactCanonicalOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredDestinationAllowsDNSFailureButNotForbiddenAddress(t *testing.T) {
+	p, err := New(&config.Config{}, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	const missing = "http://olr-deliberately-missing.invalid:8000"
+	if err := p.CheckBackend(t.Context(), missing, false); !errors.Is(err, ErrUnresolved) {
+		t.Fatalf("live check did not report DNS failure: %v", err)
+	}
+	if err := p.CheckConfiguredBackend(t.Context(), missing, false); err != nil {
+		t.Fatal("configuration depends on DNS availability", err)
+	}
+	for _, origin := range []string{"http://127.0.0.1:8000", "http://169.254.169.254", "http://192.168.2.1", "http://localhost:8000", "ftp://example.org", "http://user:secret@example.org"} {
+		if err := p.CheckConfiguredBackend(t.Context(), origin, false); err == nil {
+			t.Fatalf("unsafe configuration allowed: %s", origin)
+		}
+	}
+}
