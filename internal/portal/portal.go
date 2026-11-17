@@ -73,7 +73,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.ssoState.Store(h.startSSO(cfg.OIDC, cfg.OIDCClientSecret, nil))
 	h.mux.HandleFunc("GET /portal/login", h.login)
 	h.mux.HandleFunc("GET /portal/login/local", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/portal/sign-in/local", http.StatusSeeOther)
+		http.Redirect(w, r, loginDestination("/portal/sign-in/local", r), http.StatusSeeOther)
 	})
 	h.mux.HandleFunc("GET /portal/sign-in/keycloak", h.browserLogin)
 	h.mux.HandleFunc("POST /portal/login/local", h.localLogin)

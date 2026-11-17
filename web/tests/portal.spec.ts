@@ -37,6 +37,10 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   await page.getByLabel('Password', { exact: true }).fill('staff-dev-only')
   await page.getByRole('button', { name: 'Sign In', exact: true }).click()
   await expect(
+    page.getByRole('heading', { name: 'Connect', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('link', { name: 'API keys', exact: true }).click()
+  await expect(
     page.getByRole('heading', { name: 'API keys', exact: true }),
   ).toBeVisible()
   await expect(

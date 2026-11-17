@@ -51,7 +51,11 @@ fields relevant to that operation rather than an exhaustive response schema.
 - `GET /portal/callback`: consumes the challenge, exchanges the code and validates the ID
   token's signature, issuer, audience, expiry and nonce. The user is upserted by `(issuer, sub)`;
   email is never an identity key. Username, email and groups refresh on each login. Disabled
-  users cannot log in. A successful login rotates the session and redirects to `/portal/`.
+  users cannot log in. A successful login rotates the session and redirects to `/portal/`,
+  or a validated portal-relative `next` supplied when starting sign-in. The OIDC attempt
+  binds this destination to its browser, state and PKCE verifier; callback query parameters
+  cannot replace it. External destinations and authentication loops are ignored. Local
+  sign-in applies the same destination rule in the portal.
 - `POST /portal/logout` with `{}`: deletes this session and clears its cookie. Returns
   `{"logout_url":"<discovered end_session_endpoint with client_id and post_logout_redirect_uri>"}`.
   A local session returns `{"logout_url":"/"}` without contacting the
@@ -109,14 +113,36 @@ is an empty JSON array and grants no models unless a matching configured group e
 
 ## API keys
 
+New personal and administration keys remain in their dialog until the user
+acknowledges saving the secret. Escape, outside clicks and the close icon cannot
+discard it; key creation in progress also keeps its dialog open. Administration
+key creation and rotation require submitting the review step. Failed revocations
+show an alert inside their confirmation dialog.
+
+When a background request encounters an ended session, the portal preserves the
+workspace in memory and opens sign-in over it. Local sign-in resumes directly;
+Keycloak opens in another tab and the original tab checks the session when focus
+returns (a manual check is also available). Resume requires the same account;
+switching accounts reloads the workspace. Reloading or closing the browser tab
+still discards unsaved work. Passwords, key secrets and drafts are never saved to
+browser storage for recovery.
+
+Routing and authentication editors keep their loaded settings version and local
+edits across refetches. A newer remote version shows a notice. Saving checks the
+original version and returns a conflict rather than replacing another writer's
+draft. Loading the latest settings explicitly discards local edits.
+
 - `GET /portal/api/keys`: `{"keys":[{"id":"uuid","prefix":"olr-...","label":"laptop",
-  "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}]}`.
+  "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}],
+  "policy":{"default_lifetime_days":90,"max_lifetime_days":90}}`.
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
+  Policy metadata uses the same effective default and maximum as key creation. The
+  portal labels the default duration and offers only lifetimes this policy allows.
 - `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7,"class":"batch"}` (label: 1–100 bytes after trimming).
   `class` is `interactive` (default) or `batch`; the list returns it for every key.
   `expires_in_days` is optional, an integer from 1 to `auth.max_key_lifetime_days` (default 90). Omission uses
   `auth.default_key_lifetime_days`. Returns 201 `{"key":"olr-..."}` exactly once.
-  The site active-key cap returns 409; an over-limit lifetime returns 400.
+  The site active-key cap returns 409; an over-limit lifetime returns 400 and names the allowed maximum.
   Refresh the key list for metadata after creating a key. Unknown fields are rejected.
 - `DELETE /portal/api/keys/{uuid}` with `{}`: revokes an owned active key, returning 204 with
   no body. On a key that is already revoked or expired it removes the key for good (also 204);

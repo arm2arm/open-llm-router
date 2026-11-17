@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { SessionRecovery } from '@/session-recovery'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -44,7 +45,6 @@ import {
   api,
   ApiError,
   redirect,
-  request,
   type Key,
   type Me,
   type Models,
@@ -173,7 +173,7 @@ export default function App() {
   }, [location.pathname])
   const session = useQuery({
     queryKey: ['session'],
-    queryFn: () => request<Session>('auth/session'),
+    queryFn: () => api<Session>('auth/session'),
   })
   const [dark, setDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches,
@@ -190,13 +190,16 @@ export default function App() {
         <p role="status">Loading your session…</p>
       </AuthFrame>
     )
-  if (session.error) {
+  if (session.error && !session.data) {
     if (session.error instanceof ApiError && session.error.status === 401) {
       return location.pathname === '/sign-in' ||
         location.pathname === '/sign-in/local' ? (
         <SignIn />
       ) : (
-        <Navigate to="/sign-in" replace />
+        <Navigate
+          to={`/sign-in?next=${encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)}`}
+          replace
+        />
       )
     }
     return (
@@ -215,7 +218,12 @@ export default function App() {
         <SignOut />
       </AuthFrame>
     )
-  return <Workspace session={session.data} dark={dark} setDark={setDark} />
+  return (
+    <>
+      <Workspace session={session.data!} dark={dark} setDark={setDark} />
+      <SessionRecovery />
+    </>
+  )
 }
 
 function SignOut() {
@@ -410,7 +418,11 @@ function Workspace({
 function Keys() {
   const query = useQuery({
     queryKey: ['keys'],
-    queryFn: () => api<{ keys: Key[] }>('keys'),
+    queryFn: () =>
+      api<{
+        keys: Key[]
+        policy?: { default_lifetime_days: number; max_lifetime_days: number }
+      }>('keys'),
   })
   const cache = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -442,7 +454,7 @@ function Keys() {
     },
   })
   function changeOpen(next: boolean) {
-    if (create.isPending) return
+    if (create.isPending || (!next && secret)) return
     setOpen(next)
     setSecret('')
     setLabel('')
@@ -452,9 +464,17 @@ function Keys() {
   }
   function submit(event: FormEvent) {
     event.preventDefault()
-    create.mutate()
+    if (label.trim() && validExpiry && !create.isPending) create.mutate()
   }
   const keys = query.data?.keys ?? []
+  const policy = query.data?.policy ?? {
+    default_lifetime_days: 90,
+    max_lifetime_days: 90,
+  }
+  const lifetimes = [...new Set([1, 7, 30, 90, 365, policy.max_lifetime_days])]
+    .filter((days) => days <= policy.max_lifetime_days)
+    .sort((a, b) => a - b)
+  const validExpiry = !expiry || lifetimes.includes(Number(expiry))
   const removing =
     !!selected &&
     (selected.revoked ||
@@ -473,7 +493,10 @@ function Keys() {
             Secure access for your apps, scripts, and coding tools.
           </p>
         </div>
-        <Button onClick={() => changeOpen(true)}>
+        <Button
+          disabled={query.isPending || !!query.error}
+          onClick={() => changeOpen(true)}
+        >
           <Plus />
           Create key
         </Button>
@@ -602,7 +625,10 @@ function Keys() {
         </p>
       </div>
       <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent
+          className="max-w-lg"
+          showCloseButton={!secret && !create.isPending}
+        >
           <DialogHeader>
             <DialogTitle>
               {secret ? 'Your key is ready' : 'Create an API key'}
@@ -631,7 +657,12 @@ function Keys() {
               </label>
               <CopyButton text={secret} label="Copy key" />
               <DialogFooter>
-                <Button onClick={() => changeOpen(false)}>
+                <Button
+                  onClick={() => {
+                    setSecret('')
+                    setOpen(false)
+                  }}
+                >
                   I’ve saved my key
                 </Button>
               </DialogFooter>
@@ -639,6 +670,12 @@ function Keys() {
           ) : (
             <form onSubmit={submit}>
               <ErrorMessage error={create.error} />
+              {!validExpiry && (
+                <p role="alert" className="error">
+                  The site policy changed. Choose a lifetime of at most{' '}
+                  {policy.max_lifetime_days} days.
+                </p>
+              )}
               <label className="field">
                 Key label
                 <Input
@@ -657,8 +694,10 @@ function Keys() {
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
                 >
-                  <option value="">Site default</option>
-                  {[7, 30, 90, 365].map((days) => (
+                  <option value="">
+                    Site default ({policy.default_lifetime_days} days)
+                  </option>
+                  {lifetimes.map((days) => (
                     <option key={days} value={days}>
                       {days} days
                     </option>
@@ -692,7 +731,7 @@ function Keys() {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={create.isPending || !label.trim()}
+                  disabled={create.isPending || !label.trim() || !validExpiry}
                 >
                   {create.isPending ? 'Creating…' : 'Create key'}
                 </Button>

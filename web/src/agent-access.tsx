@@ -78,6 +78,7 @@ export function AgentAccessPage() {
   const [secret, setSecret] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [revokeError, setRevokeError] = useState('')
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<AgentKey | null>(null)
   const [rotation, setRotation] = useState<AgentKey | null>(null)
@@ -85,6 +86,18 @@ export function AgentAccessPage() {
   const [copied, setCopied] = useState(false)
   const data = inventory.data
   const entries = networks.split(/[\s,]+/).filter(Boolean)
+  const validDays =
+    Number.isInteger(days) &&
+    days >= 1 &&
+    days <= (data?.max_lifetime_days ?? 90)
+  const canAdvance =
+    !!label.trim() &&
+    permissions.length > 0 &&
+    (step < 1 || entries.length > 0) &&
+    (step < 2 || validDays)
+  function advance() {
+    if (!busy && canAdvance && step < 3) setStep(step + 1)
+  }
   const hermes = `mcp_servers:\n  open_llm_router_admin:\n    url: "${data?.base_url ?? ''}/api/admin/v1/mcp"\n    headers:\n      Authorization: "Bearer \u0024{OLR_ADMIN_API_KEY}"\n    supports_parallel_tool_calls: false\n`
   const rest = `curl --fail '${data?.base_url ?? ''}/api/admin/v1/identity' \\\n  -H "Authorization: Bearer $OLR_ADMIN_API_KEY"`
   function start(key?: AgentKey) {
@@ -101,6 +114,19 @@ export function AgentAccessPage() {
   }
   async function create(event: FormEvent) {
     event.preventDefault()
+    if (step < 3) {
+      advance()
+      return
+    }
+    if (
+      step !== 3 ||
+      busy ||
+      !label.trim() ||
+      !permissions.length ||
+      !entries.length ||
+      !validDays
+    )
+      return
     setBusy(true)
     setError('')
     try {
@@ -127,13 +153,13 @@ export function AgentAccessPage() {
   async function revoke() {
     if (!selected) return
     setBusy(true)
-    setError('')
+    setRevokeError('')
     try {
       await api(`admin/agent-keys/${selected.id}`, 'DELETE')
       setSelected(null)
       await cache.invalidateQueries({ queryKey: ['agent-keys'] })
     } catch (e) {
-      setError((e as Error).message)
+      setRevokeError((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -283,7 +309,10 @@ export function AgentAccessPage() {
                         </Button>
                         <Button
                           variant="outline"
-                          onClick={() => setSelected(k)}
+                          onClick={() => {
+                            setRevokeError('')
+                            setSelected(k)
+                          }}
                         >
                           Revoke
                         </Button>
@@ -346,7 +375,7 @@ export function AgentAccessPage() {
       <Dialog
         open={open}
         onOpenChange={(value) => {
-          if (!busy) {
+          if (!busy && !secret) {
             setOpen(value)
             if (!value) {
               setSecret('')
@@ -355,7 +384,10 @@ export function AgentAccessPage() {
           }
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-auto">
+        <DialogContent
+          className="max-h-[90vh] overflow-auto"
+          showCloseButton={!busy && !secret}
+        >
           <DialogHeader>
             <DialogTitle>
               {step === 4
@@ -558,16 +590,8 @@ export function AgentAccessPage() {
               {step < 3 && (
                 <Button
                   type="button"
-                  disabled={
-                    !label.trim() ||
-                    permissions.length === 0 ||
-                    (step >= 1 && entries.length === 0) ||
-                    (step === 2 &&
-                      (!days ||
-                        days < 1 ||
-                        days > (data?.max_lifetime_days ?? 90)))
-                  }
-                  onClick={() => setStep(step + 1)}
+                  disabled={busy || !canAdvance}
+                  onClick={advance}
                 >
                   Continue
                 </Button>
@@ -609,6 +633,11 @@ export function AgentAccessPage() {
               request.
             </DialogDescription>
           </DialogHeader>
+          {revokeError && (
+            <p role="alert" className="error">
+              {revokeError}
+            </p>
+          )}
           <Button disabled={busy} onClick={() => void revoke()}>
             Revoke key
           </Button>
