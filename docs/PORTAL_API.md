@@ -667,3 +667,8 @@ of other users are excluded from its own history.
 User search (`GET /portal/api/admin/users?match=…`) returns at most 500 matching
 users with `limit: 500` and `has_more`. Search by username or email to find users
 outside the current result window, including in effective-access previews.
+
+`PORTAL_BASE_URL` is stored as a canonical origin: hostnames are lowercase,
+HTTP port 80 and HTTPS port 443 are omitted, and a trailing slash is removed.
+For example, `https://LLM.example.org:443/` becomes `https://llm.example.org`.
+Browser mutation origins and sign-in callback hosts use that same origin.

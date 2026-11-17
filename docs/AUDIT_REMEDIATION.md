@@ -431,3 +431,8 @@ and P3; dependencies may change that order.
   linting and a named-container rule also run in `npm run lint`.
   All 21 focused browser regressions passed; seven synthetic visual checks also
   passed, with rendered narrow and dark views inspected. See ACCESSIBILITY.md.
+
+- **#201:** Accepted public portal origins normalize host case, default ports
+  and a trailing slash. Config tests also reject paths, credentials and empty
+  query/fragment delimiters. PostgreSQL-backed login and logout checks cover
+  HTTPS/443, HTTP/80 and a retained non-default port with canonical browser origins.
