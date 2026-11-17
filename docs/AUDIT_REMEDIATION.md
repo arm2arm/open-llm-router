@@ -377,3 +377,12 @@ and P3; dependencies may change that order.
   cancel the service context immediately when the committing connection is
   released, and stage a real endpoint save after commit while activating managed
   policy. Unit checks cover both publication orders.
+
+## Request-history lifetime evidence
+
+- **#173:** Only the exact live-events GET route avoids the portal JSON deadline;
+  client cancellation remains intact and session lookups have their own 10-second
+  bound. A real PostgreSQL-backed test retains two streams for 20 seconds with
+  the default 15-second heartbeat, observes pings, then checks sign-out and expiry
+  produce end events at the next heartbeat. Middleware checks keep other routes
+  on the 10-second deadline.

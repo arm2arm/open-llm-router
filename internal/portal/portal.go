@@ -156,6 +156,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+	// Live SSE connections retain client cancellation and server shutdown, but
+	// their lifetime is not a JSON request deadline. Sessions are rechecked by
+	// the stream heartbeat with a bounded database lookup.
+	if r.Method == http.MethodGet && r.URL.Path == "/portal/api/requests/events" {
+		h.mux.ServeHTTP(w, r)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	h.mux.ServeHTTP(w, r.WithContext(ctx))

@@ -130,3 +130,72 @@ func TestLiveRequestEvents(t *testing.T) {
 	}
 	aliceLive.wait(t, "event: end")
 }
+
+func TestDefaultLiveHeartbeatSurvivesJSONDeadlineAndEndsInvalidSessions(t *testing.T) {
+	if portal.LiveHeartbeat != 15*time.Second {
+		t.Fatal("test must use the default heartbeat")
+	}
+	f := startPortal(t)
+	a, b := f.browser(t), f.browser(t)
+	a.login(t, "default-live-logout", []string{"staff"})
+	expired := b.login(t, "default-live-expiry", []string{"staff"})
+	first, second := a.live(t), b.live(t)
+	alive := time.NewTimer(20 * time.Second)
+	defer alive.Stop()
+	pings := map[*liveStream]bool{}
+waitAlive:
+	for {
+		select {
+		case line, ok := <-first.lines:
+			if !ok {
+				t.Fatal("first stream closed before 20 seconds")
+			}
+			if line == ": ping" {
+				pings[first] = true
+			}
+		case line, ok := <-second.lines:
+			if !ok {
+				t.Fatal("second stream closed before 20 seconds")
+			}
+			if line == ": ping" {
+				pings[second] = true
+			}
+		case <-alive.C:
+			break waitAlive
+		}
+	}
+	if !pings[first] || !pings[second] {
+		t.Fatal("default heartbeat did not send ping before 20 seconds")
+	}
+	if resp, _ := a.call(t, "POST", "/portal/logout", `{}`, f.cfg.Portal.BaseURL); resp.StatusCode >= 400 {
+		t.Fatal("logout failed", resp.StatusCode)
+	}
+	execSQL(t, f.pool, `UPDATE sessions SET expires=clock_timestamp()-interval '1 second' WHERE user_id=$1`, expired)
+	deadline := time.NewTimer(portal.LiveHeartbeat + 3*time.Second)
+	defer deadline.Stop()
+	ended := map[*liveStream]bool{}
+	for !ended[first] || !ended[second] {
+		select {
+		case line, ok := <-first.lines:
+			if !ok {
+				if !ended[first] {
+					t.Fatal("logout stream ended without event")
+				}
+				first.lines = nil
+			} else if line == "event: end" {
+				ended[first] = true
+			}
+		case line, ok := <-second.lines:
+			if !ok {
+				if !ended[second] {
+					t.Fatal("expired stream ended without event")
+				}
+				second.lines = nil
+			} else if line == "event: end" {
+				ended[second] = true
+			}
+		case <-deadline.C:
+			t.Fatal("invalid sessions kept a live stream past the next heartbeat")
+		}
+	}
+}

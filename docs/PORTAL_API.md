@@ -652,3 +652,9 @@ the change; a successful commit publishes the prepared runtime without another
 required database read. Mutation responses may omit draft impact computation;
 read the routing view again to refresh that optional preview. A delayed legacy
 endpoint save cannot overwrite a newer routing publication.
+
+`GET /portal/api/requests/events` retains the client connection beyond the normal
+10-second JSON request deadline. Its default 15-second heartbeat sends `: ping`
+and rechecks the session. Sign-out or expiry ends the stream at the next check;
+each session lookup remains bounded to 10 seconds. Other portal routes retain
+their request deadline.
