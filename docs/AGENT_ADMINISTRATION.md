@@ -252,8 +252,13 @@ tables and invalidation triggers. Existing inference credentials remain unchange
 Database changes retain their transactional audit events. Agent events include
 owner, key ID, coarse source network (IPv4 `/24` or IPv6 `/48`),
 request/transport/change IDs. Network restrictions evaluate the full source IP
-in memory. Key `last_ip` also contains only this coarse network. Preview responses contain
-the authorized caller's current before/after view, but persisted preview summaries
+in memory. Key `last_ip` also contains only this coarse network.
+Source-network refusals are audited at most five times per credential per minute
+per router process. Additional denied calls return 429; rotating source addresses
+does not increase that credential's budget. Allowed-source calls use a separate
+request budget.
+
+Preview responses contain the authorized caller's current before/after view, but persisted preview summaries
 keep only operation descriptions and parameter/field names, never those values,
 identity data, key labels or free-text reasons. Status lookup returns that minimal
 summary. Unused previews expire after ten minutes; completed/interrupted changes

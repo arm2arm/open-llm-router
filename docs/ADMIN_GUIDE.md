@@ -1350,6 +1350,14 @@ pending administration previews. A changed name, email, verification flag or gro
 membership is persisted and audited. Group order and duplicate memberships do not
 constitute a change. The sync timestamp records the last identity change, not
 every successful login.
+Self-service API-key issuance, revocation and permanent removal share a budget of
+30 attempts per user per minute per router process, with up to four concurrent
+changes. Excess requests return 429 with `Retry-After: 60` before any mutation or
+history write. Missing self-service keys and exhausted issuance policy do not add
+permanent refusal rows. Successful changes remain audited. Agent calls rejected
+by a credential's source-network restriction can record at most five refusal
+events per credential per minute per process, even when source addresses change;
+further calls return 429. Allowed-source traffic has a separate request budget.
 Ordinary users cannot read this API and there are no event-edit/delete endpoints.
 
 Successful mutations and their events commit in the same database transaction.
@@ -1390,6 +1398,12 @@ Legacy events/revision labels or operator account/host attribution can still be
 personal data. A site requiring further erasure must use authorized, offline DBA
 maintenance and an approved pseudonym mapping/archive policy, covering logs,
 exports and backups as well; application admin access cannot bypass immutability.
+Monitor `pg_total_relation_size('audit_events')` and event growth as part of
+database capacity planning. Multiple router replicas multiply the per-process
+rate bounds above. For long-term history limits, an authorized DBA must define
+and rehearse a separate archive/retention procedure, including backups and legal
+retention needs. The shipped table is not partitioned and there is no automatic
+archive or application purge command.
 Keep any mapping separately with restricted access. Do not claim that deleting
 an account automatically erases historical attribution from existing backups.
 

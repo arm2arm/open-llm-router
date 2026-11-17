@@ -156,6 +156,14 @@ func (h *Handler) agentAuth(next func(http.ResponseWriter, *http.Request, agentI
 				release()
 			}
 			if errors.Is(err, errAgentIP) {
+				// A valid credential denied by its source restriction cannot
+				// multiply permanent history by rotating source addresses.
+				release, ok := h.agentFailures.acquire("denied-key:"+identity.Key.ID, 5, 1)
+				if !ok {
+					agentThrottle(w)
+					return
+				}
+				defer release()
 				h.agentAudit(r, identity, "agent.access", audit.Refused, "")
 				fail(w, 403, "ip_not_allowed", err.Error())
 			} else if errors.Is(err, errAgentSource) {
