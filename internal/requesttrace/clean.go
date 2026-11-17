@@ -84,9 +84,10 @@ func clean(v any, limit, depth int) any {
 	case []any:
 		numbers := len(t) > rawNumberCap
 		for _, item := range t {
-			if _, ok := item.(float64); !ok {
+			switch item.(type) {
+			case float64, json.Number:
+			default:
 				numbers = false
-				break
 			}
 		}
 		if numbers {
@@ -136,6 +137,10 @@ func numbers(v any, prefix string, out map[string]float64) {
 		if prefix != "" {
 			out[prefix] = t
 		}
+	case json.Number:
+		if value, err := t.Float64(); err == nil && prefix != "" {
+			out[prefix] = value
+		}
 	case map[string]any:
 		keys := make([]string, 0, len(t))
 		for k := range t {
@@ -143,6 +148,9 @@ func numbers(v any, prefix string, out map[string]float64) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
+			if credentialField(k) {
+				continue
+			}
 			name := k
 			if prefix != "" {
 				name = prefix + "." + k

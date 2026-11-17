@@ -23,7 +23,7 @@ func TestOpenAITraceContentAndOmissions(t *testing.T) {
 	if len(d.Input) != 3 || d.Input[0].Blocks[1].Type != "image" || d.Input[2].Blocks[0].Type != "tool_result" || len(d.Output) != 1 || d.Output[0].Blocks[0].Type != "reasoning" || d.Output[0].Blocks[2].Arguments != `{"q":"abc"}` {
 		t.Fatalf("unexpected trace: %s", b)
 	}
-	if len(d.Tools) != 1 || d.Tools[0].Name != "weather" || !strings.Contains(string(d.Tools[0].Schema), `"city"`) || d.Parameters["temperature"] != 0.5 {
+	if len(d.Tools) != 1 || d.Tools[0].Name != "weather" || !strings.Contains(string(d.Tools[0].Schema), `"city"`) || d.Parameters["temperature"] != json.Number("0.5") {
 		t.Fatalf("tools/parameters: %s", b)
 	}
 	if !strings.Contains(string(d.Request), `"temperature":0.5`) || !strings.Contains(string(d.Request), "image payload omitted") || !strings.Contains(string(d.Response), `"finish_reason":"tool_calls"`) {
@@ -159,7 +159,7 @@ func TestRawPreviewRemovesPayloadsAndBoundsStrings(t *testing.T) {
 	if !strings.Contains(string(d.Request), "+1" /* +1xxx chars */) || !strings.Contains(string(d.Request), "40 numbers omitted") || len(d.Input[0].Blocks[0].Text) != len(long) {
 		t.Fatalf("string bounds: %s", d.Request)
 	}
-	if d.Parameters["tool_choice"] == nil || d.Parameters["stop_sequences"] == nil || object(d.Parameters["thinking"])["budget_tokens"] != 1024.0 {
+	if d.Parameters["tool_choice"] == nil || d.Parameters["stop_sequences"] == nil || object(d.Parameters["thinking"])["budget_tokens"] != json.Number("1024") {
 		t.Fatalf("parameters: %+v", d.Parameters)
 	}
 	if d.Result.ID != "msg_1" || d.Result.Model != "served" || d.Summary.FinishReason != "end_turn" || d.Summary.CachedTokens != 4 || d.Result.Usage["input_tokens"] != 10 {

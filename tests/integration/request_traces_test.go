@@ -89,6 +89,32 @@ func TestTraceStorageDoesNotHoldStreamingResponse(t *testing.T) {
 	}
 }
 
+func TestTraceNULAndExactNumbersPersistAndRender(t *testing.T) {
+	f := startPortal(t)
+	browser := f.browser(t)
+	user := browser.login(t, "nul-trace", []string{"staff"})
+	if err := f.traces.Save(t.Context(), user, requesttrace.Preferences{Enabled: true, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
+	now, id := time.Now(), reqid.New()
+	capture := f.traces.Begin(user, "chat/completions", now)
+	if capture == nil {
+		t.Fatal("capture unavailable")
+	}
+	capture.Input([]byte(`{"messages":[{"role":"user","content":"input\u0000text"}],"seed":1234567890123456789,"key\u0000name":"value\u0000text"}`))
+	capture.ResponseJSON(true)
+	capture.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"output\u0000text"}}],"extension":1234567890123456789}`))
+	capture.Finish(usage.Record{UserID: user, RequestID: id, StartedAt: now, Protocol: "openai", Status: "200"})
+	waitFor(t, func() bool { return f.traces.Processed.Load() == 1 })
+	if f.traces.Failed.Load() != 0 || f.traces.Written.Load() != 1 {
+		t.Fatal("jsonb rejected safe NUL handling", f.traces.Failed.Load(), f.traces.Written.Load())
+	}
+	resp, body := browser.call(t, "GET", "/portal/api/requests/"+id, "", "")
+	if resp.StatusCode != 200 || strings.Contains(string(body), `\u0000`) || strings.ContainsRune(string(body), '\x00') || !strings.Contains(string(body), "input�text") || !strings.Contains(string(body), "output�text") || !strings.Contains(string(body), "1234567890123456789") || strings.Contains(string(body), "1234567890123456800") {
+		t.Fatal("trace view changed numbers or retained NUL", resp.StatusCode, string(body))
+	}
+}
+
 func TestPersonalRequestTraces(t *testing.T) {
 	f := startPortal(t)
 	a, b, root := f.browser(t), f.browser(t), f.browser(t)
@@ -147,7 +173,7 @@ func TestPersonalRequestTraces(t *testing.T) {
 		t.Fatalf("trace: %d %s", resp.StatusCode, data)
 	}
 	// Version 2: raw request, routing by pool position, header names only.
-	for _, want := range []string{`"v":2`, `"request":{`, `"replica 1 of 1"`, `"X-Private-Header"`, `"upstream_status":200`, `"frames":[{`} {
+	for _, want := range []string{`"v":3`, `"request":{`, `"replica 1 of 1"`, `"X-Private-Header"`, `"upstream_status":200`, `"frames":[{`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("trace lacks %s: %s", want, data)
 		}

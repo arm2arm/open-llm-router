@@ -1,6 +1,7 @@
 // Trace shapes from GET /portal/api/requests/{id}. Version 1 traces (stored
 // before raw previews existed) lack every optional field below.
 import type { RequestRecord } from '@/lib/api'
+import { parseExactJSON } from '@/lib/exact-json'
 
 export type Block = {
   type: string
@@ -115,7 +116,7 @@ export const ok = (status: string) => status.startsWith('2')
 export function parseJSON(value: string | undefined): unknown {
   if (value === undefined || value === '') return undefined
   try {
-    return JSON.parse(value)
+    return parseExactJSON(value)
   } catch {
     return undefined
   }

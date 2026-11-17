@@ -83,5 +83,10 @@ func (h *Handler) requestTrace(w http.ResponseWriter, r *http.Request, u user) {
 		unavailable(w)
 		return
 	}
+	detail, err = h.Traces.SanitizeDetail(detail)
+	if err != nil {
+		unavailable(w)
+		return
+	}
 	respond(w, 200, map[string]any{"request_id": id, "expires_at": expires, "detail": detail})
 }

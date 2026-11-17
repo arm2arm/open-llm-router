@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
+import { parseExactJSON } from './exact-json'
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,9 +64,10 @@ export async function request<T>(
       error?.error?.type ?? 'request_error',
     )
   }
-  return response.status === 204
-    ? (undefined as T)
-    : (response.json() as Promise<T>)
+  if (response.status === 204) return undefined as T
+  if (method === 'GET' && /^(?:\/portal\/api\/)?requests\/[^/]+$/.test(path))
+    return parseExactJSON(await response.text()) as T
+  return response.json() as Promise<T>
 }
 
 export async function api<T>(
