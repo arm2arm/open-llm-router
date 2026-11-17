@@ -429,6 +429,7 @@ bounded fuzz run in CI. To run a longer local fuzz check:
 
 ```sh
 go test ./internal/usage -run '^$' -fuzz '^FuzzStreamPreservesBytes$' -fuzztime=30s -parallel=2
+go test ./internal/proxy -run '^$' -fuzz '^FuzzRequestModelExtraction$' -fuzztime=30s -parallel=2
 ```
 
 ## Running outside Compose
@@ -501,7 +502,11 @@ request or response bodies.
 
 Unit tests live next to their code. HTTP streaming and disconnect tests use
 `httptest.NewServer` and real sockets, without requiring a running Compose stack.
-Postgres integration tests in `tests/integration` skip when `OLR_TEST_DATABASE_URL` is unset.
+Postgres integration tests in `tests/integration` and `internal/loadtest` skip locally
+when `OLR_TEST_DATABASE_URL` is unset. With `CI=true` or `OLR_REQUIRE_DATABASE=1`, both
+packages fail before running tests if that variable is missing. The CI checks job sets
+the requirement explicitly, so removing its database environment cannot turn coverage
+into successful skips. The role must create disposable databases; never use production.
 Each test creates and drops its own database, leaving the supplied database intact. The test
 role needs `CREATEDB` and permission to terminate its own connections (the Compose and CI
 roles have these permissions). Tests cover schema initialization/restarts, issuer-scoped
