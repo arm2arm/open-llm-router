@@ -328,8 +328,8 @@ function DraftEditor({
             <option value="path">Full paths (/org/staff)</option>
           </select>
           <span className="subtitle">
-            Applies to sign-in, API tokens and group sync. Leaf names reached
-            through two paths are refused; use full paths for such realms.
+            Applies to sign-in, API tokens and group sync. Same-named leaves
+            share one policy; use full paths when their access must differ.
           </span>
         </label>
         {field('username_claim')}
