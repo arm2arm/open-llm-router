@@ -13,7 +13,7 @@ and P3; dependencies may change that order.
 | --- | --- | --- |
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
-| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | #182/#215/#251/#260: sanitization in this change; remaining findings pending |
+| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Sanitization: PR #296; admission/storage bounds in this change; consent, usage fidelity and API examples pending |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
@@ -110,6 +110,17 @@ and P3; dependencies may change that order.
   Deployment budgets are 60 s versus the default 30 s HTTP grace plus 12 s flushes.
 
 ## Trace sanitization evidence
+
+- **#166:** Capture begins only after request/model/user/backend/replica admission.
+  A PostgreSQL regression floods 400/403/404 and 429 rejections without creating
+  traces or consuming the admitted call's capture budget. Per-user process limits
+  are four active/queued captures and 30 captures/minute, within a bounded map and
+  global 32-slot budget. Retained storage is limited to 512 traces and 64 MiB of
+  logical JSON per user across replicas. Separate transaction statements after a
+  user-row lock avoid stale snapshots when concurrent writers wait. Generated
+  byte sizes cover historical rows; deletion naturally frees budget. Parameters
+  have a final 32 KiB aggregate limit, checked again after redaction can expand
+  values. Omitted extensions are counted, with ordinary model controls retained.
 
 - **#182:** Stream text is reconstructed before heuristic/operator redaction.
   Version-3 timeline events keep timing/types; raw frames keep protocol structure

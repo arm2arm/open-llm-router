@@ -2,6 +2,7 @@ package requesttrace
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -80,9 +81,12 @@ func TestAnthropicStreamAndPartialTail(t *testing.T) {
 func TestCaptureBoundsAndNonblockingAdmission(t *testing.T) {
 	s := &Service{enabled: true, slots: make(chan struct{}, Slots), queue: make(chan *Capture, Slots)}
 	consent := map[string]Preferences{"user": {Enabled: true, RetentionDays: 7}}
+	for i := range Slots {
+		consent[fmt.Sprint(i)] = Preferences{Enabled: true, RetentionDays: 7}
+	}
 	s.prefs.Store(&consent)
-	for range Slots {
-		c := s.Begin("user", "chat", time.Now())
+	for i := range Slots {
+		c := s.Begin(fmt.Sprint(i), "chat", time.Now())
 		if c == nil {
 			t.Fatal("unexpected rejection")
 		}
