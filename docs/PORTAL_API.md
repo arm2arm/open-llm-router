@@ -9,6 +9,10 @@ Unauthenticated API calls return 401; forbidden origins/disabled logins return 4
 invalid input returns 400, unknown or other users' keys return 404, and unavailable
 dependencies return 503. No OIDC token is stored or returned to the browser.
 
+Response objects can gain fields. Clients must ignore unknown JSON fields,
+including in key, usage and current-user (`me`) responses; examples show the
+fields relevant to that operation rather than an exhaustive response schema.
+
 ## Login and logout
 
 - `GET /portal/api/auth`: public authentication metadata,
@@ -179,9 +183,18 @@ untouched. See [PRIVACY.md](PRIVACY.md).
 These routes require a full session. Mutations require the configured Origin and JSON
 content type. All access is scoped to the session user; admin status adds no content access.
 
-- `GET /portal/api/trace-preferences`: `{"enabled":true,"retention_days":7}`.
-- `PUT /portal/api/trace-preferences`: the same complete object; boolean `enabled` is
-  required and integer `retention_days` must be 1–30. Returns the saved object.
+- `GET /portal/api/trace-preferences`: the default is
+  `{"available":false,"enabled":false,"retention_days":7,"updated_at":null}`.
+  `available:false` means the site capture gate is closed, independently of the
+  saved user choice. Capture requires both `available:true` and `enabled:true`.
+  `updated_at` is the RFC3339 timestamp of the user's last explicit preference
+  change, or null before their first recorded choice. Erasing traces does not
+  change this timestamp or their preference.
+- `PUT /portal/api/trace-preferences`: send `{"enabled":true,"retention_days":7}`;
+  boolean `enabled` is required and integer `retention_days` must be 1–30. Returns
+  the saved object including `available` and `updated_at`. Changes are timestamped
+  and recorded in audit history in the same transaction; repeating an unchanged
+  choice preserves its timestamp. The server controls availability and timestamps.
 - `GET /portal/api/requests/{request_id}`: `{"request_id":"…","expires_at":"RFC3339",
   "detail":{"operation":"chat/completions","input":[],"output":[],"events":[],
   "parameters":{},"truncated":false,"warnings":[]}}`. Inputs/outputs contain
