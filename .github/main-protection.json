@@ -33,6 +33,10 @@
       {
         "context": "CodeQL (javascript-typescript)",
         "app_id": 15368
+      },
+      {
+        "context": "security-mutations",
+        "app_id": 15368
       }
     ]
   },

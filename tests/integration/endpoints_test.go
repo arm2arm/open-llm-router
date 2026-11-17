@@ -130,6 +130,7 @@ func TestEndpointConfigurationLifecyclePersistenceAndGuards(t *testing.T) {
 		}
 		mock.ServeHTTP(w, r)
 	}))
+	defer func() { requireAuditAction(t, f.pool, "endpoints.activate") }()
 	operator, ordinary := f.browser(t), f.browser(t)
 	operator.login(t, "operator", []string{"admins"})
 	ordinary.login(t, "reader", []string{"staff"})

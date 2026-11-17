@@ -245,6 +245,7 @@ func TestPortalOIDCStateReplayAndTokenValidation(t *testing.T) {
 		{"nonce", func(c map[string]any) { c["nonce"] = "wrong" }},
 		{"missing_nonce", func(c map[string]any) { delete(c, "nonce") }},
 		{"authorized_party", func(c map[string]any) { c["azp"] = "another-client" }},
+		{"access_token_hash", func(c map[string]any) { c["at_hash"] = "wrong-access-token-hash" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := f.browser(t)

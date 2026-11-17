@@ -21,6 +21,17 @@ func TestAgentAdministrationLifecycle(t *testing.T) {
 	f := startPortal(t, usageOptions{portal: func(_ *portal.Handler, cfg *config.Config, _ *pgxpool.Pool, _ *proxy.Handler) {
 		cfg.AdminAPI.Enabled = true
 	}})
+	defer func() {
+		for _, action := range []string{"agent.preview", "agent.apply"} {
+			requireAuditAction(t, f.pool, action)
+		}
+		for _, action := range []string{"agent.read", "agent.access"} {
+			var count int
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action=$1 AND result='refused'`, action).Scan(&count); err != nil || count == 0 {
+				t.Fatal("missing refused agent history", action, err)
+			}
+		}
+	}()
 	browser := signInLocalAdmin(t, f)
 	issue := func(permissions, networks []string) string {
 		body, _ := json.Marshal(map[string]any{"label": "test agent", "permissions": permissions, "allowed_networks": networks, "expires_in_days": 1})
