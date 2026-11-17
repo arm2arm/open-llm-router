@@ -67,6 +67,22 @@ func TestManagedPoliciesPreviewEnforcementAndRollback(t *testing.T) {
 	if p.Limits.RPM == nil || *p.Limits.RPM != 2 || p.Limits.MaxConcurrentBatch == nil || *p.Limits.MaxConcurrentBatch != 4 || p.Priority != -2 || !p.Limits.StrictQuota || len(p.Models) != 1 || len(p.Affected) == 0 {
 		t.Fatalf("preview does not resolve policy/override: %+v", p)
 	}
+	// The administrator's general concurrency throttle also appears in the
+	// portal preview for batch keys; a separate batch override remains authoritative.
+	if err := a.SetOverride(t.Context(), f.owner, "max_concurrent", limitPtr(int64(1)), "abuse throttle", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(call("POST", "/preview", map[string]any{"document": doc, "user_id": f.owner, "memberships": []string{"staff", "students"}}, 200), &p)
+	if p.Limits.MaxConcurrentBatch == nil || *p.Limits.MaxConcurrentBatch != 1 {
+		t.Fatalf("preview omitted inherited batch cap: %+v", p.Limits)
+	}
+	if err := a.SetOverride(t.Context(), f.owner, "max_concurrent_batch", limitPtr(int64(6)), "separate batch allowance", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(call("POST", "/preview", map[string]any{"document": doc, "user_id": f.owner, "memberships": []string{"staff", "students"}}, 200), &p)
+	if p.Limits.MaxConcurrentBatch == nil || *p.Limits.MaxConcurrentBatch != 6 {
+		t.Fatalf("preview ignored explicit batch override: %+v", p.Limits)
+	}
 	// One omitted value makes a merged field unlimited; strict quota is AND.
 	student := doc.Groups["students"]
 	student.TokensPerDay = nil

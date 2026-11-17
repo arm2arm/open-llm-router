@@ -476,6 +476,22 @@ func TestStrictQuotaUnderConcurrency(t *testing.T) {
 }
 
 func TestBatchKeysHaveTheirOwnConcurrency(t *testing.T) {
+	testBatchConcurrency(t, config.Group{Models: []string{"*"}, MaxConcurrent: limitPtr(1), MaxConcurrentBatch: limitPtr(1)}, nil)
+}
+
+func TestInteractiveOverrideCapsBatchKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		batch *int
+	}{{"larger group limit", limitPtr(8)}, {"unlimited group", nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			testBatchConcurrency(t, config.Group{Models: []string{"*"}, MaxConcurrentBatch: tc.batch}, map[string]*int64{policy.FieldMaxConcurrent: limitPtr(int64(1))})
+		})
+	}
+}
+
+func testBatchConcurrency(t *testing.T, group config.Group, overrides map[string]*int64) {
+	t.Helper()
 	gate := make(chan struct{})
 	arrived := make(chan struct{}, 2)
 	slow := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -490,7 +506,12 @@ func TestBatchKeysHaveTheirOwnConcurrency(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 	})
-	f := startUsageRouter(t, slow, usageOptions{group: &config.Group{Models: []string{"*"}, MaxConcurrent: limitPtr(1), MaxConcurrentBatch: limitPtr(1)}})
+	f := startUsageRouter(t, slow, usageOptions{group: &group})
+	for field, value := range overrides {
+		if err := (auth.Admin{Pool: f.pool}).SetOverride(t.Context(), f.owner, field, value, "per-user throttle", "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var release sync.Once
 	releaseGate := func() { release.Do(func() { close(gate) }) }
 	type result struct {

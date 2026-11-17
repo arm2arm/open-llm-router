@@ -126,6 +126,17 @@ func (p Policy) WithOverrides(overrides map[string]*int64) Policy {
 			p.StrictQuota = *value == 1
 		}
 	}
+	// A general per-user throttle also caps batch keys. Only an explicit valid
+	// batch override can opt out; group defaults must not bypass the throttle.
+	interactive, capped := overrides[FieldMaxConcurrent]
+	batch, explicitBatch := overrides[FieldMaxConcurrentBatch]
+	if capped && interactive != nil && ValidOverride(FieldMaxConcurrent, interactive) &&
+		!(explicitBatch && ValidOverride(FieldMaxConcurrentBatch, batch)) {
+		cap := int(*interactive)
+		if p.MaxConcurrentBatch == nil || *p.MaxConcurrentBatch > cap {
+			p.MaxConcurrentBatch = &cap
+		}
+	}
 	return p
 }
 

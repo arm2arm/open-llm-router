@@ -19,7 +19,14 @@ var ErrUnavailable = errors.New("quota counters are temporarily unavailable")
 
 // Rejection identifies the failed gate and its next retry time. For concurrency
 // the time is an estimate: another call may release a slot sooner.
+const (
+	ReasonInFlightReservations    = "in_flight_reservations"
+	ReasonRequestExceedsRemaining = "request_exceeds_remaining"
+)
+
 type Rejection struct {
+	Reason     string
+	Remaining  int64
 	Limit      string
 	ResetAt    time.Time
 	RetryAfter int
@@ -29,6 +36,32 @@ func (r *Rejection) Error() string { return r.Limit + " exceeded" }
 
 func reject(limit string, now, reset time.Time) *Rejection {
 	return &Rejection{Limit: limit, ResetAt: reset, RetryAfter: max(1, int(math.Ceil(reset.Sub(now).Seconds())))}
+}
+
+// quotaRejection distinguishes spent tokens from temporary reservations and a
+// request that cannot fit even after all other calls complete.
+func quotaRejection(limit *int64, used, reserved, reserve int64, strict bool, name string, now, reset time.Time) *Rejection {
+	if limit == nil {
+		return nil
+	}
+	if used >= *limit {
+		return reject(name, now, reset)
+	}
+	if !strict {
+		return nil
+	}
+	remaining := *limit - used
+	if reserve > remaining {
+		r := reject(name, now, reset)
+		r.Reason, r.Remaining = ReasonRequestExceedsRemaining, remaining
+		return r
+	}
+	if add(reserved, reserve) > remaining {
+		r := reject(name, now, now.Add(time.Second))
+		r.Reason, r.Remaining = ReasonInFlightReservations, remaining
+		return r
+	}
+	return nil
 }
 
 type modelTotals struct {
@@ -58,7 +91,10 @@ type userState struct {
 	tpmLevel float64
 	tpmAt    time.Time
 	tpmSet   bool
-	reserved int64 // strict-quota reservations of calls in flight
+	// Finite-policy calls that finish while the bucket is disabled still owe
+	// their admission-time charge when a finite policy returns.
+	tpmPendingDebt float64
+	reserved       int64 // strict-quota reservations of calls in flight
 }
 
 // Key classes.
@@ -80,7 +116,8 @@ func (s *userState) inFlight() int { return s.inflight[0] + s.inflight[1] }
 func (s *userState) refillTPM(tpm int64, now time.Time) {
 	capacity := float64(tpm)
 	if !s.tpmSet {
-		s.tpmLevel, s.tpmAt, s.tpmSet = capacity, now, true
+		s.tpmLevel, s.tpmAt, s.tpmSet = capacity-s.tpmPendingDebt, now, true
+		s.tpmPendingDebt = 0
 		return
 	}
 	if elapsed := now.Sub(s.tpmAt).Seconds(); elapsed > 0 {
@@ -88,6 +125,12 @@ func (s *userState) refillTPM(tpm int64, now time.Time) {
 	}
 	s.tpmLevel = min(s.tpmLevel, capacity)
 	s.tpmAt = now
+}
+
+// disableTPM starts an unlimited interval. Completed debt from the previous
+// interval is cleared; outstanding finite-policy leases settle separately.
+func (s *userState) disableTPM() {
+	s.tpmSet, s.tpmLevel = false, 0
 }
 
 // Admission describes one call: the key's class and, for strict quotas, the
@@ -164,7 +207,7 @@ func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) 
 		return nil, reject(gate, now, now.Add(time.Second))
 	}
 	s.inflight[class]++
-	lease := &Lease{manager: m, state: s, class: class}
+	lease := &Lease{manager: m, state: s, class: class, tpm: p.TPM != nil}
 	pruneRPM(s, now)
 	if p.RPM != nil {
 		if len(s.requests) >= *p.RPM {
@@ -183,6 +226,8 @@ func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) 
 			s.mu.Unlock()
 			return nil, reject("tpm", now, now.Add(wait))
 		}
+	} else {
+		s.disableTPM()
 	}
 	s.mu.Unlock()
 	if err := m.ensureLoaded(ctx, s, now); err != nil {
@@ -199,19 +244,16 @@ func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) 
 	if p.StrictQuota {
 		reserve = max(a.Reserve, 0)
 	}
-	exceeds := func(limit *int64, used int64) bool {
-		if limit == nil {
-			return false
-		}
-		if used >= *limit {
-			return true
-		}
-		return p.StrictQuota && add(add(used, s.reserved), reserve) > *limit
+	daily := quotaRejection(p.TokensPerDay, today, s.reserved, reserve, p.StrictQuota, "tokens_per_day", now, period.nextDay)
+	monthly := quotaRejection(p.TokensPerMonth, month, s.reserved, reserve, p.StrictQuota, "tokens_per_month", now, period.nextMonth)
+	// A permanent monthly refusal must not be hidden behind a temporary daily
+	// reservation: waiting for another call would not make the request admissible.
+	rejection := daily
+	if rejection == nil || (rejection.Reason == ReasonInFlightReservations && monthly != nil && monthly.Reason != ReasonInFlightReservations) {
+		rejection = monthly
 	}
-	if exceeds(p.TokensPerDay, today) {
-		err = reject("tokens_per_day", now, period.nextDay)
-	} else if exceeds(p.TokensPerMonth, month) {
-		err = reject("tokens_per_month", now, period.nextMonth)
+	if rejection != nil {
+		err = rejection
 	} else {
 		s.reserved = add(s.reserved, reserve)
 		lease.reserved = reserve
@@ -273,6 +315,7 @@ type Lease struct {
 	state    *userState
 	class    int
 	reserved int64
+	tpm      bool // whether the admitting policy had a finite token bucket
 }
 
 func (l *Lease) Release()                     { l.finish(nil) }
@@ -302,8 +345,13 @@ func (l *Lease) finish(record *usage.Record) {
 				totals.rateSum += record.TokensPerSecond()
 				totals.rateCount++
 			}
-			if s.tpmSet {
-				s.tpmLevel -= float64(add(max(record.InputTokens, 0), record.OutputTokens))
+			if l.tpm {
+				tokens := float64(add(max(record.InputTokens, 0), record.OutputTokens))
+				if s.tpmSet {
+					s.tpmLevel -= tokens
+				} else {
+					s.tpmPendingDebt += tokens
+				}
 			}
 		}
 		s.reserved -= l.reserved
@@ -437,6 +485,8 @@ func (m *Manager) Snapshot(ctx context.Context, user string, p policy.Policy) (S
 		s.refillTPM(*p.TPM, now)
 		left := max(0, int64(s.tpmLevel))
 		result.Remaining.TPM = &left
+	} else {
+		s.disableTPM()
 	}
 	if p.RPM != nil {
 		used, left := len(s.requests), max(0, *p.RPM-len(s.requests))

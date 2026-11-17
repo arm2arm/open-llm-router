@@ -3,6 +3,7 @@ package limits
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -364,4 +365,145 @@ func TestStrictQuotaReservesBeforeForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Release()
+}
+
+func TestStrictQuotaExplainsReservationsRemainingAndExhaustion(t *testing.T) {
+	for _, budget := range []string{"tokens_per_day", "tokens_per_month"} {
+		t.Run(budget, func(t *testing.T) {
+			m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+			p := policy.Policy{StrictQuota: true}
+			if budget == "tokens_per_day" {
+				p.TokensPerDay = ptr(int64(100))
+			} else {
+				p.TokensPerMonth = ptr(int64(100))
+			}
+			acquire := func(n int64) (*Lease, error) { return m.AcquireFor(t.Context(), Admission{User: "u", Reserve: n}, p) }
+			seed, err := acquire(20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seed.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 20})
+			inflight, err := acquire(70)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inflight.Release()
+			check := func(n int64, reason string, retry int) *Rejection {
+				t.Helper()
+				l, err := acquire(n)
+				if l != nil {
+					l.Release()
+				}
+				var r *Rejection
+				if !errors.As(err, &r) || r.Limit != budget || r.Reason != reason || r.RetryAfter != retry {
+					t.Fatalf("reservation %d: %#v, %v", n, r, err)
+				}
+				if reason != "" && r.Remaining != 80 {
+					t.Fatalf("remaining: %d", r.Remaining)
+				}
+				return r
+			}
+			temporary := check(20, ReasonInFlightReservations, 1)
+			if !temporary.ResetAt.Equal(c.Now().Add(time.Second)) {
+				t.Fatal("temporary reset is not a short estimate")
+			}
+			period := calendarAt(c.Now(), time.UTC)
+			reset := period.nextDay
+			if budget == "tokens_per_month" {
+				reset = period.nextMonth
+			}
+			retry := int(reset.Sub(c.Now()).Seconds())
+			check(81, ReasonRequestExceedsRemaining, retry)
+			inflight.Release()
+			exact, err := acquire(80)
+			if err != nil {
+				t.Fatal("released reservations still block", err)
+			}
+			exact.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 80})
+			exhausted := check(1, "", retry)
+			if !exhausted.ResetAt.Equal(reset) {
+				t.Fatal("exhaustion lost calendar reset")
+			}
+			if s := snapshot(t, m, "u", p); s.Reserved != 0 || s.InFlight != 0 {
+				t.Fatalf("failed admissions leaked reservations: %+v", s)
+			}
+		})
+	}
+}
+
+func TestExhaustedMonthWinsOverTemporaryDailyReservation(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	p := policy.Policy{StrictQuota: true, TokensPerDay: ptr(int64(100)), TokensPerMonth: ptr(int64(200))}
+	seed, err := m.AcquireFor(t.Context(), Admission{User: "u", Reserve: 20}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 20})
+	inflight, err := m.AcquireFor(t.Context(), Admission{User: "u", Reserve: 70}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inflight.Release()
+	p.TokensPerMonth = ptr(int64(10))
+	_, err = m.AcquireFor(t.Context(), Admission{User: "u", Reserve: 20}, p)
+	var r *Rejection
+	if !errors.As(err, &r) || r.Limit != "tokens_per_month" || r.Reason != "" {
+		t.Fatalf("permanent refusal masked: %#v %v", r, err)
+	}
+}
+
+func TestTPMUnlimitedUsageDoesNotBecomeRestoredDebt(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	limited := policy.Policy{TPM: ptr(int64(20000))}
+	acquire(t, m, "u", limited).Release()
+	for range 60 {
+		l := acquire(t, m, "u", policy.Policy{})
+		l.Complete(usage.Record{StartedAt: c.Now(), Model: "m", InputTokens: 50000, OutputTokens: 50000})
+		c.Add(time.Minute)
+	}
+	if s := snapshot(t, m, "u", limited); s.Remaining.TPM == nil || *s.Remaining.TPM != 20000 {
+		t.Fatalf("unlimited usage created debt: %+v", s.Remaining)
+	}
+	acquire(t, m, "u", limited).Release()
+}
+
+func TestTPMUnlimitedSnapshotResetsBucketAndLateUnlimitedCompletionIsFree(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	limited := policy.Policy{TPM: ptr(int64(100))}
+	acquire(t, m, "u", limited).Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 150})
+	if s := snapshot(t, m, "u", policy.Policy{}); s.Remaining.TPM != nil {
+		t.Fatal("unlimited snapshot exposed a bucket")
+	}
+	late := acquire(t, m, "u", policy.Policy{})
+	if s := snapshot(t, m, "u", limited); s.Remaining.TPM == nil || *s.Remaining.TPM != 100 {
+		t.Fatal("snapshot did not reset finite debt", s.Remaining)
+	}
+	late.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 100000})
+	if s := snapshot(t, m, "u", limited); *s.Remaining.TPM != 100 {
+		t.Fatal("late unlimited completion charged restored bucket", *s.Remaining.TPM)
+	}
+	acquire(t, m, "u", limited).Release()
+}
+
+func TestTPMFiniteAdmissionDebtSurvivesPolicyChange(t *testing.T) {
+	for _, completeWhileUnlimited := range []bool{false, true} {
+		t.Run(fmt.Sprint(completeWhileUnlimited), func(t *testing.T) {
+			m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+			limited := policy.Policy{TPM: ptr(int64(100))}
+			finite := acquire(t, m, "u", limited)
+			acquire(t, m, "u", policy.Policy{}).Release()
+			if !completeWhileUnlimited {
+				acquire(t, m, "u", limited).Release()
+			}
+			finite.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 150})
+			if completeWhileUnlimited {
+				// Further unlimited calls/lookups must not discard outstanding finite debt.
+				acquire(t, m, "u", policy.Policy{}).Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 100000})
+				snapshot(t, m, "u", policy.Policy{})
+			}
+			rejected(t, m, "u", limited, "tpm", 31)
+			c.Add(31 * time.Second)
+			acquire(t, m, "u", limited).Release()
+		})
+	}
 }
