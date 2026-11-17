@@ -80,6 +80,7 @@ async function workspace(page: Page) {
     else if (path === 'admin/settings/routing') body = view
     else if (path === 'admin/settings/routing/draft') {
       const request = route.request().postDataJSON() as (typeof saved)[number]
+      request.secrets ??= {}
       saved.push(structuredClone(request))
       const next = structuredClone(request.document)
       for (const id of Object.keys(request.secrets))
@@ -674,4 +675,207 @@ test('pending advanced drafts block direct edits and save errors preserve input'
   await expect(dialog.getByLabel('IP address or service URL')).toHaveValue(
     'gpu.cluster:8000',
   )
+})
+
+test('clone preserves configuration and model selection under a unique new name', async ({
+  page,
+}) => {
+  const { view, saved } = await workspace(page)
+  connectionFixture(view)
+  const document = view.settings.active!.document!
+  const original = document.backends!.gpu
+  original.api_key = {}
+  original.provider = 'vLLM'
+  original.preset = 'standard'
+  original.health_path = '/health'
+  document.models.fast.pool[0].weight = 3
+  document.models.fast.pool[0].max_inflight = 5
+  document.backends!.existingCopy = {
+    ...structuredClone(original),
+    name: 'Test GPU (copy)',
+  }
+  const before = structuredClone(original)
+  await page.goto('/portal/admin')
+  const card = page.getByRole('article', { name: 'Test GPU', exact: true })
+  await card
+    .getByRole('button', { name: 'Clone Test GPU', exact: true })
+    .click()
+  let dialog = page.getByRole('dialog', { name: 'Clone backend', exact: true })
+  await expect(dialog.getByLabel('Backend name', { exact: true })).toHaveValue(
+    'Test GPU (copy 2)',
+  )
+  await expect(dialog.getByLabel('IP address or service URL')).toHaveValue(
+    original.url,
+  )
+  await expect(dialog.getByLabel('Backend access staff')).toBeChecked()
+  await expect(dialog.getByLabel('Backend preset')).toHaveValue('standard')
+  await expect(dialog.getByLabel('deepseek-r1', { exact: true })).toBeChecked()
+  await expect(dialog.getByLabel('qwen', { exact: true })).not.toBeChecked()
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(saved).toHaveLength(0)
+  expect(document.backends!.gpu).toEqual(before)
+  await card
+    .getByRole('button', { name: 'Clone Test GPU', exact: true })
+    .click()
+  dialog = page.getByRole('dialog', { name: 'Clone backend', exact: true })
+  await dialog
+    .getByRole('button', { name: 'Save backend', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  expect(saved).toHaveLength(1)
+  const [id, clone] = Object.entries(saved[0].document.backends!).find(
+    ([id]) => !['gpu', 'existingCopy'].includes(id),
+  )!
+  expect(clone).toEqual({ ...before, name: 'Test GPU (copy 2)' })
+  expect(saved[0].document.backends!.gpu).toEqual(before)
+  expect(saved[0].secrets).toEqual({})
+  expect(saved[0].document.models.fast).toEqual(document.models.fast)
+  const copiedRoute = Object.values(saved[0].document.models).find((model) =>
+    model.pool.some((replica) => replica.backend === id),
+  )!
+  expect(copiedRoute).toMatchObject({
+    upstream_model: 'deepseek-r1',
+    protocols: document.models.fast.protocols,
+    timeout_s: document.models.fast.timeout_s,
+    idle_timeout_s: document.models.fast.idle_timeout_s,
+    pool: [{ backend: id, bearer_token_env: '', weight: 3, max_inflight: 5 }],
+  })
+  await expect(
+    page.getByRole('article', { name: 'Test GPU (copy 2)', exact: true }),
+  ).toBeVisible()
+})
+
+for (const legacy of [false, true]) {
+  test(`cloning ${legacy ? 'deployment' : 'stored'} credentials requires a new key and preserves the source`, async ({
+    page,
+  }) => {
+    const { view, saved, detections } = await workspace(page)
+    connectionFixture(view)
+    const document = view.settings.active!.document!
+    let cardName = 'Test GPU'
+    if (legacy) {
+      const pool = document.models.fast.pool[0]
+      delete pool.backend
+      pool.url = 'http://gpu.cluster:8000'
+      pool.health_path = '/health'
+      pool.bearer_token_env = 'SYNTHETIC_GPU_KEY'
+      document.backends = {}
+      document.groups.staff.models = ['fast']
+      cardName = 'gpu.cluster:8000'
+    } else {
+      document.backends!.gpu.api_key = {
+        stored: '00000000-0000-0000-0000-000000000001',
+      }
+    }
+    const before = structuredClone(document)
+    await page.goto('/portal/admin')
+    await page
+      .getByRole('article', { name: cardName, exact: true })
+      .getByRole('button', { name: 'Clone ' + cardName, exact: true })
+      .click()
+    const dialog = page.getByRole('dialog', {
+      name: 'Clone backend',
+      exact: true,
+    })
+    await expect(dialog.getByLabel('Use an API key')).toBeChecked()
+    await expect(dialog.getByLabel('Backend API key')).toHaveValue('')
+    await expect(
+      dialog.getByText('Enter the API key for this copy.', { exact: false }),
+    ).toBeVisible()
+    await expect(
+      dialog.getByRole('button', { name: 'Save backend', exact: true }),
+    ).toBeDisabled()
+    expect(saved).toHaveLength(0)
+    await dialog.getByLabel('Backend API key').fill('synthetic-clone-key')
+    await dialog
+      .getByRole('button', { name: 'Save backend', exact: true })
+      .click()
+    await expect(dialog).toHaveCount(0)
+    expect(saved).toHaveLength(1)
+    const id = Object.keys(saved[0].secrets)[0]
+    expect(saved[0].secrets).toEqual({ [id]: 'synthetic-clone-key' })
+    expect(saved[0].document.backends![id].api_key).toEqual({})
+    expect(saved[0].document.models.fast.pool[0]).toEqual(
+      before.models.fast.pool[0],
+    )
+    expect(saved[0].document.models.fast).toEqual(before.models.fast)
+    const copiedRoute = Object.values(saved[0].document.models).find((model) =>
+      model.pool.some((replica) => replica.backend === id),
+    )!
+    expect(copiedRoute).toMatchObject({
+      protocols: before.models.fast.protocols,
+      timeout_s: before.models.fast.timeout_s,
+      pool: [{ backend: id, bearer_token_env: '' }],
+    })
+    if (!legacy)
+      expect(saved[0].document.backends!.gpu).toEqual(before.backends!.gpu)
+    for (const detection of detections.filter((request) => request.id === id)) {
+      expect((detection.backend as { api_key: unknown }).api_key).toEqual({})
+    }
+  })
+}
+
+test('replica backend names update shared labels without changing IDs or credentials', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 })
+  const { view, saved } = await workspace(page)
+  connectionFixture(view)
+  const document = view.settings.active!.document!
+  document.backends!.gpu.api_key = {
+    stored: '00000000-0000-0000-0000-000000000001',
+  }
+  document.backends!.other = {
+    ...structuredClone(document.backends!.gpu),
+    name: 'Other GPU',
+    url: 'http://gpu2.cluster:8000',
+    api_key: {},
+  }
+  document.models.shared = structuredClone(document.models.fast)
+  document.models.fast.pool.push({
+    ...structuredClone(document.models.fast.pool[0]),
+    backend: 'other',
+  })
+  const before = structuredClone(document)
+  await page.goto('/portal/admin/advanced')
+  const name = page.getByLabel('fast replica 1 backend name', { exact: true })
+  await expect(name).toHaveValue('Test GPU')
+  await name.fill('AIP fast1')
+  expect(
+    await page.evaluate(() => window.document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(360)
+  await expect(
+    page.getByLabel('shared replica 1 backend name', { exact: true }),
+  ).toHaveValue('AIP fast1')
+  const selector = page.getByRole('combobox', {
+    name: 'fast replica 1 backend',
+    exact: true,
+  })
+  await expect(selector).toHaveValue('gpu')
+  await expect(selector.locator('option:checked')).toHaveText(
+    'AIP fast1 — http://gpu.cluster:8000',
+  )
+  await expect(
+    page.getByLabel('fast replica 2 backend name', { exact: true }),
+  ).toHaveValue('Other GPU')
+  await name.fill('')
+  await expect(selector.locator('option:checked')).toHaveText(
+    'gpu — http://gpu.cluster:8000',
+  )
+  await name.fill('AIP fast1')
+  await page
+    .getByRole('button', { name: 'Save routing draft', exact: true })
+    .click()
+  await expect.poll(() => saved.length).toBe(1)
+  expect(saved[0].document.backends!.gpu).toEqual({
+    ...before.backends!.gpu,
+    name: 'AIP fast1',
+  })
+  expect(saved[0].document.backends!.other).toEqual(before.backends!.other)
+  expect(saved[0].document.models).toEqual(before.models)
+  expect(Object.keys(saved[0].document.backends!).sort()).toEqual(
+    Object.keys(before.backends!).sort(),
+  )
+  expect(saved[0].secrets).toEqual({})
 })

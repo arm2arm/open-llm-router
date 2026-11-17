@@ -5,6 +5,11 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Backend cards have a **Clone** action that pre-fills a separate backend for
+  review, with a unique name and the original model, group and preset selections.
+  Key-protected copies require their own API key entry.
+- Advanced routing lets administrators rename a replica's shared backend directly.
+  Selectors display the backend name while retaining stable IDs and credentials.
 - The standard router image includes Bash, curl and CA certificates for pod-local
   diagnostics. It continues to run as UID 65532 with the existing Helm security context.
 - API keys are stored as hashes and shown only at creation. Remove the retired

@@ -4,6 +4,7 @@ import {
   Server,
   Plus,
   Pencil,
+  Copy,
   Trash2,
   Search,
   RefreshCw,
@@ -54,6 +55,23 @@ type Entry = {
   models: string[]
   legacy?: boolean
   deploymentKey?: boolean
+  clone?: boolean
+}
+
+function copyName(entry: Entry, document: RoutingDocument): string {
+  const names = new Set(
+    Object.values(document.backends ?? {}).map((backend) =>
+      backend.name?.toLowerCase(),
+    ),
+  )
+  for (let index = 1; ; index++) {
+    const suffix = index === 1 ? ' (copy)' : ` (copy ${index})`
+    const characters = Array.from(entry.backend.name || entry.id)
+    while (new TextEncoder().encode(characters.join('') + suffix).length > 128)
+      characters.pop()
+    const name = characters.join('') + suffix
+    if (!names.has(name.toLowerCase())) return name
+  }
 }
 
 function entries(document: RoutingDocument): Entry[] {
@@ -343,6 +361,15 @@ export function BackendWorkspace() {
                   {entry.legacy ? 'Manage backend' : 'Edit backend'}
                 </Button>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label={'Clone ' + (entry.backend.name || entry.id)}
+                  disabled={pending || saving}
+                  onClick={() => setEditing({ ...entry, clone: true })}
+                >
+                  <Copy size={14} /> Clone
+                </Button>
+                <Button
                   variant="ghost"
                   size="sm"
                   aria-label={'Remove ' + (entry.backend.name || entry.id)}
@@ -374,7 +401,11 @@ export function BackendWorkspace() {
       )}
       {editing && document && query.data && (
         <BackendEditor
-          key={editing === 'new' ? 'new' : editing.id}
+          key={
+            editing === 'new'
+              ? 'new'
+              : `${editing.clone ? 'clone-' : ''}${editing.id}`
+          }
           entry={editing === 'new' ? undefined : editing}
           document={document}
           version={query.data.settings.version}
@@ -453,9 +484,13 @@ function BackendEditor({
 }: EditorProps) {
   const [expected] = useState(version)
   const [id] = useState(
-    entry?.id ?? 'backend-' + crypto.randomUUID().slice(0, 8),
+    entry && !entry.clone
+      ? entry.id
+      : 'backend-' + crypto.randomUUID().slice(0, 8),
   )
-  const [name, setName] = useState(entry?.backend.name ?? '')
+  const [name, setName] = useState(
+    entry?.clone ? copyName(entry, document) : (entry?.backend.name ?? ''),
+  )
   const [host, setHost] = useState(entry?.backend.url ?? '')
   const [privateNetwork, setPrivateNetwork] = useState(
     entry?.backend.private_network ?? true,
@@ -505,7 +540,7 @@ function BackendEditor({
     /* allow partial input */
   }
   const stored =
-    useKey && entry?.backend.url === origin
+    useKey && !entry?.clone && entry?.backend.url === origin
       ? entry.backend.api_key.stored
       : undefined
   const source = JSON.stringify({
@@ -584,7 +619,12 @@ function BackendEditor({
         id,
         models,
         groups,
-        entry?.legacy ? entry.backend.url : undefined,
+        entry?.legacy && !entry.clone ? entry.backend.url : undefined,
+        entry?.clone
+          ? entry.legacy
+            ? { url: entry.backend.url }
+            : { backend: entry.id }
+          : undefined,
       )
       next.backends![id] = {
         name: name.trim() || new URL(origin).host,
@@ -596,7 +636,7 @@ function BackendEditor({
         groups,
         preset: preset || undefined,
       }
-      if (preset)
+      if (preset && !entry?.clone)
         for (const model of Object.values(next.models))
           model.pool = model.pool.map((replica) =>
             replica.backend === id
@@ -627,7 +667,13 @@ function BackendEditor({
       >
         <DialogContent className="backend-dialog sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>{entry ? 'Edit backend' : 'Add backend'}</DialogTitle>
+            <DialogTitle>
+              {entry?.clone
+                ? 'Clone backend'
+                : entry
+                  ? 'Edit backend'
+                  : 'Add backend'}
+            </DialogTitle>
             <DialogDescription>
               Enter the URL, choose authentication, and select the models to
               use.
@@ -719,12 +765,14 @@ function BackendEditor({
                 />
                 <span className="subtitle">
                   {!encryption
-                    ? 'API key storage is not configured. Contact the server operator.'
+                    ? 'API key storage is not configured. Set OLR_SETTINGS_ENCRYPTION_KEY on the server, then restart OLR.'
                     : stored
                       ? 'Stored securely. Enter a new key to rotate it.'
-                      : entry?.deploymentKey
-                        ? 'Re-enter the deployment key to manage this backend here.'
-                        : 'Leave authentication off for endpoints without a key.'}
+                      : entry?.clone
+                        ? 'Enter the API key for this copy. Saved keys are bound to their original backend.'
+                        : entry?.deploymentKey
+                          ? 'Re-enter the deployment key to manage this backend here.'
+                          : 'Leave authentication off for endpoints without a key.'}
                 </span>
               </label>
             )}
@@ -777,7 +825,10 @@ function BackendEditor({
                 </div>
               </details>
             </fieldset>
-            <details className="backend-advanced">
+            <details
+              className="backend-advanced"
+              open={entry?.clone || undefined}
+            >
               <summary>
                 Advanced settings{' '}
                 <span>

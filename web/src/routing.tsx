@@ -95,6 +95,7 @@ function ReplicaFields({
   model,
   references,
   backends,
+  onRenameBackend,
   onChange,
   onRemove,
 }: {
@@ -103,6 +104,7 @@ function ReplicaFields({
   model: string
   references: string[]
   backends: Record<string, Backend>
+  onRenameBackend: (id: string, name: string) => void
   onChange: (replica: EndpointReplica) => void
   onRemove?: () => void
 }) {
@@ -112,7 +114,9 @@ function ReplicaFields({
       className="grid gap-2 sm:grid-cols-6 items-end rounded-md border p-3"
       aria-label={label}
     >
-      <label className="grid gap-1 text-sm sm:col-span-6">
+      <label
+        className={`grid gap-1 text-sm ${replica.backend ? 'sm:col-span-3' : 'sm:col-span-6'}`}
+      >
         Backend
         <select
           className="select"
@@ -132,11 +136,28 @@ function ReplicaFields({
           <option value="">Enter an origin manually</option>
           {Object.entries(backends).map(([id, backend]) => (
             <option key={id} value={id}>
-              {id} — {backend.url}
+              {backend.name || id} — {backend.url}
             </option>
           ))}
         </select>
       </label>
+      {replica.backend && backends[replica.backend] && (
+        <label className="grid gap-1 text-sm sm:col-span-3">
+          Backend name
+          <Input
+            aria-label={`${label} backend name`}
+            value={backends[replica.backend].name ?? ''}
+            maxLength={128}
+            placeholder="e.g. aip-fast1"
+            onChange={(event) =>
+              onRenameBackend(replica.backend!, event.target.value)
+            }
+          />
+          <span className="subtitle">
+            Shown everywhere this backend is used.
+          </span>
+        </label>
+      )}
       {replica.backend ? (
         <p className="subtitle sm:col-span-2">
           {backends[replica.backend]?.url ?? 'Missing backend'} · uses the
@@ -253,6 +274,7 @@ function ModelEditor({
   model,
   references,
   backends,
+  onRenameBackend,
   blockers,
   onChange,
   onRemove,
@@ -261,6 +283,7 @@ function ModelEditor({
   model: EndpointModel
   references: string[]
   backends: Record<string, Backend>
+  onRenameBackend: (id: string, name: string) => void
   blockers: string[]
   onChange: (model: EndpointModel) => void
   onRemove: () => void
@@ -366,6 +389,7 @@ function ModelEditor({
           model={name}
           references={references}
           backends={backends}
+          onRenameBackend={onRenameBackend}
           onChange={(next) =>
             onChange({
               ...model,
@@ -511,6 +535,15 @@ function DraftEditor({
             model={document.models[name]}
             references={view.credential_references}
             backends={document.backends ?? {}}
+            onRenameBackend={(id, name) =>
+              setDocument((current) => ({
+                ...current,
+                backends: {
+                  ...current.backends,
+                  [id]: { ...current.backends![id], name },
+                },
+              }))
+            }
             blockers={blockers(name)}
             onChange={(model) =>
               setDocument({
