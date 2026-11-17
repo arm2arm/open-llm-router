@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/buildinfo"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
 	"github.com/arm2arm/open-llm-router/internal/usage"
@@ -67,6 +68,10 @@ type Observer struct {
 
 func New(ctx context.Context, options Options, pools *pool.Manager, writer interface{ Counters() usage.Counters }) (*Observer, error) {
 	o := &Observer{Registry: prometheus.NewRegistry(), token: sha256.Sum256([]byte(options.Token)), protected: options.Token != "", tracer: noop.NewTracerProvider().Tracer("olr"), includeUser: options.IncludeUserID}
+	build := prometheus.NewGauge(prometheus.GaugeOpts{Name: "olr_build_info", Help: "Router release identity.",
+		ConstLabels: prometheus.Labels{"version": buildinfo.Version, "commit": buildinfo.Commit, "go_version": buildinfo.GoVersion()}})
+	build.Set(1)
+	o.Registry.MustRegister(build)
 	labels := []string{"model", "replica", "protocol", "status_class"}
 	counter := func(name, help string) *prometheus.CounterVec {
 		c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "olr_" + name, Help: help}, labels)

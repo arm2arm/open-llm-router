@@ -13,6 +13,28 @@ publishes signed GitHub attestations for both provenance and the SPDX document.
 It verifies those signatures and attestations before creating a Gitsign-signed
 annotated tag and a GitHub release containing `image.txt` and `sbom.spdx.json`.
 
+The workflow publishes `linux/amd64` and `linux/arm64` together. `image.txt` records
+the OCI index digest; both verification wrappers accept that immutable digest.
+Build stages run npm and Go on the builder's native platform and cross-compile the
+target binary, so building ARM64 on an AMD64 runner needs no QEMU. CI builds and
+inspects that non-native image, including the ELF architecture, labels and notices.
+Older published versions may contain only AMD64; inspect their manifest before use.
+
+`olr version` prints the release version, commit and Go version without connecting
+to a database. The release build supplies the input tag and source commit, verifies
+the published image's output, and sets matching OCI version/revision/source labels.
+The authenticated metrics endpoint exposes the same identity in `olr_build_info`.
+Local builds identify themselves as `dev` / `unknown` unless build arguments are set.
+
+The router image includes its MIT license at `/licenses/LICENSE`, Go's license,
+original dependency license/NOTICE files, and `/licenses/THIRD_PARTY_NOTICES.txt`
+covering linked Go dependencies and the portal production dependency closure.
+Builds check a permissive SPDX allow-list and fail on unreviewed licenses or missing
+texts. The npm generator has negative license/missing-text tests; Docker builds run
+the Go check and collect original notices. See `web/licenses/README.md` for the one
+version-specific upstream license omitted by an npm tarball. The OCI license label
+describes the router's MIT license; dependency notices retain their own terms.
+
 The trusted certificate identity is the exact release workflow on `refs/heads/main`,
 with issuer `https://token.actions.githubusercontent.com`. Signing uses the runner's
 short-lived OIDC identity. No long-lived signing key is stored. No release is created
