@@ -16,6 +16,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: release
     permissions:
       contents: write
       packages: write
@@ -91,7 +92,6 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$DIGEST"
           for predicate in https://slsa.dev/provenance/v1 https://spdx.dev/Document; do
             gh attestation verify "oci://$IMAGE@$DIGEST" --repo "$REPOSITORY" \
-              --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
               --cert-identity "$IDENTITY" --source-ref refs/heads/main \
               --deny-self-hosted-runners --predicate-type "$predicate"
           done

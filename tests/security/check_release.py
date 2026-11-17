@@ -8,8 +8,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import copy
 
 import yaml
+import repository_controls as controls
 
 ROOT = Path(__file__).resolve().parents[2]
 VERIFIER = ROOT / "deploy/release/verify_images.py"
@@ -24,6 +26,8 @@ class DeploymentVerification(unittest.TestCase):
                 binary = path / executable
                 binary.write_text(
                     "#!/usr/bin/env python3\nimport json, os, sys\n"
+                    "identity_flags = {'--cert-identity', '--cert-identity-regex', '--signer-repo', '--signer-workflow'}\n"
+                    "if sys.argv[0].endswith('/gh') and len(identity_flags.intersection(sys.argv)) > 1: sys.exit(2)\n"
                     "with open(os.environ['CALLS'], 'a') as output:\n"
                     "    output.write(json.dumps(sys.argv) + '\\n')\n"
                     "sys.exit(1 if os.environ.get('FAIL') in (sys.argv[0].rsplit('/', 1)[-1], 'all') else 0)\n"
@@ -63,7 +67,7 @@ class DeploymentVerification(unittest.TestCase):
         self.assertEqual(Path(commands[0][0]).name, "cosign")
         for command in commands[1:]:
             self.assertIn("--cert-identity", command)
-            self.assertIn("--signer-workflow", command)
+            self.assertNotIn("--signer-workflow", command)
             self.assertIn("--deny-self-hosted-runners", command)
             self.assertIn("refs/heads/main", command)
         self.assertEqual({command[-1] for command in commands[1:]},
@@ -114,6 +118,27 @@ class DeploymentVerification(unittest.TestCase):
 
 
 class WorkflowPolicy(unittest.TestCase):
+    def test_current_gh_accepts_exact_attestation_identity_flags(self):
+        self.assertIsNotNone(shutil.which("gh"), "release verification requires GitHub CLI")
+        trust = json.loads((ROOT / "deploy/release/image-policy.json").read_text())["images"]["ghcr.io/arm2arm/open-llm-router"]
+        with tempfile.TemporaryDirectory() as directory:
+            absent = str(Path(directory) / "absent-artifact")
+            result = subprocess.run([
+                "gh", "attestation", "verify", absent, "--repo", trust["repository"],
+                "--cert-identity", trust["certificate_identity"],
+                "--cert-oidc-issuer", trust["certificate_oidc_issuer"],
+                "--source-ref", "refs/heads/main", "--deny-self-hosted-runners",
+            ], text=True, capture_output=True, timeout=45)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("failed to open local artifact", result.stderr)
+        self.assertNotIn("none of the others", result.stderr)
+
+    def test_release_uses_same_exact_identity_selector(self):
+        source = (ROOT / ".github/workflows/release.yml").read_text()
+        self.assertIn('--cert-identity "$IDENTITY"', source)
+        self.assertNotIn("--signer-workflow", source)
+        self.assertNotIn("--signer-repo", source)
+
     def test_actions_are_commit_pinned(self):
         for path in (ROOT / ".github/workflows").glob("*.yml"):
             document = yaml.safe_load(path.read_text())
@@ -121,6 +146,38 @@ class WorkflowPolicy(unittest.TestCase):
                 for step in job.get("steps", []):
                     if "uses" in step:
                         self.assertRegex(step["uses"], r"^[\w./-]+@[a-f0-9]{40}$", str(path))
+
+
+class RepositoryControls(unittest.TestCase):
+    def test_stubbed_branch_response_rejects_all_pr_bypass_types(self):
+        expected = json.loads((ROOT / ".github/main-protection.json").read_text())
+        actual = copy.deepcopy(expected)
+        for key in ("enforce_admins", "required_conversation_resolution", "allow_force_pushes", "allow_deletions"):
+            actual[key] = {"enabled": actual[key]}
+        controls.verify_branch(actual, expected)
+        for category in ("users", "teams", "apps"):
+            changed = copy.deepcopy(actual)
+            changed["required_pull_request_reviews"]["bypass_pull_request_allowances"] = {category: [{"id": 123}]}
+            with self.subTest(category=category), self.assertRaisesRegex(AssertionError, "bypass"):
+                controls.verify_branch(changed, expected)
+
+    def test_tag_mutations_and_optional_independent_approval(self):
+        expected = json.loads((ROOT / ".github/release-tags.json").read_text())
+        controls.verify_tags(expected, expected)
+        for change in ({"enforcement": "disabled"}, {"bypass_actors": [{"actor_id": 1}]},
+                       {"rules": [{"type": "update"}]},
+                       {"conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": ["refs/tags/v1*"]}}}):
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                controls.verify_tags({**expected, **change}, expected)
+        controls.verify_approval(None, {"independent_approval": False})
+        with self.assertRaises(AssertionError):
+            controls.verify_approval(None, {"independent_approval": True})
+        environment = {"protection_rules": [{"type": "required_reviewers", "prevent_self_review": True,
+                                              "reviewers": [{"reviewer": {"id": 123}}]}]}
+        controls.verify_approval(environment, {"independent_approval": True})
+        environment["protection_rules"][0]["prevent_self_review"] = False
+        with self.assertRaises(AssertionError):
+            controls.verify_approval(environment, {"independent_approval": True})
 
 
 if __name__ == "__main__":

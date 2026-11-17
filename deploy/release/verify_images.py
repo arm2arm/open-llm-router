@@ -48,7 +48,6 @@ def verify(manifest, policy):
             commands.append([
                 "gh", "attestation", "verify", "oci://" + image,
                 "--repo", trust["repository"],
-                "--signer-workflow", trust["signer_workflow"],
                 "--cert-identity", identity, "--cert-oidc-issuer", issuer,
                 "--source-ref", "refs/heads/main", "--deny-self-hosted-runners",
                 "--predicate-type", predicate,
