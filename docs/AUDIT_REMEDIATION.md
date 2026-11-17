@@ -11,11 +11,11 @@ and P3; dependencies may change that order.
 
 | Package | Source findings | Progress in this pass |
 | --- | --- | --- |
-| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
+| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | Completed in PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
-| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
+| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Completed: strict request bounds in PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Completed in PR #309 |
 | #173 Request history | #173, #174, #229, #258 | Completed in PR #310 |
 | #185 Accessibility | #185, #230, #250, #264 | Completed in PR #311 |
@@ -25,7 +25,7 @@ and P3; dependencies may change that order.
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Completed in PR #315 |
 | #237 Startup diagnostics | #237, #238, #241 | Completed in PR #316 |
 | #223 Regression coverage | #222, #223, #243, #246 | Completed in PR #317 |
-| #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Implemented; documentation/Helm/backup checks pass; CI pending |
+| #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Completed in PR #318 |
 
 ## Authentication evidence
 
