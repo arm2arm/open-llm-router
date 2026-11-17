@@ -47,7 +47,7 @@ const RequestHistoryQuery = `SELECT a.ts, a.model, a.protocol, a.status, a.input
 // requests lists the newest per-request records attributed to the user:
 // metadata only, as stored.
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request, u user) {
-	rows, err := h.pool.Query(r.Context(), RequestHistoryQuery, u.ID, requestLimit)
+	rows, err := h.pool.Query(r.Context(), RequestHistoryQuery, u.ID, requestLimit+1)
 	if err != nil {
 		unavailable(w)
 		return
@@ -70,7 +70,11 @@ func (h *Handler) requests(w http.ResponseWriter, r *http.Request, u user) {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"requests": list, "limit": requestLimit})
+	hasMore := len(list) > requestLimit
+	if hasMore {
+		list = list[:requestLimit]
+	}
+	respond(w, 200, map[string]any{"requests": list, "limit": requestLimit, "has_more": hasMore})
 }
 
 type dailyTotal struct {

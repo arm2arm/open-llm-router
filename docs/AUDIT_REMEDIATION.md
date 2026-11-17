@@ -404,3 +404,10 @@ and P3; dependencies may change that order.
   progress. A real 12-second migration commits through the shared startup path;
   a stalled PostgreSQL handshake still fails within the connection budget.
   Installation and upgrade guidance state the budgets and pre-upgrade job advice.
+
+- **#229:** History and user search report `limit` and `has_more` using one
+  extra bounded row. The UI identifies the 200-request window and incomplete
+  boundary runs, including after filtering, and labels their first shown call
+  instead of claiming a complete start. User lists show the 500-result cap;
+  policy previews search by name/email and retain the selected user across
+  searches. PostgreSQL and browser regressions cover both window boundaries.

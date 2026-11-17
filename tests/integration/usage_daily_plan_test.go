@@ -69,17 +69,26 @@ func TestAdminUsageSummaryAndDeletionUseUserIndex(t *testing.T) {
 	}
 	resp, body := root.call(t, "GET", "/portal/api/admin/users?match=plan-user", "", "")
 	var out struct {
-		Users []struct {
+		Limit   int  `json:"limit"`
+		HasMore bool `json:"has_more"`
+		Users   []struct {
 			TokensMonth int64 `json:"tokens_this_month"`
 		}
 	}
 	if resp.StatusCode != 200 || json.Unmarshal(body, &out) != nil || len(out.Users) != 500 {
 		t.Fatal("summary lookup failed", resp.StatusCode, len(out.Users))
 	}
+	if out.Limit != 500 || !out.HasMore {
+		t.Fatal("user cap not reported", out.Limit, out.HasMore)
+	}
 	for _, u := range out.Users {
 		if u.TokensMonth != 900 {
 			t.Fatal("incorrect monthly usage", u.TokensMonth)
 		}
+	}
+	resp, body = root.call(t, "GET", "/portal/api/admin/users?match=plan-user-999", "", "")
+	if resp.StatusCode != 200 || json.Unmarshal(body, &out) != nil || len(out.Users) != 1 || out.HasMore {
+		t.Fatal("user beyond cap cannot be found", resp.StatusCode)
 	}
 	if err := (auth.Admin{Pool: f.pool}).DeleteUser(t.Context(), target); err != nil {
 		t.Fatal(err)

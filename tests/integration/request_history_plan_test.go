@@ -106,3 +106,25 @@ func TestRequestHistoryPlanBoundsLightUsersAndForwarders(t *testing.T) {
 		t.Fatal("history attribution/order changed", models)
 	}
 }
+
+func TestRequestHistoryReportsTruncatedWindow(t *testing.T) {
+	f := startPortal(t)
+	browser := f.browser(t)
+	id := browser.login(t, "history-cap", []string{"staff"})
+	execSQL(t, f.pool, `INSERT INTO usage(ts,user_id,model,replica,protocol,status,latency_ms)
+ SELECT now()-s*interval '1 second',$1,'test','replica','openai','200',1 FROM generate_series(1,201) s`, id)
+	resp, body := browser.call(t, "GET", "/portal/api/requests", "", "")
+	var out struct {
+		Requests []json.RawMessage
+		Limit    int
+		HasMore  bool `json:"has_more"`
+	}
+	if resp.StatusCode != 200 || json.Unmarshal(body, &out) != nil || len(out.Requests) != 200 || out.Limit != 200 || !out.HasMore {
+		t.Fatal("history cap not reported", resp.StatusCode, len(out.Requests), out.HasMore)
+	}
+	execSQL(t, f.pool, `DELETE FROM usage WHERE user_id=$1 AND ts=(SELECT min(ts) FROM usage WHERE user_id=$1)`, id)
+	resp, body = browser.call(t, "GET", "/portal/api/requests", "", "")
+	if resp.StatusCode != 200 || json.Unmarshal(body, &out) != nil || len(out.Requests) != 200 || out.HasMore {
+		t.Fatal("exactly full history falsely marked incomplete", resp.StatusCode, len(out.Requests), out.HasMore)
+	}
+}

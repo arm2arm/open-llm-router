@@ -68,7 +68,7 @@ const AdminUsersQuery = `SELECT u.id, u.issuer, u.username, u.email, u.groups, u
 		COALESCE((SELECT must_change_password FROM local_credentials c WHERE c.user_id=u.id),false)
 		FROM users u
 		WHERE $1 = '' OR strpos(lower(u.username), lower($1)) > 0 OR strpos(lower(u.email), lower($1)) > 0
-		ORDER BY u.username, u.issuer, u.id LIMIT 500`
+		ORDER BY u.username, u.issuer, u.id LIMIT 501`
 
 func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 	match := strings.TrimSpace(r.URL.Query().Get("match"))
@@ -99,7 +99,11 @@ func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"users": users, "override_fields": policy.OverrideFields})
+	hasMore := len(users) > 500
+	if hasMore {
+		users = users[:500]
+	}
+	respond(w, 200, map[string]any{"users": users, "override_fields": policy.OverrideFields, "limit": 500, "has_more": hasMore})
 }
 
 // adminUser returns one user's effective limits, overrides with their audit
