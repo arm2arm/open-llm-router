@@ -57,6 +57,23 @@ func TestTraceRedactsStructuredCredentialsAndValidArguments(t *testing.T) {
 	}
 }
 
+func TestNumericCredentialUsageCannotBreakTraceReads(t *testing.T) {
+	c := &Capture{operation: "chat/completions", jsonResponse: true}
+	c.Write([]byte(`{"usage":{"password":123456,"nested":{"api_key":456789},"completion_tokens":4},"choices":[]}`))
+	r, _ := newRedactor(nil)
+	raw, err := r.marshal(c.decode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail Detail
+	if err := decodeJSON(raw, &detail); err != nil {
+		t.Fatal("sanitized numeric usage must remain readable", err)
+	}
+	if len(detail.Result.Usage) != 1 || detail.Result.Usage["completion_tokens"] != 4 {
+		t.Fatal("credential fields entered numeric statistics", detail.Result.Usage)
+	}
+}
+
 func TestSplitStreamSecretsCannotEscapeThroughFramesOrEvents(t *testing.T) {
 	for _, protocol := range []string{"openai", "anthropic", "responses"} {
 		t.Run(protocol, func(t *testing.T) {

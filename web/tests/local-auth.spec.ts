@@ -352,7 +352,8 @@ test('personal traces, reasoning, tools, retention, opt-out and erasure', async 
   await expect(dialog.locator('.trace-segments')).toContainText('tool call')
   await dialog.getByRole('button', { name: 'All events', exact: true }).click()
   await dialog.getByLabel('Filter stream events').selectOption('tool_call')
-  await expect(dialog.locator('.trace-timeline')).toContainText('weather')
+  await expect(dialog.locator('.trace-timeline')).toContainText('tool call')
+  await expect(dialog.locator('.trace-timeline')).not.toContainText('weather')
   await dialog.getByRole('tab', { name: /^Raw/ }).click()
   await expect(
     dialog.getByText('Request body as received (sanitized)'),

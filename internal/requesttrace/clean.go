@@ -148,6 +148,9 @@ func numbers(v any, prefix string, out map[string]float64) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
+			if credentialField(k) {
+				continue
+			}
 			name := k
 			if prefix != "" {
 				name = prefix + "." + k
