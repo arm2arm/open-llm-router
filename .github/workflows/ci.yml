@@ -203,6 +203,8 @@ jobs:
         with:
           version: v4.3.1
       - name: Test fail-closed image signature and attestation deployment gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m venv /tmp/olr-release
           /tmp/olr-release/bin/pip install PyYAML==6.0.3
