@@ -12,7 +12,9 @@ function walk(node, visit) {
 }
 
 function headingText(node) {
-  if (node.type === 'html') return node.value.replace(/<[^>]*>/g, '')
+  // Inline HTML tags are separate AST nodes; their adjacent text is already
+  // represented by text nodes. This derives a slug, never sanitizes HTML.
+  if (node.type === 'html') return ''
   return (
     node.value ?? node.alt ?? (node.children ?? []).map(headingText).join('')
   )

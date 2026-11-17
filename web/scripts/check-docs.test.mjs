@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 test('GitHub slugs include duplicates, Unicode, code and Setext headings', () => {
   const parsed = document(
-    '# Hello, `world`!\n## Hello, world!\n## Über die API\nSetext\n---\n',
+    '# Hello, `world`!\n## Hello, world!\n## Über die API\nSetext\n---\n# Inline <em>HTML</em>\n',
   )
   assert.deepEqual(
     [...parsed.anchors],
