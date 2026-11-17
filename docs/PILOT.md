@@ -117,7 +117,11 @@ results in the private pilot record. Publish only a redacted summary in #21.
    unauthenticated scrape is refused. Alert on readiness loss, sustained errors and any
    increase in `olr_usage_dropped_total` or `olr_usage_write_failures_total`. Confirm backups,
    retention runs, self-service activity deletion and operator account erasure with a
-   disposable account. Publish the completed privacy notice before inviting users.
+   disposable account. Before erasure, rehearse `olr admin user export -id UUID
+   -output NEW_PRIVATE_FILE`, checking direct and forwarded request attribution and
+   private file handling. Rehearse `olr admin user list -disabled -older-than 2160h`
+   and review the site's departed-account schedule. Publish the completed privacy
+   notice, including group-bearing spans and authorized agent recipients, before inviting users.
 
 ## Two-week observation and closure
 

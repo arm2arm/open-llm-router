@@ -15,7 +15,7 @@ When you use the LLM router at `<https://router.example.org>`, it stores:
 
 | Data | Content | Kept for | How you delete it |
 |---|---|---|---|
-| Account | identity-provider issuer and subject, username, email, group memberships, enabled flag, last identity update | while you have access | ask `<contact>`; the operator deletes the account and its owned records; administration history remains as described below |
+| Account | identity-provider issuer and subject, username, email, group memberships, enabled flag, last identity update and when access was disabled | until operator erasure, including after access is disabled or employment/membership ends; there is no automatic disabled-account expiry | ask `<contact>`; the operator deletes the account and its owned records; administration history remains as described below |
 | API keys | label, first 12 characters, a one-way hash, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
 | Known local devices | one-way hash of a random `olr_device` cookie, account ID, creation and expiry; no IP address or browser fingerprint | 30 days after successful local sign-in; expired rows removed by daily retention | clear the cookie in your browser; account erasure removes registrations |
 | Sessions | a hash of the session cookie, creation and expiry | 8 hours, or until you sign out | sign out |
@@ -57,7 +57,8 @@ and month stay in effect.
   for `<14>` days, which is not longer than the per-request records.
 - **Metrics.** Aggregated counts and timings per model and replica. They contain no user or key.
 - **OpenTelemetry spans** (if enabled, separate from personal content traces). One span per call with model, replica, token counts and timing, sent
-  to `<tracing backend>`. Spans carry no user identifier unless the site enables it
+  to `<tracing backend>`. Spans include group names in `olr.groups`, which may identify
+  a team, department or membership even when user IDs are disabled. Spans carry no user identifier unless the site enables it
   (`OLR_TRACE_USER_ID`, `<enabled/disabled>` here). Spans already exported are kept there for
   `<…>` days and are not removed by deleting your records.
 - **Identity provider.** Signing in goes through `<Keycloak realm / institution>`; its own notice
@@ -73,6 +74,13 @@ or erasure of your account, contact `<contact>`. Requests are answered within on
 
 `<Legal basis, e.g. performance of a service for members of the organization>`. Data is
 processed on `<hosting location>` and is not shared with third parties `<or: list recipients>`.
+Authorized administrators can inspect account identity, groups, limits and usage/key
+metadata. If the site enables agent administration and grants `users:read`, the
+authorized agent client and its operator are recipients of usernames, email
+addresses, memberships, limits and key metadata; include those recipients in the
+site's notice and access review. This does not grant access to personal content
+traces through the administration API. Database/backup operators and authorized
+data-export operators can access stored content.
 
 ---
 
@@ -89,6 +97,23 @@ processed on `<hosting location>` and is not shared with third parties `<or: lis
   `olr admin user delete -id <uuid>` deletes the account, keys, sessions, per-request records
   (including calls forwarded for that user) and daily totals in one transaction. See
   [RUNBOOK.md](RUNBOOK.md#erase-a-user-on-request).
+- Data access on request: `olr admin user export -id <uuid> -output NEW_PRIVATE_FILE`
+  writes a private JSON snapshot of account data, credential metadata without
+  hashes/secrets, overrides, sessions/device timestamps, attributed requests,
+  daily totals, sanitized personal traces and relevant administration events.
+  Forwarded calls belong to their end user, not the forwarder owner's export.
+  The file is sensitive: transfer it through an approved channel and delete the
+  working copy afterward. Requests already expired or deleted are absent.
+- Disabling access or removing an identity at the IdP does not erase the router
+  account. Set a site policy of `<number>` days after disabling, and schedule an
+  operator review with `olr admin user list -disabled -older-than 2160h` (90 days).
+  Review candidates and erase individually; re-enabling resets this age. Existing
+  disabled accounts begin their age at migration 0028 because older disable times
+  were not recorded. Document any lawful reason for longer retention.
+- Include audit history, coarse source networks, group-bearing exported spans,
+  agent-client recipients, exports, archives and backup expiry in the site's
+  privacy assessment and retention procedure. Live account erasure preserves the
+  historical attribution described above and cannot retract already exported data.
 - Keep log retention at or below the per-request retention. Exported traces must be erased in
   the tracing backend separately.
 - Who answers erasure requests and the retention periods are decisions for the site

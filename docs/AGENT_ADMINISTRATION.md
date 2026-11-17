@@ -82,7 +82,7 @@ its own egress address the source unless deployed as an explicitly trusted proxy
 | `service:read` | Replica health and capacity |
 | `usage:read` | Group usage totals |
 | `audit:read` | Paginated administration history |
-| `users:read` | User, limit and group inspection |
+| `users:read` | User, limit and group inspection, including usernames, email addresses, memberships and key metadata; grant only to approved data recipients |
 | `users:write` | User enablement, memberships, quota overrides, local creation |
 | `users:credentials` | Ordinary-user password resets and inference-key revocation; administrator resets also require `admin_keys:delegate` |
 | `routing:read`, `routing:write` | Models, aliases, endpoints and group policies |

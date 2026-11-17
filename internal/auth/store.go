@@ -272,23 +272,35 @@ func (a Admin) DeleteUser(ctx context.Context, userID string) (err error) {
 
 // UserInfo is what operators need to find a user; it holds no credentials.
 type UserInfo struct {
-	ID             string    `json:"id"`
-	Issuer         string    `json:"issuer"`
-	Subject        string    `json:"sub"`
-	Username       string    `json:"username"`
-	Email          string    `json:"email"`
-	Groups         []string  `json:"groups"`
-	Enabled        bool      `json:"enabled"`
-	SyncedAt       time.Time `json:"synced_at"`
-	ProtectedAdmin bool      `json:"protected_admin"`
+	ID             string     `json:"id"`
+	Issuer         string     `json:"issuer"`
+	Subject        string     `json:"sub"`
+	Username       string     `json:"username"`
+	Email          string     `json:"email"`
+	Groups         []string   `json:"groups"`
+	Enabled        bool       `json:"enabled"`
+	SyncedAt       time.Time  `json:"synced_at"`
+	ProtectedAdmin bool       `json:"protected_admin"`
+	DisabledAt     *time.Time `json:"disabled_at"`
 }
 
 // ListUsers returns users whose username or email contains match, ignoring
 // case; an empty match lists everyone.
 func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin FROM users
-		WHERE $1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0
-		ORDER BY username, issuer, sub`, match)
+	return a.ListUsersFiltered(ctx, UserFilter{Match: match})
+}
+
+type UserFilter struct {
+	Match          string
+	Disabled       bool
+	DisabledBefore *time.Time
+}
+
+func (a Admin) ListUsersFiltered(ctx context.Context, filter UserFilter) ([]UserInfo, error) {
+	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin, disabled_at FROM users
+		WHERE ($1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0)
+		AND (NOT $2 OR NOT enabled) AND ($3::timestamptz IS NULL OR (NOT enabled AND disabled_at<$3))
+		ORDER BY username, issuer, sub`, filter.Match, filter.Disabled, filter.DisabledBefore)
 	if err != nil {
 		return nil, errors.New("list users failed")
 	}
@@ -296,7 +308,7 @@ func (a Admin) ListUsers(ctx context.Context, match string) ([]UserInfo, error) 
 	users := []UserInfo{}
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin); err != nil {
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin, &u.DisabledAt); err != nil {
 			return nil, errors.New("read user failed")
 		}
 		users = append(users, u)
