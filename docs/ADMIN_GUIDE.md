@@ -332,6 +332,12 @@ connection.
 | **Roll back** (history) | Re-activates a previously active revision without new checks, even while that provider is down; SSO then reports unavailable and retries every 10 seconds |
 | **Apply active revision to this router** | Shown when this router runs something else, for example after `olr admin settings activate` or a rollback on another router |
 
+Settings documents may contain up to 256 KiB of encoded JSON, including
+formatting. Import and draft submission enforce this same limit; the CLI accepts
+that full size. Routing HTTP requests allow a 512 KiB envelope for the document
+and metadata. OIDC `sync_interval_s` must be between 60 and 86400 seconds in
+both deployment files and managed authentication settings.
+
 Once routing revisions manage groups, file group policies are ignored. The
 conflict list names each differing `groups.<name>` entry. A CLI draft that omits
 `groups` keeps the active revision's policies, even before this process applies

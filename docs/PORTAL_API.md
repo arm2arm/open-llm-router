@@ -641,3 +641,7 @@ admin sessions and the existing same-origin JSON protections:
   (RFC3339 expiration). Only reduces authority and invalidates descendants.
 - `DELETE /portal/api/admin/agent-keys/{id}`: revokes an owned key and disables its
   descendants. Browser revocation remains available when agent access is disabled.
+
+Managed settings documents are limited to 256 KiB of encoded JSON. Routing draft
+requests allow a 512 KiB envelope for the document, secrets and revision metadata.
+Import and the operator CLI enforce the same document limit.

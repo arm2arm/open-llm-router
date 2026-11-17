@@ -54,6 +54,12 @@ func (e *ValidationError) Error() string {
 	return "settings are not valid:\n  " + strings.Join(e.Problems, "\n  ")
 }
 
+// MaxDocumentBytes is the shared encoded JSON limit for imported and submitted
+// settings documents. HTTP envelopes have a separate allowance for metadata.
+const MaxDocumentBytes = 256 << 10
+
+var ErrDocumentSize = &ValidationError{[]string{"document: must not exceed 256 KiB"}}
+
 // Service changes and reports one domain's managed settings. File is this
 // process's file/environment configuration, the reference for sources and
 // conflicts.
@@ -484,6 +490,9 @@ func (s *Service[D, P]) insertRevision(ctx context.Context, tx pgx.Tx, origin st
 	if err != nil {
 		return 0, ErrStorage
 	}
+	if len(document) > MaxDocumentBytes {
+		return 0, ErrDocumentSize
+	}
 	validation, err := json.Marshal(result)
 	if err != nil {
 		return 0, ErrStorage
@@ -570,6 +579,9 @@ func recordActivation(ctx context.Context, tx pgx.Tx, domain string, id int64, k
 // problems (unresolvable secrets, destinations, conflicts) are recorded on
 // the draft and block only its activation.
 func (s *Service[D, P]) SaveDraft(ctx context.Context, domain string, expected int64, document []byte, secrets map[string][]byte, actor audit.Actor) (View[D], error) {
+	if len(document) > MaxDocumentBytes {
+		return View[D]{}, ErrDocumentSize
+	}
 	err := s.change(ctx, domain, audit.Event{Action: "settings.draft_save", Actor: actor}, func(tx pgx.Tx, event *audit.Event) error {
 		doc, err := decodeDocument[D, P](document)
 		if err != nil {

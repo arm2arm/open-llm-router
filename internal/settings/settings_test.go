@@ -3,6 +3,7 @@ package settings
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -248,5 +249,21 @@ func TestRoutingGroupConflictsAreCompleteAndLegacyAware(t *testing.T) {
 	doc.Groups = nil
 	if conflicts := doc.conflicts(file, nil, true); len(conflicts) != 0 {
 		t.Fatal("legacy groups incorrectly conflict", conflicts)
+	}
+}
+
+func TestAcceptedFileSyncIntervalsImportWithoutValidationProblems(t *testing.T) {
+	for _, n := range []int{60, 900, 86400} {
+		file := parse(t, fmt.Sprintf("oidc:\n  portal_client_id: olr-portal\n  sync_interval_s: %d\n", n), map[string]string{"OIDC_ISSUER": "http://keycloak.example/realms/dev"})
+		doc := authenticationFromFile(file)
+		if problems := doc.problems(); len(problems) != 0 {
+			t.Fatalf("accepted interval %d cannot import: %v", n, problems)
+		}
+	}
+	for _, n := range []int64{59, 86401, 10000000000} {
+		_, err := config.Parse(fmt.Appendf(nil, "oidc:\n  issuer: http://keycloak.example/realms/dev\n  portal_client_id: olr-portal\n  sync_interval_s: %d\nmodels: {}\n", n), func(string) (string, bool) { return "", false })
+		if err == nil || !strings.Contains(err.Error(), "oidc.sync_interval_s: must be between 60 and 86400") {
+			t.Fatalf("bad interval %d accepted: %v", n, err)
+		}
 	}
 }

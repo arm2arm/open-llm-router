@@ -131,6 +131,18 @@ func TestRoutingRecoveryWithUnresolvableReplica(t *testing.T) {
 		t.Fatal("CLI did not restore requested revision")
 	}
 	portalCall("/apply", map[string]any{}, 200)
+	// The actual CLI accepts a formatted routing document above the old 64 KiB cap.
+	largeFile := filepath.Join(dir, "large-routing.json")
+	validJSON, _ := json.Marshal(current().Active.Document)
+	validJSON = append(validJSON, []byte(strings.Repeat(" ", 80<<10))...)
+	if e := os.WriteFile(largeFile, validJSON, 0600); e != nil {
+		t.Fatal(e)
+	}
+	draftCmd := exec.CommandContext(t.Context(), binary, "admin", "settings", "draft", "-domain", "routing", "-config", configFile, "-expect-version", fmt.Sprint(current().Version), "-document", largeFile)
+	draftCmd.Env = append(os.Environ(), "OLR_DATABASE_URL="+f.pool.Config().ConnString())
+	if out, e := draftCmd.CombinedOutput(); e != nil {
+		t.Fatalf("CLI large document: %v %s", e, out)
+	}
 	// A formerly file-trusted origin becomes forbidden after the operator removes
 	// that trust. Recovery must retain destination enforcement on every path.
 	strictVerify := service.Verify

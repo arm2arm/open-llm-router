@@ -344,3 +344,10 @@ and P3; dependencies may change that order.
   conflicts include changed, file-only and managed-only names; legacy omissions
   do not create policy conflicts. The PostgreSQL regression deliberately leaves
   `Current` pinned to the file and verifies the draft keeps the active override.
+
+- **#211:** The CLI, import and draft paths share a 256 KiB document limit and
+  refusal message; routing HTTP envelopes allow 512 KiB. A real CLI submission
+  above the old 64 KiB cap succeeds. PostgreSQL tests import and draft a valid
+  large document and reject an oversized import/draft consistently. File and
+  managed OIDC sync intervals both require 60..86400 seconds; accepted boundary
+  files produce authentication documents without validation problems.

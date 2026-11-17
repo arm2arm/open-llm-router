@@ -104,7 +104,7 @@ func (h *Handler) saveRoutingDraft(w http.ResponseWriter, r *http.Request, u use
 		Document json.RawMessage   `json:"document"`
 		Secrets  map[string]string `json:"secrets"`
 	}
-	if !h.jsonBodyLimit(w, r, &body, 256<<10) {
+	if !h.jsonBodyLimit(w, r, &body, 2*settings.MaxDocumentBytes) {
 		return
 	}
 	if body.Version <= 0 || len(body.Document) == 0 {

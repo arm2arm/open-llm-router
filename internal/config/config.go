@@ -640,8 +640,8 @@ func (c *Config) validate() Problems {
 		if c.OIDC.SyncMaxDisable < 0 || c.OIDC.SyncMaxDisable > 10000 {
 			add("oidc.sync_max_disable: must be between 1 and 10000")
 		}
-		if c.OIDC.SyncIntervalS < 60 {
-			add("oidc.sync_interval_s: must be at least 60")
+		if c.OIDC.SyncIntervalS < 60 || c.OIDC.SyncIntervalS > 86400 {
+			add("oidc.sync_interval_s: must be between 60 and 86400")
 		}
 		if c.OIDC.BackchannelURL != "" && !isIssuerURL(c.OIDC.BackchannelURL) {
 			add("OIDC_BACKCHANNEL_URL: must be an http or https URL without credentials, query or fragment")
