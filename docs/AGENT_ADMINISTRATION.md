@@ -250,9 +250,17 @@ https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference
 Schema migration 0016 adds independent credential, preview and administration-state
 tables and invalidation triggers. Existing inference credentials remain unchanged.
 Database changes retain their transactional audit events. Agent events include
-owner, key ID, source IP, request/transport/change IDs. Secrets and request bodies
-are excluded from persisted audit events and preview arguments; secret fields in
-preview summaries are redacted. Authentication documents are conservatively hidden.
+owner, key ID, source IP, request/transport/change IDs. Preview responses contain
+the authorized caller's current before/after view, but persisted preview summaries
+keep only operation descriptions and parameter/field names, never those values,
+identity data, key labels or free-text reasons. Status lookup returns that minimal
+summary. Unused previews expire after ten minutes; completed/interrupted changes
+are kept for one day for status/idempotency lookup. Startup/daily retention deletes
+expired rows in batches, with up to one day of cleanup lag. Existing preview
+snapshots are minimized on upgrade. Account erasure removes owned administration
+keys, delegated descendants and their previews while preserving audit events.
+Secrets and request bodies are excluded from persisted audit events and preview
+summaries. Authentication documents are conservatively hidden in immediate previews.
 
 Limits are separate from inference quotas. Failed authentication has its own
 120/minute per-client and 600/minute global budgets. Client addresses are resolved

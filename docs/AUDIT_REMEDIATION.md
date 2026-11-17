@@ -13,8 +13,8 @@ and P3; dependencies may change that order.
 | --- | --- | --- |
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
-| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Sanitization: PR #296; bounds: PR #297; consent/API examples: PR #298; terminal usage fidelity in this change |
-| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
+| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
+| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle and administration-key owner erasure (#169/#170) in this change; remaining findings pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
@@ -167,3 +167,22 @@ and P3; dependencies may change that order.
   The portal integration verifies exact values survive PostgreSQL. Browser parsing
   retains unsafe integers as bigints; tree rendering, clipboard and downloads
   preserve numeric JSON tokens. Playwright verifies parameters and all exports.
+
+## Preview lifecycle and credential erasure evidence
+
+- **#169:** Persisted previews retain static operation descriptions and validated
+  parameter/field names, without before/after values. Authorized callers still
+  receive useful immediate previews. Migration 0025 removes historical snapshots.
+  Startup/daily retention deletes expired unused previews and completed/interrupted
+  changes older than one day in bounded batches, using partial expiry indexes.
+  Privacy and agent guides document content and cleanup lag. A PostgreSQL regression
+  prepares a user-override preview containing names, email, a key label and old/new
+  reasons, verifies none are stored before or after target-user erasure, and checks
+  pruning while fresh previews/results survive. An upgrade test removes old PII.
+- **#170:** Migration 0024 makes administration credentials cascade with their owner,
+  delegated descendants with their parent, and previews with their credential.
+  The actual CLI erases an owner with active, revoked, expired, child and grandchild
+  credentials and previews, preserves another owner's credential/preview, and
+  retains all `admin_key.*` and `agent.*` audit events. Audit tables remain guarded
+  and append-only; target-user preview privacy is handled by minimization rather
+  than claiming those target references cascade.

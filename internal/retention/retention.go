@@ -24,6 +24,7 @@ type Result struct {
 	Usage        int64 `json:"usage"`
 	UsageDaily   int64 `json:"usage_daily"`
 	LocalDevices int64 `json:"local_auth_devices"`
+	AdminChanges int64 `json:"admin_changes"`
 }
 
 // Cutoffs returns the oldest per-request time and the oldest day kept.
@@ -46,6 +47,7 @@ func Prune(ctx context.Context, pool *pgxpool.Pool, cfg config.Retention, locati
 		{`DELETE FROM usage WHERE ctid IN (SELECT ctid FROM usage WHERE ts < $1 LIMIT $2)`, usageBefore, &result.Usage},
 		{`DELETE FROM usage_daily WHERE ctid IN (SELECT ctid FROM usage_daily WHERE day < $1::date LIMIT $2)`, dayBefore.Format("2006-01-02"), &result.UsageDaily},
 		{`DELETE FROM local_auth_devices WHERE ctid IN (SELECT ctid FROM local_auth_devices WHERE expires <= $1 LIMIT $2)`, now, &result.LocalDevices},
+		{`DELETE FROM admin_changes WHERE ctid IN (SELECT ctid FROM admin_changes WHERE (status='previewed' AND expires<=$1) OR (status<>'previewed' AND COALESCE(completed,created)<=$1::timestamptz-interval '1 day') LIMIT $2)`, now, &result.AdminChanges},
 	} {
 		for {
 			var deleted int64
@@ -65,7 +67,7 @@ func Prune(ctx context.Context, pool *pgxpool.Pool, cfg config.Retention, locati
 				return result, nil // another router is pruning
 			}
 			if err != nil {
-				return result, errors.New("delete expired usage records failed")
+				return result, errors.New("delete expired application records failed")
 			}
 			*step.count += deleted
 			if deleted < batchSize {
@@ -96,9 +98,10 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg config.Retention, location
 		result, err := Prune(runCtx, pool, cfg, location, time.Now())
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			log.Error("retention job failed", "usage", result.Usage, "usage_daily", result.UsageDaily, "local_auth_devices", result.LocalDevices)
+			log.Error("retention job failed", "usage", result.Usage, "usage_daily", result.UsageDaily, "local_auth_devices", result.LocalDevices, "admin_changes", result.AdminChanges)
 		} else if err == nil {
 			log.Info("retention", "usage", result.Usage, "usage_daily", result.UsageDaily, "local_auth_devices", result.LocalDevices,
+				"admin_changes", result.AdminChanges,
 				"usage_days", cfg.UsageDays, "usage_daily_days", cfg.UsageDailyDays)
 		}
 		timer := time.NewTimer(time.Until(NextRun(cfg.RunAt, location, time.Now())))

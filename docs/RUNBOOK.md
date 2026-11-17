@@ -561,10 +561,13 @@ Users see their own limits and use in the portal and at `/v1/me/usage`.
 
 ## Erase a user on request
 
-Find the user, then delete them. Deletion removes the account with its keys, sessions,
-per-request records (including calls a trusted forwarder made for the user) and daily totals
+Find the user, then delete them. Deletion removes the account with its inference
+and administration keys (active, revoked or expired), delegated descendants, their
+preview rows, sessions, per-request records (including calls a trusted forwarder
+made for the user) and daily totals
 in one transaction, clears the API-key caches of every router before returning, and cannot
-be undone:
+be undone. Unrelated owners' credentials remain. Administration audit events
+remain under the site's audit retention policy:
 
 ```sh
 docker compose exec -T router olr admin user list -match alice
