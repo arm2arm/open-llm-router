@@ -365,3 +365,88 @@ func TestStrictQuotaReservesBeforeForwarding(t *testing.T) {
 	}
 	l.Release()
 }
+
+func TestStrictQuotaExplainsReservationsRemainingAndExhaustion(t *testing.T) {
+	for _, budget := range []string{"tokens_per_day", "tokens_per_month"} {
+		t.Run(budget, func(t *testing.T) {
+			m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+			p := policy.Policy{StrictQuota: true}
+			if budget == "tokens_per_day" {
+				p.TokensPerDay = ptr(int64(100))
+			} else {
+				p.TokensPerMonth = ptr(int64(100))
+			}
+			acquire := func(n int64) (*Lease, error) { return m.AcquireFor(t.Context(), Admission{User: "u", Reserve: n}, p) }
+			seed, err := acquire(20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seed.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 20})
+			inflight, err := acquire(70)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inflight.Release()
+			check := func(n int64, reason string, retry int) *Rejection {
+				t.Helper()
+				l, err := acquire(n)
+				if l != nil {
+					l.Release()
+				}
+				var r *Rejection
+				if !errors.As(err, &r) || r.Limit != budget || r.Reason != reason || r.RetryAfter != retry {
+					t.Fatalf("reservation %d: %#v, %v", n, r, err)
+				}
+				if reason != "" && r.Remaining != 80 {
+					t.Fatalf("remaining: %d", r.Remaining)
+				}
+				return r
+			}
+			temporary := check(20, ReasonInFlightReservations, 1)
+			if !temporary.ResetAt.Equal(c.Now().Add(time.Second)) {
+				t.Fatal("temporary reset is not a short estimate")
+			}
+			period := calendarAt(c.Now(), time.UTC)
+			reset := period.nextDay
+			if budget == "tokens_per_month" {
+				reset = period.nextMonth
+			}
+			retry := int(reset.Sub(c.Now()).Seconds())
+			check(81, ReasonRequestExceedsRemaining, retry)
+			inflight.Release()
+			exact, err := acquire(80)
+			if err != nil {
+				t.Fatal("released reservations still block", err)
+			}
+			exact.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 80})
+			exhausted := check(1, "", retry)
+			if !exhausted.ResetAt.Equal(reset) {
+				t.Fatal("exhaustion lost calendar reset")
+			}
+			if s := snapshot(t, m, "u", p); s.Reserved != 0 || s.InFlight != 0 {
+				t.Fatalf("failed admissions leaked reservations: %+v", s)
+			}
+		})
+	}
+}
+
+func TestExhaustedMonthWinsOverTemporaryDailyReservation(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	p := policy.Policy{StrictQuota: true, TokensPerDay: ptr(int64(100)), TokensPerMonth: ptr(int64(200))}
+	seed, err := m.AcquireFor(t.Context(), Admission{User: "u", Reserve: 20}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 20})
+	inflight, err := m.AcquireFor(t.Context(), Admission{User: "u", Reserve: 70}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inflight.Release()
+	p.TokensPerMonth = ptr(int64(10))
+	_, err = m.AcquireFor(t.Context(), Admission{User: "u", Reserve: 20}, p)
+	var r *Rejection
+	if !errors.As(err, &r) || r.Limit != "tokens_per_month" || r.Reason != "" {
+		t.Fatalf("permanent refusal masked: %#v %v", r, err)
+	}
+}

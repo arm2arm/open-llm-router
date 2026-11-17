@@ -15,7 +15,7 @@ and P3; dependencies may change that order.
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
-| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; batch override inheritance (#189) in this change; remaining findings pending |
+| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; batch override inheritance (#189) and reservation feedback (#203) implemented; TPM transitions pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
@@ -299,3 +299,15 @@ and P3; dependencies may change that order.
   regressions hold interactive and batch calls in flight and verify each class
   rejects its second call for both larger and unlimited group batch limits. The
   managed policy portal preview reports the same inherited cap and explicit override.
+
+## Strict reservation feedback evidence
+
+- **#203:** Calendar refusals distinguish actual exhaustion, a request larger than
+  the remaining allowance, and temporary in-flight reservations. Temporary holds
+  use a one-second retry and remain SDK-retryable; an oversized request names the
+  remaining tokens and suggests reducing its size. A permanent monthly refusal
+  wins over a temporary daily hold. Race-tested manager cases cover both calendar
+  budgets, exact-fit admission after release, exhaustion, and reservation cleanup.
+  Both HTTP envelopes expose the reason and remaining amount with the matching
+  retry header behavior. Existing strict-concurrency and default SDK regressions
+  exercise the surrounding admission path.

@@ -340,11 +340,21 @@ retry: a stream may release a slot sooner or remain active longer. RPM retries a
 oldest accepted attempt plus 60 seconds. Day/month quotas reset at local midnight in the
 configured IANA timezone, including daylight-saving changes.
 
-Calendar quota refusals also carry `X-Should-Retry: false`, so the default Anthropic
+Spent calendar quotas also carry `X-Should-Retry: false`, so the default Anthropic
 SDK returns `RateLimitError` promptly rather than sleeping until the reset. The
 `Retry-After`, `limit` and `reset_at` values remain available for an explicit
 caller decision. Concurrency, RPM, TPM and transient 503 responses remain
 retryable and do not carry this header.
+
+Strict quotas distinguish spent tokens from reservations. When other calls hold
+the remaining allowance, `error.reason` is `in_flight_reservations`, the message
+explains the temporary hold, and `Retry-After` is one second without
+`X-Should-Retry: false`. This is an estimate; the active calls may take longer.
+If the request's own reservation cannot fit after those calls finish,
+`error.reason` is `request_exceeds_remaining`: reduce the request or output limit,
+or wait for the calendar reset. That refusal disables automatic retries. Both
+reasons include `error.remaining_tokens` before subtracting in-flight reservations;
+`error.limit` still identifies the underlying daily or monthly budget.
 
 For example:
 

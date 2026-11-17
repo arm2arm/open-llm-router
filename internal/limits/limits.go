@@ -19,7 +19,14 @@ var ErrUnavailable = errors.New("quota counters are temporarily unavailable")
 
 // Rejection identifies the failed gate and its next retry time. For concurrency
 // the time is an estimate: another call may release a slot sooner.
+const (
+	ReasonInFlightReservations    = "in_flight_reservations"
+	ReasonRequestExceedsRemaining = "request_exceeds_remaining"
+)
+
 type Rejection struct {
+	Reason     string
+	Remaining  int64
 	Limit      string
 	ResetAt    time.Time
 	RetryAfter int
@@ -29,6 +36,32 @@ func (r *Rejection) Error() string { return r.Limit + " exceeded" }
 
 func reject(limit string, now, reset time.Time) *Rejection {
 	return &Rejection{Limit: limit, ResetAt: reset, RetryAfter: max(1, int(math.Ceil(reset.Sub(now).Seconds())))}
+}
+
+// quotaRejection distinguishes spent tokens from temporary reservations and a
+// request that cannot fit even after all other calls complete.
+func quotaRejection(limit *int64, used, reserved, reserve int64, strict bool, name string, now, reset time.Time) *Rejection {
+	if limit == nil {
+		return nil
+	}
+	if used >= *limit {
+		return reject(name, now, reset)
+	}
+	if !strict {
+		return nil
+	}
+	remaining := *limit - used
+	if reserve > remaining {
+		r := reject(name, now, reset)
+		r.Reason, r.Remaining = ReasonRequestExceedsRemaining, remaining
+		return r
+	}
+	if add(reserved, reserve) > remaining {
+		r := reject(name, now, now.Add(time.Second))
+		r.Reason, r.Remaining = ReasonInFlightReservations, remaining
+		return r
+	}
+	return nil
 }
 
 type modelTotals struct {
@@ -199,19 +232,16 @@ func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) 
 	if p.StrictQuota {
 		reserve = max(a.Reserve, 0)
 	}
-	exceeds := func(limit *int64, used int64) bool {
-		if limit == nil {
-			return false
-		}
-		if used >= *limit {
-			return true
-		}
-		return p.StrictQuota && add(add(used, s.reserved), reserve) > *limit
+	daily := quotaRejection(p.TokensPerDay, today, s.reserved, reserve, p.StrictQuota, "tokens_per_day", now, period.nextDay)
+	monthly := quotaRejection(p.TokensPerMonth, month, s.reserved, reserve, p.StrictQuota, "tokens_per_month", now, period.nextMonth)
+	// A permanent monthly refusal must not be hidden behind a temporary daily
+	// reservation: waiting for another call would not make the request admissible.
+	rejection := daily
+	if rejection == nil || (rejection.Reason == ReasonInFlightReservations && monthly != nil && monthly.Reason != ReasonInFlightReservations) {
+		rejection = monthly
 	}
-	if exceeds(p.TokensPerDay, today) {
-		err = reject("tokens_per_day", now, period.nextDay)
-	} else if exceeds(p.TokensPerMonth, month) {
-		err = reject("tokens_per_month", now, period.nextMonth)
+	if rejection != nil {
+		err = rejection
 	} else {
 		s.reserved = add(s.reserved, reserve)
 		lease.reserved = reserve
