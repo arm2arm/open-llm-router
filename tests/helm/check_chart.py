@@ -20,6 +20,19 @@ NAME = "trial-open-llm-router"
 
 
 class HelmChart(unittest.TestCase):
+    def test_cors_is_opt_in_and_preserves_origin_configuration(self):
+        baseline = self.render({})
+        config = yaml.safe_load(baseline["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(config["cors"]["allowed_origins"], [])
+        policy = {"allowed_origins": ["https://ai.aip.de"], "extra_allowed_headers": ["X-Client-Name"]}
+        configured = self.render({"config": {"cors": policy}})
+        config = yaml.safe_load(configured["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
+        self.assertEqual(config["cors"], policy)
+        self.assertNotEqual(
+            baseline["Deployment", NAME]["spec"]["template"]["metadata"]["annotations"]["checksum/config"],
+            configured["Deployment", NAME]["spec"]["template"]["metadata"]["annotations"]["checksum/config"],
+        )
+
     def test_retired_api_key_encryption_setting_has_actionable_error(self):
         with tempfile.TemporaryDirectory() as directory:
             values = Path(directory) / "obsolete.yaml"

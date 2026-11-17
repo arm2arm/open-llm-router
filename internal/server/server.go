@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
 )
 
@@ -41,6 +42,7 @@ type Server struct {
 	mux           *http.ServeMux
 	ready         func(context.Context) bool
 	apiMiddleware func(http.Handler) http.Handler
+	cors          config.CORS
 }
 
 // New returns a server that answers the health endpoints. Further routes are
@@ -71,6 +73,9 @@ func (s *Server) SetAPIMiddleware(middleware func(http.Handler) http.Handler) {
 	s.apiMiddleware = middleware
 }
 
+// SetCORS installs the validated, operator-owned browser origin policy before serving.
+func (s *Server) SetCORS(policy config.CORS) { s.cors = policy }
+
 func status(text string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -94,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 	if s.apiMiddleware != nil {
 		routes = s.apiMiddleware(routes)
 	}
+	routes = s.corsMiddleware(routes)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		id := reqid.New()

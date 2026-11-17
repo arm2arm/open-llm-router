@@ -5,6 +5,9 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Open WebUI Direct Connections can use personal OLR keys through opt-in
+  `cors.allowed_origins`. Approved browser preflight is anonymous; inference
+  authentication, group limits and streaming cancellation remain enforced.
 - Backend cards have a **Clone** action that pre-fills a separate backend for
   review, with a unique name and the original model, group and preset selections.
   Key-protected copies require their own API key entry.

@@ -50,6 +50,7 @@ type Config struct {
 	Backends       map[string]BackendPolicy `yaml:"-"`
 	AdminAPI       AdminAPI                 `yaml:"admin_api"`
 	Security       Security                 `yaml:"security"`
+	CORS           CORS                     `yaml:"cors"`
 	ContentTracing ContentTracing           `yaml:"content_tracing"`
 	Auth           Auth                     `yaml:"auth"`
 	Limits         Limits                   `yaml:"limits"`
@@ -565,6 +566,7 @@ func (c *Config) validate() Problems {
 		c.AdminAPI.MaxConcurrent = 4
 	}
 	var p Problems
+	p = append(p, c.CORS.validate(c.Security.RequireTLS)...)
 	if c.AdminAPI.DefaultLifetimeDays < 1 || c.AdminAPI.MaxLifetimeDays < c.AdminAPI.DefaultLifetimeDays || c.AdminAPI.MaxLifetimeDays > 365 || c.AdminAPI.MaxActiveKeys < 1 || c.AdminAPI.RequestsPerMinute < 1 || c.AdminAPI.MaxConcurrent < 1 {
 		p = append(p, "admin_api: invalid lifetime, key limit or request limit")
 	}

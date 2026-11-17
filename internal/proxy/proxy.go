@@ -461,7 +461,7 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		metrics.Inject(ctx, req.Header)
 	}
 	req.Header.Del("Baggage")
-	for _, key := range []string{"Authorization", "X-Api-Key", "Cookie", "Content-Length", "Host", usage.TimingHeader} {
+	for _, key := range []string{"Authorization", "X-Api-Key", "Cookie", "Content-Length", "Host", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers", usage.TimingHeader} {
 		req.Header.Del(key)
 	}
 	req.Header.Set("Accept-Encoding", "identity")
@@ -499,6 +499,16 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 		account.firstByte()
 	}
 	for key, values := range cleanHeaders(resp.Header) {
+		// Browser permission belongs to OLR, not to an upstream's CORS policy.
+		if strings.HasPrefix(strings.ToLower(key), "access-control-") {
+			continue
+		}
+		if strings.EqualFold(key, "Vary") {
+			for _, value := range values {
+				w.Header().Add("Vary", value)
+			}
+			continue
+		}
 		w.Header()[key] = values
 	}
 	// The router's origin also serves the portal: a backend must not be able

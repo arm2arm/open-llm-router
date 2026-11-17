@@ -244,6 +244,7 @@ func serve(args []string) error {
 	srv := server.New(log)
 	srv.Handle("/", home.New(true))
 	srv.SetAPIMiddleware(authenticator.Middleware)
+	srv.SetCORS(cfg.CORS)
 	srv.SetReadiness(func(ctx context.Context) bool {
 		// The portal and management API must remain reachable to repair failed
 		// inference backends. Individual inference calls fail closed with 503.

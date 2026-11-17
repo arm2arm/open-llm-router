@@ -8,11 +8,18 @@
 # - Secrets are not set here. They are read from the environment only:
 #   OLR_DATABASE_URL and OIDC_PORTAL_CLIENT_SECRET.
 
-# Every /v1/* route requires an API key. Admin-created keys expire by default.
+# Actual /v1/* requests require an API key. Approved CORS preflight is anonymous.
+# Admin-created keys expire by default.
 auth:
   default_key_lifetime_days: 90
   max_key_lifetime_days: 90
   max_active_keys_per_user: 10
+
+# Personal browser clients (Open WebUI Direct Connections); empty disables CORS.
+# Use the browser site's origin, without a path: [https://ai.aip.de].
+cors:
+  allowed_origins: []
+  extra_allowed_headers: []
 
 # Optional agent administration; see docs/AGENT_ADMINISTRATION.md.
 admin_api:

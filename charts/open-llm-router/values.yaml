@@ -95,6 +95,10 @@ env: {}
 # A demo model is added only when demoBackend.enabled=true. Disable it for an
 # empty initial catalog or supply real models here; no demo environment is needed.
 config:
+  # Browser clients such as Open WebUI Direct Connections. Empty disables CORS.
+  cors:
+    allowed_origins: []
+    extra_allowed_headers: []
   admin_api:
     enabled: true
     trusted_proxy_cidrs: []
