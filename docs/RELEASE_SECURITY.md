@@ -13,12 +13,42 @@ publishes signed GitHub attestations for both provenance and the SPDX document.
 It verifies those signatures and attestations before creating a Gitsign-signed
 annotated tag and a GitHub release containing `image.txt` and `sbom.spdx.json`.
 
+The workflow publishes `linux/amd64` and `linux/arm64` together. `image.txt` records
+the OCI index digest; both verification wrappers accept that immutable digest.
+Build stages run npm and Go on the builder's native platform and cross-compile the
+target binary, so building ARM64 on an AMD64 runner needs no QEMU. CI builds and
+inspects that non-native image, including the ELF architecture, labels and notices.
+Older published versions may contain only AMD64; inspect their manifest before use.
+
+`olr version` prints the release version, commit and Go version without connecting
+to a database. The release build supplies the input tag and source commit, verifies
+the published image's output, and sets matching OCI version/revision/source labels.
+The authenticated metrics endpoint exposes the same identity in `olr_build_info`.
+Local builds identify themselves as `dev` / `unknown` unless build arguments are set.
+
+The router image includes its MIT license at `/licenses/LICENSE`, Go's license,
+original dependency license/NOTICE files, and `/licenses/THIRD_PARTY_NOTICES.txt`
+covering linked Go dependencies and the portal production dependency closure.
+Builds check a permissive SPDX allow-list and fail on unreviewed licenses or missing
+texts. The npm generator has negative license/missing-text tests; Docker builds run
+the Go check and collect original notices. See `web/licenses/README.md` for the one
+version-specific upstream license omitted by an npm tarball. The OCI license label
+describes the router's MIT license; dependency notices retain their own terms.
+
 The trusted certificate identity is the exact release workflow on `refs/heads/main`,
 with issuer `https://token.actions.githubusercontent.com`. Signing uses the runner's
 short-lived OIDC identity. No long-lived signing key is stored. No release is created
 by merging this workflow; maintainers choose the version and dispatch it separately.
 A failed publication may leave a signed image or tag. Investigate it before retrying;
-the workflow refuses to replace existing tags. Do not move a published release tag.
+the workflow refuses to replace existing Git tags or an existing GHCR image version,
+including a version left by a failed publication. Registry lookup failures stop the
+release before building. Choose a new version after investigating a partial release.
+
+The image build/sign/attestation job has read-only repository access. A separate
+read-only job compiles the pinned Gitsign tool; the final publishing job receives
+that immutable, same-run artifact and verified release files. Only the publishing
+job can write Git tags and releases. `GH_TOKEN` is supplied only to steps using the
+GitHub or registry API. No release workflow is dispatched by these policy tests.
 
 Gitsign tags use X.509 Sigstore signatures. Verify the tag's identity explicitly;
 GitHub's verified badge and ordinary `git verify-tag` do not establish this policy:
@@ -62,6 +92,10 @@ and source refs other than main are rejected. Any missing policy, mutable image,
 unavailable verification service, invalid signature or missing attestation aborts
 deployment. A registry mirror or supporting workload needs its own explicitly reviewed
 trust entry and the same evidence, usually from an internally rebuilt/signed image.
+GitHub CLI verification uses the exact `--cert-identity` and OIDC issuer from the
+policy, plus repository, source-ref and hosted-runner constraints. It deliberately
+does not combine that selector with `--signer-workflow` or `--signer-repo`, which
+current GitHub CLI versions treat as mutually exclusive.
 Do not broaden the signer identity to a wildcard to accommodate unsigned upstreams.
 
 Use these wrappers for every install, upgrade and rollback to another digest. Direct
@@ -79,6 +113,23 @@ stale approvals are dismissed after changes. Administrators are subject to the
 remaining protections. Force pushes and deletion are disabled. Required checks cover
 Go/race/integration, browser/image, Helm, live network policy, deployment
 verification/secret scanning, dependency review, and both CodeQL languages.
+
+The `immutable-releases` tag ruleset in `.github/release-tags.json` covers `v*` tags
+and forbids updates and deletion, with no bypass actors. Writers can create new tags
+and dispatch the release workflow; only images matching the exact signing policy are
+trusted by the deployment wrappers. Repository administrators can change rulesets,
+and registry administrators can alter GHCR packages; the workflow's registry check
+does not claim to make GHCR tags immutable against those administrators. Always
+deploy the digest recorded in `image.txt`.
+
+Independent release approval is optional. The release build/sign job uses the
+`release` environment; the default `.github/release-approval.json` keeps the approved
+solo-maintainer mode. To require independent approval, configure required reviewers
+and prevent self-review on that environment, then set `independent_approval: true` in
+the policy. `tests/security/repository_controls.py` verifies the selected mode, tag
+protections and all PR bypass allowances. Technical checks remain mandatory in both
+modes. Its `--apply` option applies main and tag protections, leaving environment
+reviewers for the repository administrator to select.
 
 Repository secret scanning, push protection, Dependabot security updates and mandatory
 Action SHA pinning are enabled. CodeQL scans Go and JavaScript/TypeScript on PRs, main

@@ -41,6 +41,7 @@ commands:
   admin    manage local users and API keys
   migrate  apply database migrations and exit
   config   check a config file without starting the router
+  version  show version, commit and Go version
 
 Run "olr <command> -h" for the flags of a command.
 `
@@ -60,6 +61,8 @@ func main() {
 		err = migrateCommand(args, os.Stdout)
 	case "config":
 		err = configCommand(args, os.Stdout, os.Stderr)
+	case "version":
+		err = versionCommand(args, os.Stdout)
 	case "help", "-h", "-help", "--help":
 		fmt.Print(usage)
 	default:

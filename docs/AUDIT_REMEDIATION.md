@@ -21,8 +21,8 @@ and P3; dependencies may change that order.
 | #185 Accessibility | #185, #230, #250, #264 | Completed in PR #311 |
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Completed in PR #312 |
 | #195 Agent administration | #195, #245, #261 | Completed in PR #313 |
-| #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Implemented; local checks pass; Kubernetes and scrape acceptance in CI |
-| #183 Releases | #183, #193, #220, #221, #225, #242 | Pending |
+| #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Completed in PR #314 |
+| #183 Releases | #183, #193, #220, #221, #225, #242 | Implemented; local policy, cross-build and metadata checks pass; CI pending |
 | #237 Startup diagnostics | #237, #238, #241 | Pending |
 | #223 Regression coverage | #222, #223, #243, #246 | Pending |
 | #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Pending |
@@ -497,3 +497,35 @@ and P3; dependencies may change that order.
   mutations prove unrelated clients can send traffic in both Helm and Kustomize.
   Static Helm checks constrain exact destinations and retain the explicit unrestricted
   mode as a separate positive case.
+
+## Signed release verification evidence
+
+- **#183:** Deployment wrappers and publishing use one exact certificate-identity
+  selector. Stubbed GitHub CLI commands reject mutually exclusive selector groups;
+  a real current CLI parser reaches local-artifact validation with the reduced flags.
+  Helm post-rendering still fails closed on missing signatures/attestations.
+- **#193:** Repository checks reject PR bypass allowances, require immutable v* tag
+  rules with no bypass actors, and verify independent environment approval only when
+  explicitly configured. The default solo-maintainer approval policy remains intact.
+  Stubbed response tests cover every bypass type, missing tag protections and self-review.
+- **#221:** A registry manifest HEAD check rejects existing image versions before
+  building and fails closed on authorization/rate/service errors. The compile job and
+  image/signing job lack repository write permission; only final publication has it.
+  Tokens are step-scoped and Gitsign arrives as a same-run immutable artifact.
+
+- **#220:** Native Node/Go builder stages cross-compile AMD64 and ARM64. The signed
+  release publishes an index digest; CI cross-builds ARM64 on AMD64 without QEMU.
+  OCI inspection validates the manifest, ELF architecture, labels and notices. A local
+  non-native AMD64 image build and OCI inspection passed on the ARM64 workstation.
+- **#225:** The image contains the project license, Go runtime license, original Go
+  dependency documents and a combined third-party notices file. Pinned go-licenses
+  checks an explicit allow-list before collecting linked dependency texts; the portal
+  generator checks the production closure and includes a documented version-specific
+  upstream fallback for one incomplete npm tarball. Unapproved/missing-text fixtures
+  fail; real package collection and image-file inspection pass.
+- **#242:** Linker metadata feeds the database-independent version command and the
+  olr_build_info gauge. Release arguments set the tag/commit and OCI labels; publication
+  checks the built image's CLI output. CLI and metrics regressions verify identity.
+
+Repository settings for #193 were applied and read back successfully: main protections,
+immutable release-tag rules, optional approval mode, secret scanning and Action pinning.

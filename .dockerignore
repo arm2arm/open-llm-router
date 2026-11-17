@@ -3,6 +3,7 @@
 *
 !go.mod
 !go.sum
+!LICENSE
 !cmd
 !internal
 !web

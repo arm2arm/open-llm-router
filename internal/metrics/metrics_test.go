@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
+	"github.com/arm2arm/open-llm-router/internal/buildinfo"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -18,6 +19,34 @@ import (
 )
 
 type writerCounters struct{}
+
+func TestBuildInfoMatchesCLIIdentity(t *testing.T) {
+	observer, err := New(t.Context(), Options{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	families, err := observer.Registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "olr_build_info" {
+			continue
+		}
+		if len(family.Metric) != 1 || family.Metric[0].GetGauge().GetValue() != 1 {
+			t.Fatal("invalid build gauge")
+		}
+		labels := map[string]string{}
+		for _, label := range family.Metric[0].Label {
+			labels[label.GetName()] = label.GetValue()
+		}
+		if labels["version"] != buildinfo.Version || labels["commit"] != buildinfo.Commit || labels["go_version"] != buildinfo.GoVersion() {
+			t.Fatal("build identity differs", labels)
+		}
+		return
+	}
+	t.Fatal("build info metric missing")
+}
 
 func (writerCounters) Counters() usage.Counters { return usage.Counters{Failed: 2, Dropped: 3} }
 
