@@ -115,12 +115,22 @@ test('logging save retains form focus and announces the result', async ({
   page,
 }) => {
   await mockAccessiblePortal(page)
+  let release!: () => void
+  const saving = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/portal/api/trace-preferences', async (route) => {
+    if (route.request().method() === 'PUT') await saving
+    await route.fallback()
+  })
   await page.goto('/portal/requests?live=off')
   const settings = page.getByRole('region', {
     name: 'Detailed logging settings',
   })
   await settings.getByRole('switch').check()
   await settings.getByRole('button', { name: 'Save settings' }).click()
+  await expect(settings.getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  release()
   await expect(settings.getByRole('status')).toContainText(
     'Detailed logging enabled. Traces kept for 7 days.',
   )
@@ -191,8 +201,13 @@ test('request filters do not rewrite a live region', async ({ page }) => {
 })
 
 function rgb(color: string): number[] {
-  if (color.startsWith('#'))
-    return [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16))
+  if (color.startsWith('#')) {
+    const hex =
+      color.length === 4
+        ? '#' + [...color.slice(1)].map((c) => c + c).join('')
+        : color
+    return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  }
   return (color.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
 }
 function ratio(a: string, b: string) {

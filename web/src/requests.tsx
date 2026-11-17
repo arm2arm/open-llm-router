@@ -814,6 +814,7 @@ function RequestRow({
 function TraceSettings({ preferences }: { preferences: Preferences }) {
   const client = useQueryClient()
   const controls = useRef<HTMLFormElement>(null)
+  const restoreFocus = useRef(false)
   const [saved, setSaved] = useState('')
   const [enabled, setEnabled] = useState(preferences.enabled)
   const [days, setDays] = useState(String(preferences.retention_days))
@@ -824,7 +825,11 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
         retention_days: Number(days),
       }),
     onSuccess: (value) => {
-      if (controls.current?.contains(document.activeElement))
+      if (
+        restoreFocus.current &&
+        (document.activeElement === document.body ||
+          controls.current?.contains(document.activeElement))
+      )
         controls.current
           .querySelector<HTMLInputElement>('[role="switch"]')
           ?.focus()
@@ -842,7 +847,12 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
     Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 30
   function submit(e: FormEvent) {
     e.preventDefault()
-    if (dirty && valid) save.mutate()
+    if (dirty && valid) {
+      restoreFocus.current = !!controls.current?.contains(
+        document.activeElement,
+      )
+      save.mutate()
+    }
   }
   return (
     <section
