@@ -131,6 +131,35 @@ func TestOverrides(t *testing.T) {
 	}
 }
 
+func TestInteractiveOverrideCapsBatchUnlessExplicit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		groupBatch *int
+		overrides  map[string]*int64
+		want       *int
+	}{
+		{"larger group batch", ptr(8), map[string]*int64{FieldMaxConcurrent: ptr(int64(1))}, ptr(1)},
+		{"unlimited group", nil, map[string]*int64{FieldMaxConcurrent: ptr(int64(1))}, ptr(1)},
+		{"smaller group batch", ptr(1), map[string]*int64{FieldMaxConcurrent: ptr(int64(2))}, ptr(1)},
+		{"explicit batch", ptr(8), map[string]*int64{FieldMaxConcurrent: ptr(int64(1)), FieldMaxConcurrentBatch: ptr(int64(6))}, ptr(6)},
+		{"explicit unlimited batch", ptr(8), map[string]*int64{FieldMaxConcurrent: ptr(int64(1)), FieldMaxConcurrentBatch: nil}, nil},
+		{"invalid batch ignored", ptr(8), map[string]*int64{FieldMaxConcurrent: ptr(int64(1)), FieldMaxConcurrentBatch: ptr(int64(0))}, ptr(1)},
+		{"unlimited interactive retains batch", ptr(8), map[string]*int64{FieldMaxConcurrent: nil}, ptr(8)},
+		{"invalid interactive ignored", ptr(8), map[string]*int64{FieldMaxConcurrent: ptr(int64(0))}, ptr(8)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := Resolve(map[string]config.Group{"staff": {Models: []string{"chat"}, MaxConcurrentBatch: tc.groupBatch}}, []string{"staff"})
+			got := base.WithOverrides(tc.overrides).Concurrency("batch")
+			if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+				t.Fatalf("batch = %v, want %v", got, tc.want)
+			}
+			if (base.MaxConcurrentBatch == nil) != (tc.groupBatch == nil) || (tc.groupBatch != nil && *base.MaxConcurrentBatch != *tc.groupBatch) {
+				t.Fatal("base policy mutated")
+			}
+		})
+	}
+}
+
 func TestProtectedAdministratorIgnoresEditablePolicies(t *testing.T) {
 	one := int64(1)
 	p := ForUser(map[string]config.Group{"restricted": {Models: []string{"only"}}}, []string{"restricted"}, map[string]*int64{FieldRPM: &one, FieldStrictQuota: &one}, true)

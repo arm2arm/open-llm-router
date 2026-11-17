@@ -327,6 +327,11 @@ RPM gate consumes an attempt even if the quota gate or backend later rejects it;
 concurrency rejection consumes no RPM. `/v1/messages/count_tokens` uses these gates but
 does not charge tokens. `/v1/models` and `/v1/me/usage` consume no limits.
 
+A finite per-user `max_concurrent` override also caps batch concurrency, including
+otherwise unlimited groups. An explicit per-user `max_concurrent_batch` override
+(including unlimited) takes precedence. The portal effective-limit preview shows
+the same resolved values used for admission.
+
 A rejected gate returns HTTP 429 with `Retry-After` seconds and the endpoint's native
 JSON error envelope. `error.type` is `rate_limit_error`; `error.limit` identifies
 `max_concurrent`, `max_concurrent_batch`, `rpm`, `tpm`, `tokens_per_day`, or `tokens_per_month`, and `error.reset_at`
