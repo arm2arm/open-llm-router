@@ -33,7 +33,7 @@ up:
 # Resolve actual published ports so .env overrides work here too.
 smoke:
 	@user_id="$$($(COMPOSE) exec -T router olr admin user add -username smoke-$$(date +%s)-$$$$ -groups staff)" || exit $$?; \
-	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
+	trap '$(COMPOSE) exec -T router olr admin user delete -id "$$user_id" >/dev/null || true' EXIT; \
 	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label smoke)" || exit $$?; \
 	for probe in "router 8080 /healthz" "router 8080 /readyz" "router 8080 /v1/models" "mock-llm-a 8000 /health" "mock-llm-b 8000 /health"; do \
 		set -- $$probe; \
@@ -74,7 +74,10 @@ sdk-limits:
 	trap '$(COMPOSE) exec -T router olr admin user disable -id "$$user_id" >/dev/null || true' EXIT; \
 	key="$$($(COMPOSE) exec -T router olr admin key create -user "$$user_id" -label limits-sdk)" || exit $$?; \
 	address="$$($(COMPOSE) port router 8080)" || exit $$?; \
-	OLR_BASE_URL="http://$$address" OLR_API_KEY="$$key" $(SDK_RUN) tests/clients/check_limits.py
+	OLR_BASE_URL="http://$$address" OLR_API_KEY="$$key" $(SDK_RUN) tests/clients/check_limits.py || exit $$?; \
+	$(COMPOSE) exec -T router olr admin override set -user "$$user_id" -field rpm -value unlimited >/dev/null || exit $$?; \
+	$(COMPOSE) exec -T router olr admin override set -user "$$user_id" -field tokens_per_day -value 1 >/dev/null || exit $$?; \
+	OLR_BASE_URL="http://$$address" OLR_API_KEY="$$key" $(SDK_RUN) tests/clients/check_quota_retry.py
 
 portal-check:
 	@router_address="$$($(COMPOSE) port router 8080)" || exit $$?; \

@@ -123,6 +123,10 @@ For this 16k-context model, Claude Code used `CLAUDE_CODE_MAX_OUTPUT_TOKENS=2048
 `make sdk-limits` runs a separate fresh limited user through the router and verifies
 that both official SDKs raise `RateLimitError` for HTTP 429, with `Retry-After` and the
 structured limit/reset fields. This check runs in CI after the successful-request SDK suite.
+It also exhausts a daily quota and checks the Anthropic SDK with its default
+retry policy: exactly one HTTP attempt must raise `RateLimitError` promptly, with
+`X-Should-Retry: false` and unchanged reset metadata. RPM responses remain retryable.
+The disposable SDK user is erased when the check finishes.
 
 Tested on the laptop with Ollama **0.40.16**, a local Qwen 27B MLX model, OpenAI Python
 **3.49.0**, Anthropic Python **2.8.0**, Claude Code **2.1.322**, and OpenCode **1.18.10**.

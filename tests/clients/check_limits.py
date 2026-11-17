@@ -29,6 +29,7 @@ def expect_limit(call, error_class, protocol):
     except error_class as error:
         assert error.status_code == 429
         assert 1 <= int(error.response.headers["retry-after"]) <= 60
+        assert error.response.headers.get("x-should-retry") != "false", "RPM should remain retryable"
         body = error.response.json()
         assert body["error"]["type"] == "rate_limit_error"
         assert body["error"]["limit"] == "rpm"
