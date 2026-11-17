@@ -20,6 +20,21 @@ NAME = "trial-open-llm-router"
 
 
 class HelmChart(unittest.TestCase):
+    def test_settings_encryption_key_is_validated_and_delivered_through_secret(self):
+        key = base64.b64encode(bytes(range(32))).decode()
+        resources = self.render({"secrets": {"env": {"OLR_SETTINGS_ENCRYPTION_KEY": key}}})
+        stored = resources["Secret", NAME + "-credentials"]["data"]["OLR_SETTINGS_ENCRYPTION_KEY"]
+        self.assertEqual(base64.b64decode(stored).decode(), key)
+        self.assertNotIn("OLR_SETTINGS_ENCRYPTION_KEY", [item["name"] for item in resources["Deployment", NAME]["spec"]["template"]["spec"]["containers"][0]["env"]])
+        for invalid in ["not-base64-SETTINGS-KEY", base64.b64encode(b"too short").decode()]:
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                values = Path(directory) / "invalid.yaml"
+                values.write_text(yaml.safe_dump({"secrets": {"env": {"OLR_SETTINGS_ENCRYPTION_KEY": invalid}}}))
+                result = self.invoke("template", "trial", CHART, "-f", values)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("must be a base64-encoded 32-byte key", result.stderr)
+                self.assertNotIn(invalid, result.stderr)
+
     def test_cors_is_opt_in_and_preserves_origin_configuration(self):
         baseline = self.render({})
         config = yaml.safe_load(baseline["ConfigMap", NAME + "-config"]["data"]["config.yaml"])

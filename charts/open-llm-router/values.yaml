@@ -22,6 +22,9 @@ existingSecret: ""
 secrets:
   bootstrapAdminPassword: ""
   # Additional secret environment variables, e.g. backend tokens or OIDC secrets.
+  # OLR_SETTINGS_ENCRYPTION_KEY: stable base64-encoded 32-byte key for stored
+  # backend API keys. Once configured, upgrades retain it when omitted or empty
+  # and reject replacement with a different key.
   env: {}
 
 # Bundled PostgreSQL is ready to use; requires a default StorageClass.

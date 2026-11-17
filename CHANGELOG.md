@@ -5,6 +5,10 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Helm upgrades preserve an existing settings encryption key when values omit it
+  or supply an empty entry, and reject accidental replacement with another key.
+  Ordinary removed backend tokens are still removed from the managed Secret.
+
 - Institutional sign-in has a prominent Keycloak card; local credentials are
   collapsed when institutional login is primary. Direct local recovery stays available.
 - Admins can rename public model routes, including generated names, while
