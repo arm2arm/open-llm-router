@@ -33,6 +33,10 @@ Users control it on **My requests**. Text and tool arguments may contain sensiti
 supplemental heuristic redaction cannot guarantee removal of all secrets. Disabling stops new capture and
 invalidates pending captures; existing detail remains until expiry or deletion. Shorter
 retention applies to existing detail; longer retention applies only to new captures.
+Stream text is reconstructed before redaction. Timeline events retain types and
+timing; raw frames omit free-text fragments so secrets split across deltas cannot
+be recovered from them. Structured credential fields are removed from parameters,
+raw previews and valid JSON tool arguments. NUL characters become `�` in stored traces.
 
 **Omitted from traces:** HTTP header values, credentials, cookies, provider signatures,
 `metadata` fields, image/document/audio payloads, data URIs, attachment URLs, backend

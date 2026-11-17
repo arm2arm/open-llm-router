@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// DetailVersion 2 adds raw previews, tool schemas, routing and result data.
-const DetailVersion = 2
+// DetailVersion 3 omits unsafe fragment text from stream events and frames.
+const DetailVersion = 3
 
 type Block struct {
 	Type      string `json:"type"`
@@ -117,7 +117,11 @@ func compact(v any) string {
 // metadata never enter the trace. Text and tool arguments can contain personal
 // data: they are deliberately controlled by the user's capture setting.
 func blocks(v any) []Block {
-	out := rawBlocks(v)
+	return blocksDepth(v, 0)
+}
+
+func blocksDepth(v any, depth int) []Block {
+	out := rawBlocksDepth(v, depth)
 	for i := range out {
 		out[i].Text = payloadText(out[i].Text)
 	}
@@ -132,7 +136,10 @@ func payloadText(s string) string {
 	return s
 }
 
-func rawBlocks(v any) []Block {
+func rawBlocksDepth(v any, depth int) []Block {
+	if depth > rawMaxDepth {
+		return []Block{{Type: "text", Text: marker("nested content omitted")}}
+	}
 	if s, ok := v.(string); ok {
 		return []Block{{Type: "text", Text: s}}
 	}
@@ -151,7 +158,7 @@ func rawBlocks(v any) []Block {
 		case "tool_use":
 			out = append(out, Block{Type: "tool_call", ID: str(m["id"]), Name: str(m["name"]), Arguments: compact(m["input"])})
 		case "tool_result":
-			out = append(out, Block{Type: "tool_result", ID: str(m["tool_use_id"]), Text: contentText(m["content"])})
+			out = append(out, Block{Type: "tool_result", ID: str(m["tool_use_id"]), Text: contentTextDepth(m["content"], depth+1)})
 		case "image", "image_url", "input_image":
 			out = append(out, Block{Type: "image", Text: "Image payload omitted"})
 		case "document", "file", "input_file":
@@ -163,13 +170,17 @@ func rawBlocks(v any) []Block {
 	return out
 }
 func contentText(v any) string {
+	return contentTextDepth(v, 0)
+}
+
+func contentTextDepth(v any, depth int) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
 	var parts []string
-	for _, b := range blocks(v) {
+	for _, b := range rawBlocksDepth(v, depth) {
 		if b.Text != "" {
-			parts = append(parts, b.Text)
+			parts = append(parts, payloadText(b.Text))
 		}
 	}
 	return strings.Join(parts, "\n")
@@ -226,7 +237,7 @@ func (c *Capture) decode() Detail {
 		d.Routing.Headers = []string{}
 	}
 	var input map[string]any
-	if len(c.input) > 0 && json.Unmarshal(c.input, &input) == nil {
+	if len(c.input) > 0 && decodeJSON(c.input, &input) == nil {
 		if sys, ok := input["system"]; ok {
 			d.Input = append(d.Input, Message{Role: "system", Blocks: blocks(sys)})
 		}
@@ -284,7 +295,7 @@ func (c *Capture) decode() Detail {
 		c.decodeStream(&d)
 	} else if c.jsonResponse {
 		var m map[string]any
-		if json.Unmarshal(c.output, &m) == nil {
+		if decodeJSON(c.output, &m) == nil {
 			if c.operation == "responses" {
 				d.Output = append(d.Output, responseMessages(m["output"])...)
 				d.Result.finish(responseFinish(m))
@@ -489,7 +500,11 @@ func (c *Capture) decodeStream(d *Detail) {
 		b.ID += id
 		b.Arguments += args
 		if len(d.Events) < MaxEvents {
-			d.Events = append(d.Events, Event{MS: ms, Type: kind, Text: firstNonempty(text, name, args, id)})
+			// Token fragments cannot be redacted independently: a credential or
+			// operator pattern may span any number of events. The conversation
+			// reconstructs and redacts the complete field; the timeline keeps
+			// event kinds and timing without duplicating unsafe fragments.
+			d.Events = append(d.Events, Event{MS: ms, Type: kind})
 		} else {
 			d.Truncated = true
 		}
@@ -517,10 +532,10 @@ func (c *Capture) decodeStream(d *Detail) {
 			return
 		}
 		var m map[string]any
-		if json.Unmarshal(data, &m) != nil {
+		if decodeJSON(data, &m) != nil {
 			return
 		}
-		frame(cleanRaw(m, 4<<10), ms)
+		frame(cleanRaw(streamPreview(m), 4<<10), ms)
 		d.Result.meta(m)
 		kind := str(m["type"])
 		index := fmt.Sprint(m["index"])

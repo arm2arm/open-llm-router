@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { stringifyExactJSON } from '@/lib/exact-json'
 import { api } from '@/lib/api'
 import {
   date,
@@ -392,13 +393,13 @@ function Overview({
                         {c.from !== undefined && (
                           <>
                             {' '}
-                            from <code>{JSON.stringify(c.from)}</code>
+                            from <code>{stringifyExactJSON(c.from)}</code>
                           </>
                         )}
                         {c.to !== undefined && (
                           <>
                             {' '}
-                            to <code>{JSON.stringify(c.to)}</code>
+                            to <code>{stringifyExactJSON(c.to)}</code>
                           </>
                         )}
                       </li>
@@ -1019,6 +1020,8 @@ function Timeline({ d, total }: { d: Detail; total?: number }) {
         <p>
           Observed delivery times relative to request start. Consecutive deltas
           of one kind are merged into segments.
+          {(d.v ?? 0) >= 3 &&
+            ' Reconstructed and redacted text is in Conversation; events preserve timing and types.'}
         </p>
         <div
           className="trace-segmented"
@@ -1068,6 +1071,11 @@ function Timeline({ d, total }: { d: Detail; total?: number }) {
                   )}
                 </summary>
                 {s.text && <pre>{s.text}</pre>}
+                {!s.text && (d.v ?? 0) >= 3 && (
+                  <p className="trace-secondary">
+                    See Conversation for reconstructed content.
+                  </p>
+                )}
               </details>
             </li>
           ))}
@@ -1165,7 +1173,7 @@ function Raw({ d, id }: { d: Detail; id: string }) {
                   {c.to !== undefined && (
                     <>
                       {' '}
-                      = <code>{JSON.stringify(c.to)}</code>
+                      = <code>{stringifyExactJSON(c.to)}</code>
                     </>
                   )}
                 </li>
@@ -1198,7 +1206,9 @@ function Raw({ d, id }: { d: Detail; id: string }) {
             <li key={i}>
               <time>+{ms(f.ms)}</time>
               <code>
-                {typeof f.data === 'string' ? f.data : JSON.stringify(f.data)}
+                {typeof f.data === 'string'
+                  ? f.data
+                  : stringifyExactJSON(f.data)}
               </code>
             </li>
           ))}

@@ -45,13 +45,16 @@ benchmark. [Capture workflow](images/README.md).*
      flagged. The router forwards tool calls; your client executes them and submits
      their results in the next request.
    - **Timeline:** consecutive deltas merged into segments (for example 39 reasoning
-     events, then 49 text events) on a time axis; expand one to read its text. **All
-     events** shows the individual deltas, filterable by type, in pages of 100.
+     events, then 49 text events) on a time axis. **All events** shows individual
+     event types and times, filterable by type, in pages of 100. Read reconstructed,
+     redacted text in **Conversation**. New traces omit text fragments from events
+     because a secret may span several deltas.
    - **Raw:** the request body as the client sent it, the body forwarded to the model
      server (the client body with the router's recorded changes applied), the response
      body or the first 200 stream frames, and the full normalized trace. Each view is a
      collapsible JSON tree with copy and download buttons. Omitted content appears as
-     markers such as `«image payload omitted»`.
+     markers such as `«image payload omitted»`. Stream frames preserve numeric
+     metadata and protocol shape; free-text fragments become `«stream text omitted»`.
 4. Search the table by model, status, finish reason, protocol, operation or request ID;
    filter for streams, failures, requests with detail, tool calls or truncated capture;
    and limit the time range. The **Tools** column shows how many calls the model
@@ -126,8 +129,9 @@ with the router's changes, and the response, with omitted payloads as markers.
   read traces attributed to the forwarded user. Database operators/backups still
   have access: protect Postgres, disk encryption and backups accordingly.
 - Captured text includes prompts, responses, reasoning, tool arguments/results and
-  provider error messages. It may contain sensitive information. There is no
-  automatic secret detector inside user text. Disable capture before sending
+  provider error messages. It may contain sensitive information. Structured
+  credential fields and common credential text patterns are redacted, along with
+  operator-supplied patterns. Heuristics cannot identify every secret. Disable capture before sending
   content you do not want retained.
 - HTTP header values, credentials, cookies, provider signatures and encrypted
   reasoning, `metadata` fields, image/file/audio payloads, attachment URLs, data URIs,
@@ -143,6 +147,14 @@ with the router's changes, and the response, with omitted payloads as markers.
   ("replica 1 of 2", never a backend address) with classified errors, upstream status
   and media type, response IDs/model/finish reasons/numeric usage, a sanitized raw
   response preview and up to 200 raw stream frames.
+- Stream text is redacted after reconstruction. Timeline events omit fragment
+  text and raw frames omit free-text values, preventing credentials split across
+  deltas from bypassing redaction. Valid JSON tool arguments remain valid JSON
+  after credential and binary-payload removal. Unknown JSON numbers retain their
+  exact value. NUL characters in keys or values are replaced by `�` for PostgreSQL
+  compatibility. Tool-result nesting beyond 32 levels is omitted to bound decoding.
+  Historical traces also receive the current sanitization when read. This does
+  not rewrite older database/backups or recover numbers rounded by older versions.
 - Requests are grouped into conversations by a keyed hash, per user, of the client's
   `X-Session-Id` header, or otherwise of the system prompt and first user message.
   Message hashes mark which input is new between calls of an agent loop. Hashes never

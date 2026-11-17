@@ -12,8 +12,8 @@ and P3; dependencies may change that order.
 | Package | Source findings | Progress in this pass |
 | --- | --- | --- |
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
-| #165 Usage accounting | #165, #168, #178, #204 | Implementation and regressions in this change |
-| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Pending |
+| #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
+| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | #182/#215/#251/#260: sanitization in this change; remaining findings pending |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
@@ -108,3 +108,27 @@ and P3; dependencies may change that order.
   accounting budget, then exits after the collector timeout. Existing process
   restart coverage verifies durable charges.
   Deployment budgets are 60 s versus the default 30 s HTTP grace plus 12 s flushes.
+
+## Trace sanitization evidence
+
+- **#182:** Stream text is reconstructed before heuristic/operator redaction.
+  Version-3 timeline events keep timing/types; raw frames keep protocol structure
+  and numeric metadata while omitting free-text fragments. Tests split bearer
+  credentials and an operator regex at every byte across OpenAI, Anthropic and
+  Responses streams. Structured credential values disappear from parameters,
+  raw request/response previews and JSON tool arguments; arguments remain valid
+  JSON and omit embedded binary/data-URI values. Historical traces receive the
+  current policy on reads without changing their retention.
+- **#215:** The final storage sanitizer replaces NUL in JSON keys and string
+  values, including JSON-encoded arguments. A PostgreSQL/portal regression stores
+  and renders input/output NUL safely with no trace write failure.
+- **#251:** Nested tool results have a 32-level bound and avoid repeated recursive
+  payload normalization. Tests retain ordinary levels 1–3 and omit level 1500.
+  A 1500-level benchmark decoded 150 KiB in 1.19 ms and 608 KiB in 1.65 ms on
+  the local Apple M5 Max; work stays bounded as the payload grows.
+- **#260:** Preview decoding and final redaction use `json.Number`, preserving
+  1234567890123456789 in parameters, nested values, tool JSON and raw previews.
+  Only usage statistics intentionally convert numbers for numeric aggregation.
+  The portal integration verifies exact values survive PostgreSQL. Browser parsing
+  retains unsafe integers as bigints; tree rendering, clipboard and downloads
+  preserve numeric JSON tokens. Playwright verifies parameters and all exports.

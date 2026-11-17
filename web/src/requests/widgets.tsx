@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Check, ChevronRight, Copy, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { stringifyExactJSON } from '@/lib/exact-json'
 import { parseJSON } from './model'
 
 // Clipboard and download act only on an explicit click. Nothing is stored.
@@ -48,7 +49,7 @@ export function DownloadButton({
       title={`Download ${name}`}
       onClick={() => {
         const url = URL.createObjectURL(
-          new Blob([JSON.stringify(value, null, 2)], {
+          new Blob([stringifyExactJSON(value, 2)], {
             type: 'application/json',
           }),
         )
@@ -202,7 +203,7 @@ export function JsonTree({
   title?: ReactNode
   download?: string
 }) {
-  const text = JSON.stringify(value, null, 2)
+  const text = stringifyExactJSON(value, 2)
   return (
     <div className="json-tree">
       <div className={title ? 'json-tree-head' : 'json-tree-float'}>
