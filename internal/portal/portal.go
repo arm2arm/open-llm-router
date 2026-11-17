@@ -32,6 +32,7 @@ const loginCookie = "olr_login"
 const sessionLifetime = 8 * time.Hour
 
 type Handler struct {
+	keyMutations           agentLimiter
 	agentLimits            agentLimiter
 	agentFailures          agentLimiter
 	agentAuthSlots         chan struct{}

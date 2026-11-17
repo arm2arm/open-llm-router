@@ -14,7 +14,7 @@ and P3; dependencies may change that order.
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
-| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation: PR #301; audit minimization (#244) in this change; remaining findings pending |
+| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation: PR #301; audit minimization: PR #302; churn protection (#248) in this change; departed-user tooling (#239) pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
@@ -214,3 +214,16 @@ and P3; dependencies may change that order.
   serialized. Portal callback and concurrent-sync tests verify one initial event,
   no state/timestamp changes on identical claims, and a new event/state version on
   changed membership.
+
+## History growth protection evidence
+
+- **#248:** Self-service create/revoke/delete attempts share a bounded 30/minute
+  per-user budget with 429/retry guidance before mutation or history writes.
+  Missing self-service keys and issuance-policy refusals do not generate permanent
+  events; operator attempts keep their audit trail. Source-denied agent credentials
+  have a separate five-refusals/minute per-key audit bound, independent of source
+  rotation and allowed-source traffic. PostgreSQL HTTP regressions attempt 100
+  churn cycles, 100 missing-key removals and 100 rotating denied sources, verifying
+  exactly 30 successful key events, zero missing-key events and five denied-source
+  events, while other users and allowed sources still work. The Admin Guide
+  documents process/replica scope and capacity planning/offline archive policy.

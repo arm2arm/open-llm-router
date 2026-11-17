@@ -24,6 +24,13 @@ func (a Admin) auditOperation(ctx context.Context, action, targetType, targetID 
 		if err == nil || a.Pool == nil {
 			return
 		}
+		// Self-service misses and exhausted issuance policy do not change
+		// state. Keeping one permanent refusal per retry enables history spam.
+		// Operator/administration attempts retain their normal audit trail.
+		if actor.Type == "portal_user" && ((action == "key.remove" && errors.Is(err, ErrNotFound)) ||
+			(action == "key.create" && (errors.Is(err, ErrKeyLimit) || errors.Is(err, ErrKeyLifetime)))) {
+			return
+		}
 		event := *a.event
 		event.Result, event.Reason, event.Details = audit.Failed, "administration operation failed", nil
 		for _, refusal := range []error{ErrProtectedAdmin, ErrNotFound, ErrInvalidPassword, ErrPasswordPolicy, ErrPasswordReuse, ErrLocalIdentity, ErrLocalUserInput, ErrLocalUserExists, ErrKeyLifetime, ErrKeyLimit, ErrBootstrapConflict} {

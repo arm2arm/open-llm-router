@@ -33,6 +33,11 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
 	respond(w, 200, map[string]any{"keys": keys})
 }
 func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
+	release, ok := h.keyMutationBudget(w, u.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct {
 		Label         string `json:"label"`
 		ExpiresInDays *int   `json:"expires_in_days"`
@@ -81,6 +86,11 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 	respond(w, 201, map[string]string{"key": key})
 }
 func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request, u user) {
+	release, ok := h.keyMutationBudget(w, u.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	var body struct{}
 	if !h.jsonBody(w, r, &body) {
 		return
@@ -100,6 +110,17 @@ func (h *Handler) revokeKey(w http.ResponseWriter, r *http.Request, u user) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Share a bounded per-user budget across issue, revoke and permanent removal.
+// Exhaustion happens before any mutation or permanent audit write.
+func (h *Handler) keyMutationBudget(w http.ResponseWriter, userID string) (func(), bool) {
+	release, ok := h.keyMutations.acquire(userID, 30, 4)
+	if !ok {
+		w.Header().Set("Retry-After", "60")
+		fail(w, http.StatusTooManyRequests, "rate_limit_error", "Too many API key changes. Wait one minute before trying again.")
+	}
+	return release, ok
 }
 
 type model struct {
