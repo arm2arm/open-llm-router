@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,8 +58,13 @@ func Migrations() []Migration {
 
 // Open connects to Postgres and applies pending migrations atomically before
 // returning the pool. The caller must close it after requests and background
-// work finish. ctx should have a startup deadline.
+// work finish. Connection establishment is bounded to 10 seconds; migrations
+// have a separate five-minute budget. Both respect caller cancellation.
 func Open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	return open(ctx, dsn, Migrations())
+}
+
+func open(ctx context.Context, dsn string, migrations []Migration) (*pgxpool.Pool, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return nil, errors.New("OLR_DATABASE_URL is required")
 	}
@@ -71,17 +77,22 @@ func Open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	if cfg.ConnConfig.ConnectTimeout == 0 {
 		cfg.ConnConfig.ConnectTimeout = 5 * time.Second
 	}
+	connectCtx, cancelConnect := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelConnect()
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create database pool: %w", err)
 	}
 	// Pool creation is lazy. Ping and migration must both succeed before the
 	// router can listen or report ready.
-	if err := pool.Ping(ctx); err != nil {
+	if err := pool.Ping(connectCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
-	if err := migrate(ctx, pool); err != nil {
+	cancelConnect()
+	migrationCtx, cancelMigration := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancelMigration()
+	if err := migrate(migrationCtx, pool, migrations); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -116,8 +127,7 @@ func Version(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 // migrate applies all pending migrations in one transaction, so a failure
 // leaves the schema as it was. An advisory lock serializes concurrent
 // startups: IF NOT EXISTS alone does not prevent races in Postgres's catalog.
-func migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	migrations := Migrations()
+func migrate(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) error {
 	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		const schemaLock int64 = 0x4f4c52534348454d // "OLRSCHEM"
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", schemaLock); err != nil {
@@ -137,12 +147,16 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			return fmt.Errorf("database schema version %d is newer than this router's %d; run a newer router", current, len(migrations))
 		}
 		for _, m := range migrations[current:] {
+			started := time.Now()
+			slog.Info("database migration started", "version", m.Version, "name", m.Name)
 			if _, err := tx.Exec(ctx, m.SQL); err != nil {
+				slog.Error("database migration failed", "version", m.Version, "name", m.Name, "duration", time.Since(started))
 				return fmt.Errorf("migration %04d_%s: %w", m.Version, m.Name, err)
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, m.Version, m.Name); err != nil {
 				return err
 			}
+			slog.Info("database migration finished", "version", m.Version, "name", m.Name, "duration", time.Since(started))
 		}
 		return nil
 	})

@@ -115,9 +115,7 @@ func serve(args []string) error {
 		<-ctx.Done()
 		stop()
 	}()
-	startupCtx, cancelStartup := context.WithTimeout(ctx, 10*time.Second)
-	database, err := db.Open(startupCtx, cfg.DatabaseURL)
-	cancelStartup()
+	database, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}

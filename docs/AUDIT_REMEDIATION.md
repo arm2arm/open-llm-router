@@ -398,3 +398,9 @@ and P3; dependencies may change that order.
   PostgreSQL regression checks the actual administrator summary query against
   45,000 rows, verifies its user-leading index plan and monthly totals, checks
   the cascade's user predicate plan, and deletes a user to verify cleanup.
+
+- **#241 (dependency of #173):** Database connect/ping retain a 10-second
+  budget while startup migrations receive five minutes and log per-migration
+  progress. A real 12-second migration commits through the shared startup path;
+  a stalled PostgreSQL handshake still fails within the connection budget.
+  Installation and upgrade guidance state the budgets and pre-upgrade job advice.
