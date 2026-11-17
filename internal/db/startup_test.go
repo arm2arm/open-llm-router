@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -32,11 +33,12 @@ func TestStartupMigrationHasSeparateBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP DATABASE "+ident+" WITH (FORCE)") })
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
+	databaseURL, err := url.Parse(dsn)
+	if err != nil || (databaseURL.Scheme != "postgres" && databaseURL.Scheme != "postgresql") {
+		t.Fatal("OLR_TEST_DATABASE_URL must be a PostgreSQL URL")
 	}
-	cfg.ConnConfig.Database = name
+	databaseURL.Path = "/" + name
+	databaseURL.RawPath = ""
 	var logs bytes.Buffer
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
@@ -45,7 +47,7 @@ func TestStartupMigrationHasSeparateBudget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
 	defer cancel()
 	started := time.Now()
-	pool, err := open(ctx, cfg.ConnString(), list)
+	pool, err := open(ctx, databaseURL.String(), list)
 	if err != nil {
 		t.Fatal("migration exceeded connection deadline", err)
 	}
