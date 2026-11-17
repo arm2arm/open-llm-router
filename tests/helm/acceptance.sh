@@ -189,6 +189,7 @@ models
 # A new router must start independently of the optional identity provider.
 kubectl -n olr scale deployment/olr-open-llm-router-keycloak --replicas=0
 kubectl -n olr rollout status deployment/olr-open-llm-router-keycloak --timeout=60s
+kubectl -n olr wait --for=delete pod -l app.kubernetes.io/name=open-llm-router-keycloak,app.kubernetes.io/instance=olr --timeout=90s
 kubectl -n olr rollout restart deployment/olr-open-llm-router
 kubectl -n olr rollout status deployment/olr-open-llm-router --timeout=120s
 forward
