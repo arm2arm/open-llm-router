@@ -122,16 +122,52 @@ type postgresStore struct {
 
 func (s postgresStore) insert(ctx context.Context, r Record) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		// Serialize with erasure. A deleted end user must not be recreated by
+		// a late completion; erasing a forwarding service must not erase the
+		// surviving end user's call. Ordered locks also avoid crossed owners.
+		users, err := tx.Query(ctx, `SELECT id::text FROM users
+			WHERE id=ANY($1::uuid[]) ORDER BY id FOR KEY SHARE`, []string{r.UserID, nonempty(r.ForwardedBy, r.UserID)})
+		if err != nil {
+			return err
+		}
+		present := make(map[string]bool, 2)
+		for users.Next() {
+			var id string
+			if err := users.Scan(&id); err != nil {
+				users.Close()
+				return err
+			}
+			present[id] = true
+		}
+		users.Close()
+		if err := users.Err(); err != nil {
+			return err
+		}
+		if !present[r.UserID] {
+			return nil // erasure wins over an in-flight completion
+		}
 		// usage.user_id is the key owner; forwarded_for the end user a trusted
 		// forwarder called for. Daily totals belong to the attributed user.
 		owner, forwardedFor := r.UserID, ""
 		if r.ForwardedBy != "" {
 			owner, forwardedFor = r.ForwardedBy, r.UserID
+			if !present[owner] {
+				owner = ""
+			}
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO usage
+		// A key can be deleted while its request is still running. Retain the
+		// completed call without the reference; hold a live key through commit.
+		keyID := ""
+		if r.KeyID != "" && owner != "" {
+			err := tx.QueryRow(ctx, `SELECT id::text FROM api_keys WHERE id=$1 AND user_id=$2 FOR KEY SHARE`, r.KeyID, owner).Scan(&keyID)
+			if err != nil && err != pgx.ErrNoRows {
+				return err
+			}
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO usage
 			(ts, key_id, user_id, forwarded_for, model, replica, protocol, status, input_tokens, output_tokens, latency_ms, ttfb_ms, is_stream, request_id, operation)
-			VALUES ($1, NULLIF($2, '')::uuid, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14,''), $15)`,
-			r.StartedAt, r.KeyID, owner, forwardedFor, r.Model, r.Replica, r.Protocol, r.Status,
+			VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14,''), $15)`,
+			r.StartedAt, keyID, owner, forwardedFor, r.Model, r.Replica, r.Protocol, r.Status,
 			r.InputTokens, r.OutputTokens, r.LatencyMS, r.TTFBMS, r.IsStream, r.RequestID, r.Operation)
 		if err != nil {
 			return err
@@ -145,4 +181,11 @@ func (s postgresStore) insert(ctx context.Context, r Record) error {
 			r.StartedAt.In(s.location).Format("2006-01-02"), r.UserID, r.Model, r.InputTokens, r.OutputTokens)
 		return err
 	})
+}
+
+func nonempty(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

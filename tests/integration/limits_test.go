@@ -210,7 +210,7 @@ func TestLimitsDailyResetDurableRestartAndUsageEndpoint(t *testing.T) {
 	if s.Timezone != "Europe/Berlin" || s.Used.Month != 10 || *s.Remaining.Today != 0 || len(s.Models) != 1 || s.Models[0].InputTokens != 3 || s.Models[0].OutputTokens != 7 || s.Models[0].AverageTTFBMS == nil || s.Models[0].AverageTPS == nil {
 		t.Fatalf("%+v", s)
 	}
-	waitFor(t, func() bool { return f.writer.Counters().Written == 2 }) // success + rejected metadata
+	waitFor(t, func() bool { return f.writer.Counters().Written == 1 }) // pre-dispatch rejections do not use the ledger
 	var date string
 	var total int64
 	if err := f.pool.QueryRow(t.Context(), `SELECT day::text, input_tokens+output_tokens FROM usage_daily WHERE user_id=$1 AND model='chat-model'`, f.owner).Scan(&date, &total); err != nil || date != "2026-05-06" || total != 10 {
@@ -462,7 +462,7 @@ func TestStrictQuotaUnderConcurrency(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	waitFor(t, func() bool { return f.writer.Counters().Written == 61 }) // rejections are recorded too
+	waitFor(t, func() bool { return f.writer.Counters().Written == uint64(ok.Load()) })
 	var used int64
 	if err := f.pool.QueryRow(t.Context(), `SELECT COALESCE(sum(input_tokens + output_tokens), 0) FROM usage_daily WHERE user_id = $1`, f.owner).Scan(&used); err != nil {
 		t.Fatal(err)

@@ -79,8 +79,9 @@ func TestResponsesKeepsModelPermissions(t *testing.T) {
 	if resp.StatusCode != 403 || mock.Stats().Requests != 0 {
 		t.Fatal(resp.StatusCode, mock.Stats())
 	}
-	if records.next(t).InputTokens != 0 {
-		t.Fatal("charged a locally rejected request")
+	router.Close()
+	if len(records) != 0 {
+		t.Fatal("recorded a locally rejected request")
 	}
 }
 

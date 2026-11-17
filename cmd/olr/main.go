@@ -187,18 +187,16 @@ func serve(args []string) error {
 	defer ln.Close()
 
 	accounting := usagewriter.NewWriterInLocation(database, log, cfg.Limits.Location)
+	var closeContentTraces func()
+	var shutdownObservability func(context.Context) error
 	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := accounting.Close(flushCtx); err != nil {
-			log.Error("usage shutdown flush incomplete")
-		}
+		flushAccountingAndTelemetry(log, accounting.Close, closeContentTraces, shutdownObservability)
 	}()
 	traces, err := requesttrace.New(ctx, database, log, cfg.ContentTracing)
 	if err != nil {
 		return err
 	}
-	defer traces.Close()
+	closeContentTraces = traces.Close
 	// Live portal updates end with the signal context, so open event streams
 	// never hold up graceful shutdown.
 	liveCtx, stopLive := context.WithCancel(ctx)
@@ -221,13 +219,7 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := observability.Shutdown(flushCtx); err != nil {
-			log.Error("trace shutdown flush incomplete")
-		}
-	}()
+	shutdownObservability = observability.Shutdown
 	traces.RegisterMetrics(observability.Registry)
 	forwarder.Metrics = observability
 	defer forwarder.Close()

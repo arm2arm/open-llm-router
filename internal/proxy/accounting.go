@@ -27,6 +27,7 @@ type accounting struct {
 	inputEstimate int64  // serialized OpenAI streaming request bytes, once dispatched
 	inputRejected bool   // an upstream HTTP refusal must not receive an estimate
 	usageTiming   bool   // client explicitly requested router-observed throughput
+	dispatched    bool   // a backend transport attempt was made
 	json          *usage.JSON
 	stream        *usage.Stream
 	aborted       bool
@@ -186,7 +187,9 @@ func (a *accounting) finish(r *http.Request, panicked bool) {
 			a.lease.Complete(a.record)
 		}
 	}
-	if a.sink != nil {
+	// Pre-dispatch rejections are observable in metrics and request logs, but
+	// cannot consume the durable accounting queue shared by billable calls.
+	if a.sink != nil && a.dispatched {
 		a.sink.Record(a.record)
 	}
 }

@@ -11,8 +11,8 @@ and P3; dependencies may change that order.
 
 | Package | Source findings | Progress in this pass |
 | --- | --- | --- |
-| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | #157/#187/#198/#253: PR #292; #172/#252: PR #293; #161: this change |
-| #165 Usage accounting | #165, #168, #178, #204 | Pending |
+| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
+| #165 Usage accounting | #165, #168, #178, #204 | Implementation and regressions in this change |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Pending |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
@@ -81,3 +81,30 @@ and P3; dependencies may change that order.
   authenticate, and checks the registration cap and retention. The CLI recovery
   acceptance test uses a mode-0600 header, completes the required password
   change during a flood and verifies secrets stay out of output and logs.
+
+## Accounting evidence
+
+- **#165:** Confirmed local rejections entered the shared durable queue. They
+  now remain in aggregate metrics and metadata request logs, with no per-call
+  database cost. Unit tests exercise malformed, unavailable and forbidden
+  requests; the PostgreSQL flood regression sends thousands of rejected calls
+  while all 50 valid calls retain their request rows and 500 daily tokens,
+  without failed or dropped writes.
+- **#168:** Confirmed the owner foreign key cascaded end-user history. Migration
+  0020 makes forwarding provenance nullable; a database trigger removes direct
+  calls during erasure and the existing end-user cascade still removes forwarded
+  calls for erased users. Tests cover service erasure, late forwarded completions,
+  direct/end-user erasure, portal history and `/v1/me/usage` timings and totals.
+- **#178:** Confirmed a missing key caused an in-flight completion transaction
+  to fail. The writer now locks surviving users and keys through commit, detaches
+  deleted keys and skips erased end users. A blocked real backend call is completed
+  after key removal; exactly one keyless row and daily increment survive, with no
+  failed writes. A fresh quota manager reloads its daily and monthly charge.
+- **#204:** Confirmed deferred cleanup flushed OTLP before accounting. A single
+  shutdown coordinator now flushes accounting first (5 s), content traces second
+  (2 s) and OTLP last (5 s). A hung-telemetry test verifies order and the independent
+  accounting deadline. A real router with a queued database write and an
+  unresponsive HTTP collector persists its request and daily charge within the
+  accounting budget, then exits after the collector timeout. Existing process
+  restart coverage verifies durable charges.
+  Deployment budgets are 60 s versus the default 30 s HTTP grace plus 12 s flushes.

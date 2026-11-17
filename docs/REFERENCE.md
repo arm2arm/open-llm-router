@@ -282,13 +282,27 @@ usage object; oversized events pass through unchanged without filtering. Respons
 terminal-event usage and type are inspected incrementally even above the event
 buffer limit, because those events can embed the full generated answer.
 
+Only calls dispatched to a backend enter the durable usage ledger, including backend
+errors and interrupted calls. Local body, model, permission, quota, backend-budget and
+capacity rejections stay in aggregate metrics and metadata request logs; they create no
+per-request or daily database rows and cannot fill the accounting queue.
+
 Four writer goroutines drain a 1,024-record queue. Each insert and its `usage_daily` upsert
 commit in one transaction, using the request's start date in `limits.timezone` (default UTC).
+Deleting a key while a call is running retains its completion with a null key reference.
+Erasing a forwarding service removes its key/owner references while preserving other
+users' forwarded history and charges. Erasing the attributed end user removes their
+direct and forwarded records and daily totals; late completions cannot recreate them.
 Database writes have a
 2-second deadline. A full queue drops metadata instead of delaying inference; failed and
 dropped writes are logged generically and counted by `usage.Writer.Counters()`. The HTTP
-shutdown grace runs first, followed by up to 5 seconds to flush accounting before closing
-the database. A database failure during that flush is logged without changing client
+shutdown grace (30 seconds by default) runs first, followed by up to 5 seconds to flush
+accounting, up to 2 seconds for content traces, then up to 5 seconds for OTLP telemetry.
+Accounting always precedes optional telemetry. The shipped Compose, Helm and Kustomize
+termination budgets are 60 seconds, exceeding the 42-second drain/flush budget and
+leaving time for other cleanup. Increase the deployment budget when raising
+`-shutdown-grace`. The database closes after these flushes. A database failure during
+accounting flush is logged without changing client
 responses. The additive startup schema upgrade marks legacy rows `is_stream=false`;
 their TTFB remains available, but their generation rates are excluded from averages.
 

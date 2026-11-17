@@ -49,8 +49,8 @@ services:
         condition: service_started
     volumes:
       - ${OLR_CONFIG_FILE:-../../config.example.yaml}:/etc/olr/config.yaml:ro
-    # A little longer than the router's own shutdown grace of 30 s.
-    stop_grace_period: 35s
+    # Allow 30 s for HTTP draining, 12 s for flushes and time for cleanup.
+    stop_grace_period: 60s
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.2
