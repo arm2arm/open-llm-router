@@ -38,6 +38,7 @@ for (const domain of ['routing', 'authentication'] as const) {
     await mockAccessiblePortal(page)
     await page.clock.install()
     let version = 1
+    let draft = true
     let submitted: Record<string, unknown> | undefined
     await page.route(`**/portal/api/admin/settings/${domain}`, (route) =>
       route.fulfill({
@@ -58,6 +59,20 @@ for (const domain of ['routing', 'authentication'] as const) {
                         version === 1 ? 'portal' : 'other-writer',
                     },
             },
+            draft: draft
+              ? {
+                  id: version + 100,
+                  status: 'draft',
+                  document:
+                    domain === 'routing'
+                      ? routing
+                      : {
+                          ...authentication,
+                          portal_client_id:
+                            version === 1 ? 'portal' : 'other-writer',
+                        },
+                }
+              : undefined,
             effective: [],
             conflicts: [],
             history: [],
@@ -89,6 +104,14 @@ for (const domain of ['routing', 'authentication'] as const) {
             error: { message: 'Settings changed; reload before saving.' },
           },
         })
+      },
+    )
+    await page.route(
+      `**/portal/api/admin/settings/${domain}/discard`,
+      (route) => {
+        draft = false
+        version++
+        return route.fulfill({ json: {} })
       },
     )
     await page.goto(
@@ -162,6 +185,20 @@ for (const domain of ['routing', 'authentication'] as const) {
         form.getByLabel('New portal client secret', { exact: true }),
       ).toHaveCount(0)
     }
+    await input.fill('explicit-discard')
+    await page
+      .getByRole('button', {
+        name: domain === 'routing' ? 'Discard routing draft' : 'Discard draft',
+        exact: true,
+      })
+      .click()
+    await expect(
+      form.getByRole('heading', {
+        name: domain === 'routing' ? 'New routing draft' : 'New draft',
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(input).toHaveValue(domain === 'routing' ? '' : 'other-writer')
   })
 }
 

@@ -664,6 +664,7 @@ function AliasAdder({
 }
 
 export function RoutingSettingsPanel() {
+  const [editorReset, setEditorReset] = useState(0)
   const cache = useQueryClient()
   const view = useQuery({
     queryKey,
@@ -693,6 +694,7 @@ export function RoutingSettingsPanel() {
     try {
       await api(`admin/settings/routing/${path}`, 'POST', body)
       await reload()
+      if (path === 'discard') setEditorReset((value) => value + 1)
     } catch (error) {
       setError(asError(error))
     } finally {
@@ -862,6 +864,7 @@ export function RoutingSettingsPanel() {
                 </div>
               )}
               <DraftEditor
+                key={editorReset}
                 view={data}
                 base={(draft ?? active) as RoutingRevision}
                 onSaved={reload}

@@ -554,6 +554,7 @@ function ChecksPanel({
 }
 
 export function AuthenticationSettingsPanel() {
+  const [editorReset, setEditorReset] = useState(0)
   const cache = useQueryClient()
   const view = useQuery({
     queryKey,
@@ -573,6 +574,7 @@ export function AuthenticationSettingsPanel() {
     try {
       await api(`admin/settings/authentication/${path}`, 'POST', body)
       await reload()
+      if (path === 'discard') setEditorReset((value) => value + 1)
     } catch (error) {
       setError(asError(error))
     } finally {
@@ -768,7 +770,12 @@ export function AuthenticationSettingsPanel() {
             </div>
           ) : (
             target && (
-              <DraftEditor view={data} base={target} onChanged={reload} />
+              <DraftEditor
+                key={editorReset}
+                view={data}
+                base={target}
+                onChanged={reload}
+              />
             )
           )}
           {data.settings.draft && (
