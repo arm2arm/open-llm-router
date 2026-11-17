@@ -32,16 +32,18 @@ const loginCookie = "olr_login"
 const sessionLifetime = 8 * time.Hour
 
 type Handler struct {
-	agentLimits    agentLimiter
-	agentFailures  agentLimiter
-	agentAuthSlots chan struct{}
-	agentMu        sync.Mutex
-	cfg            *config.Config
-	pool           *pgxpool.Pool
-	limits         *limits.Manager
-	ssoState       atomic.Pointer[ssoState]
-	passwordSlots  chan struct{}
-	mux            *http.ServeMux
+	agentLimits            agentLimiter
+	agentFailures          agentLimiter
+	agentAuthSlots         chan struct{}
+	agentMu                sync.Mutex
+	cfg                    *config.Config
+	pool                   *pgxpool.Pool
+	limits                 *limits.Manager
+	ssoState               atomic.Pointer[ssoState]
+	passwordSlots          chan struct{}
+	passwordAnonymousSlots chan struct{}
+	deviceLookupSlots      chan struct{}
+	mux                    *http.ServeMux
 	// Pools is shown on the admin pages; installed before serving.
 	Traces    *requesttrace.Service
 	Activity  *activity.Broker
@@ -65,7 +67,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), passwordSlots: make(chan struct{}, 2), agentAuthSlots: make(chan struct{}, 8)}
+	h := &Handler{cfg: cfg, pool: pool, limits: manager, mux: http.NewServeMux(), passwordSlots: make(chan struct{}, 2), passwordAnonymousSlots: make(chan struct{}, 1), deviceLookupSlots: make(chan struct{}, 8), agentAuthSlots: make(chan struct{}, 8)}
 	h.registerAgent()
 	h.ssoState.Store(h.startSSO(cfg.OIDC, cfg.OIDCClientSecret, nil))
 	h.mux.HandleFunc("GET /portal/login", h.login)

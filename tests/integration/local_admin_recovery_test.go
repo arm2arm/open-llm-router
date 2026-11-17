@@ -268,6 +268,38 @@ models:
 	login(newBrowser(), initialAdminPassword, 401)
 	login(newBrowser(), recoveryAdminPassword, 401)
 	login(newBrowser(), recoveredAdminPassword, 200)
+
+	// A new device can recover without waiting for an anonymous attack to end.
+	execSQL(t, pool, `DELETE FROM portal_auth_throttle`)
+	attacker := newBrowser()
+	for range 10 {
+		login(attacker, "incorrect private password", 401)
+	}
+	login(newBrowser(), recoveredAdminPassword, 429)
+	headerPath := filepath.Join(t.TempDir(), "recovery.headers")
+	withDevice := cli(recoveryAdminPassword, "", "recover", "-password-stdin", "-device-header-file", headerPath)
+	header, err := os.ReadFile(headerPath)
+	if err != nil || !strings.HasPrefix(string(header), "Cookie: "+auth.LocalDeviceCookie+"=") {
+		t.Fatal("missing private recovery header", err)
+	}
+	info, err := os.Stat(headerPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("recovery header is not private", err)
+	}
+	cookie := strings.TrimSpace(strings.TrimPrefix(string(header), "Cookie: "))
+	if strings.Contains(withDevice.stdout+withDevice.stderr, cookie) {
+		t.Fatal("recovery output exposed device token")
+	}
+	secrets = append(secrets, cookie)
+	rescued := newBrowser()
+	call(rescued, "POST", "/portal/login/local", map[string]string{"username": "admin", "password": recoveryAdminPassword}, http.Header{"Cookie": {cookie}}, 200)
+	call(rescued, "GET", "/portal/api/admin/users", nil, nil, 403)
+	call(rescued, "POST", "/portal/password", map[string]string{"current_password": recoveryAdminPassword, "new_password": recoveredAdminPassword}, nil, 200)
+	login(rescued, recoveredAdminPassword, 200)
+	call(rescued, "GET", "/portal/api/admin/users", nil, nil, 200)
+	// Recovery did not reset or weaken the anonymous guessing limit.
+	login(attacker, recoveredAdminPassword, 429)
+	cli(recoveryAdminPassword, "choose a new file", "recover", "-password-stdin", "-device-header-file", headerPath)
 	stop()
 	for _, secret := range append(secrets, hash) {
 		if strings.Contains(logs.String(), secret) {

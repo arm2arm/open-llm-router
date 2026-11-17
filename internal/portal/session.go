@@ -132,7 +132,8 @@ func (h *Handler) establish(r *http.Request, id string) (string, error) {
 	return session, err
 }
 
-func (h *Handler) establishLocal(r *http.Request, account auth.LocalAccount) (string, time.Duration, error) {
+func (h *Handler) establishLocal(r *http.Request, account auth.LocalAccount) (string, string, time.Duration, error) {
+	var device string
 	session := randomToken()
 	hash := sha256.Sum256([]byte(session))
 	lifetime, scope := sessionLifetime, "full"
@@ -141,7 +142,7 @@ func (h *Handler) establishLocal(r *http.Request, account auth.LocalAccount) (st
 	}
 	err := pgx.BeginFunc(r.Context(), h.pool, func(tx pgx.Tx) error {
 		var locked string
-		if err := tx.QueryRow(r.Context(), `SELECT id FROM users WHERE id=$1 AND enabled FOR SHARE`, account.ID).Scan(&locked); err != nil {
+		if err := tx.QueryRow(r.Context(), `SELECT id FROM users WHERE id=$1 AND enabled FOR UPDATE`, account.ID).Scan(&locked); err != nil {
 			return err
 		}
 		if old, ok := cookieHash(r, loginCookie); ok {
@@ -165,7 +166,16 @@ func (h *Handler) establishLocal(r *http.Request, account auth.LocalAccount) (st
 		if err == nil && result.RowsAffected() == 0 {
 			return pgx.ErrNoRows
 		}
+		if err != nil {
+			return err
+		}
+		var previous string
+		if _, ok := cookieHash(r, auth.LocalDeviceCookie); ok {
+			cookie, _ := r.Cookie(auth.LocalDeviceCookie)
+			previous = cookie.Value
+		}
+		device, err = auth.IssueLocalDeviceTx(r.Context(), tx, account.ID, previous)
 		return err
 	})
-	return session, lifetime, err
+	return session, device, lifetime, err
 }

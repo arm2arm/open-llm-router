@@ -26,6 +26,7 @@ func recoverCommand(args []string, stdin io.Reader, out, errout io.Writer) error
 	fs := flag.NewFlagSet("olr admin recover", flag.ContinueOnError)
 	fs.SetOutput(errout)
 	passwordFile := fs.String("password-file", "", "private file containing the temporary password")
+	deviceHeader := fs.String("device-header-file", "", "create a private curl header file for login during an anonymous throttle attack")
 	fromStdin := fs.Bool("password-stdin", false, "read the temporary password from redirected or piped standard input")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -39,6 +40,7 @@ func recoverCommand(args []string, stdin io.Reader, out, errout io.Writer) error
 	if (*passwordFile == "") == !*fromStdin {
 		return errors.New("use exactly one of -password-file FILE or -password-stdin")
 	}
+	deviceHeaderCreated := false
 	event := audit.Event{Action: recoverAction, Actor: audit.OperatorCLI(), TargetType: "user"}
 	record := func(result auth.Recovery, err error, reason string) error {
 		event.TargetID = result.ID
@@ -47,6 +49,9 @@ func recoverCommand(args []string, stdin io.Reader, out, errout io.Writer) error
 			event.Result = audit.Succeeded
 			event.Details = map[string]any{"credential_revision": result.CredentialRevision,
 				"sessions_revoked": result.SessionsRevoked, "keys_revoked": result.KeysRevoked}
+			if deviceHeaderCreated {
+				event.Details["device_header_created"] = true
+			}
 		case errors.Is(err, auth.ErrPasswordPolicy), errors.Is(err, auth.ErrPasswordReuse), errors.Is(err, auth.ErrNotBootstrapped):
 			event.Result, event.Reason = audit.Refused, err.Error()
 		default:
@@ -68,6 +73,20 @@ func recoverCommand(args []string, stdin io.Reader, out, errout io.Writer) error
 	}
 	defer clear(password)
 
+	var headerFile *os.File
+	if *deviceHeader != "" {
+		headerFile, err = os.OpenFile(*deviceHeader, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return record(auth.Recovery{}, errors.New("cannot create private device header file; choose a new file"), "device header file creation failed")
+		}
+		defer func() {
+			_ = headerFile.Close()
+			if !deviceHeaderCreated {
+				_ = os.Remove(*deviceHeader)
+			}
+		}()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := db.Open(ctx, os.Getenv(config.EnvDatabaseURL))
@@ -78,6 +97,22 @@ func recoverCommand(args []string, stdin io.Reader, out, errout io.Writer) error
 	result, err := auth.Admin{Pool: pool}.RecoverProtectedAdmin(ctx, password)
 	if err != nil {
 		return record(result, err, err.Error())
+	}
+	if headerFile != nil {
+		device, err := (auth.Admin{Pool: pool, Actor: audit.OperatorCLI()}).CreateLocalDevice(ctx, result.ID)
+		if err == nil {
+			_, err = io.WriteString(headerFile, "Cookie: "+auth.LocalDeviceCookie+"="+device+"\n")
+		}
+		if err == nil {
+			err = headerFile.Sync()
+		}
+		if err == nil {
+			err = headerFile.Close()
+		}
+		if err != nil {
+			return record(result, errors.New("password recovered but device header could not be created; retry with the pending temporary password"), "device header creation failed after password recovery")
+		}
+		deviceHeaderCreated = true
 	}
 	_ = record(result, nil, "")
 	return json.NewEncoder(out).Encode(result)

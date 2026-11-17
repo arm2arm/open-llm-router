@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
 
@@ -142,7 +143,7 @@ func TestBrowserLoginRoutesRetainLocalAlternativeDuringOutage(t *testing.T) {
 }
 
 func TestPasswordWorkIsBoundedAndForwardingHeadersIgnored(t *testing.T) {
-	h := &Handler{passwordSlots: make(chan struct{}, 2)}
+	h := &Handler{passwordSlots: make(chan struct{}, 2), passwordAnonymousSlots: make(chan struct{}, 1)}
 	h.passwordSlots <- struct{}{}
 	h.passwordSlots <- struct{}{}
 	r := httptest.NewRequest("POST", "https://portal.example/portal/login/local", nil)
@@ -153,10 +154,47 @@ func TestPasswordWorkIsBoundedAndForwardingHeadersIgnored(t *testing.T) {
 		t.Fatal("untrusted address used for throttling", got)
 	}
 	w := httptest.NewRecorder()
-	if h.allowPassword(w, r, "admin") || w.Code != 429 || w.Header().Get("Retry-After") != "1" {
+	if release, ok := h.allowPassword(w, r, "admin"); ok || release != nil || w.Code != 429 || w.Header().Get("Retry-After") != "1" {
 		t.Fatal("unbounded concurrent password work")
 	}
-	if len(h.passwordSlots) != 2 {
+	if len(h.passwordSlots) != 2 || len(h.passwordAnonymousSlots) != 0 {
 		t.Fatal("rejected request leaked a password slot")
+	}
+}
+
+func TestPasswordWorkReservesKnownDeviceCapacity(t *testing.T) {
+	h := &Handler{passwordSlots: make(chan struct{}, 2), passwordAnonymousSlots: make(chan struct{}, 1)}
+	anonymous, ok := h.acquirePasswordWork(false)
+	if !ok {
+		t.Fatal("initial anonymous work refused")
+	}
+	if _, ok := h.acquirePasswordWork(false); ok {
+		t.Fatal("anonymous work consumed the reserved slot")
+	}
+	known, ok := h.acquirePasswordWork(true)
+	if !ok {
+		t.Fatal("anonymous work blocked a known device")
+	}
+	if _, ok := h.acquirePasswordWork(true); ok {
+		t.Fatal("total password work exceeded two operations")
+	}
+	anonymous()
+	known()
+	if len(h.passwordSlots) != 0 || len(h.passwordAnonymousSlots) != 0 {
+		t.Fatal("password work slots leaked")
+	}
+}
+
+func TestDeviceLookupWorkIsBounded(t *testing.T) {
+	h := &Handler{deviceLookupSlots: make(chan struct{}, 1)}
+	h.deviceLookupSlots <- struct{}{}
+	r := httptest.NewRequest("POST", "https://portal.example/portal/login/local", nil)
+	r.AddCookie(&http.Cookie{Name: auth.LocalDeviceCookie, Value: randomToken()})
+	w := httptest.NewRecorder()
+	if release, ok := h.allowPassword(w, r, "admin"); ok || release != nil || w.Code != 429 || w.Header().Get("Retry-After") != "1" {
+		t.Fatal("device lookups queued beyond their work budget")
+	}
+	if len(h.deviceLookupSlots) != 1 {
+		t.Fatal("refused lookup released another request's work slot")
 	}
 }

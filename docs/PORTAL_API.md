@@ -64,12 +64,26 @@ and an `Origin` exactly matching `PORTAL_BASE_URL`; cross-site Fetch Metadata is
 The UI can use `fetch(url, {method, headers: {'Content-Type': 'application/json'}, body: ...})`.
 
 Local login and password change use bounded 8 KiB JSON bodies and fixed one-minute
-throttle windows: ten attempts per username, twenty per socket source address and sixty
-globally. All attempts count. `429` includes `Retry-After`; rejections never extend a
-window or disable an account. Forwarding headers are ignored. Hashed buckets persist in
-PostgreSQL, with a 4096-row bound, and at most two password operations run concurrently
-per process. See [the guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak)
-for a cookie-jar workflow that keeps passwords out of command arguments.
+throttle windows. Anonymous attempts share ten attempts per submitted username,
+twenty per socket address and sixty globally; forwarding headers are ignored.
+Successful local login also sets an `olr_device` cookie with the session cookie's
+security attributes, retained for 30 days. It grants no authentication or access:
+the correct password remains required. A valid cookie is bound to its account and
+uses a separate ten-attempt device budget, so anonymous traffic cannot fill it.
+It survives logout/password rotation and renews after successful local login.
+A browser without this cookie uses the anonymous budgets. At most eight device
+hashes are retained per account; expired registrations are pruned by retention.
+
+`429` includes `Retry-After`; rejections never extend a window or disable an
+account. Bucket hashes persist in PostgreSQL with separate 4096-row namespaces
+for anonymous and trusted budgets. At most two password operations run at once,
+with one reserved for known devices or authenticated administration; device
+lookups have an eight-operation ceiling. Administrator password-management
+operations use a separate ten/minute per-administrator budget. See
+[the guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak) for a
+cookie-jar workflow that keeps passwords out of command arguments, and the
+[runbook](RUNBOOK.md#recover-during-a-local-login-throttle-attack) for new-device
+operator recovery while anonymous attempts remain throttled.
 
 ## Current user
 

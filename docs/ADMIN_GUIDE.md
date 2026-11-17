@@ -369,6 +369,13 @@ throughout.
 
 ### Use local authentication without Keycloak
 
+Successful local sign-in remembers the browser with a 30-day `olr_device` cookie.
+It grants a separate guessing budget, never a session, so anonymous failures do
+not block a known device. Keep the cookie on a trusted browser; sign-out still
+ends the session. For a new device during an attack, use
+[operator recovery with a private header file](RUNBOOK.md#recover-during-a-local-login-throttle-attack).
+
+
 Open `/portal/` to choose a sign-in method. **Continue with Keycloak** is the
 primary option when Keycloak is configured; the local username/password form
 remains visible. With no Keycloak configuration, only local sign-in is offered.

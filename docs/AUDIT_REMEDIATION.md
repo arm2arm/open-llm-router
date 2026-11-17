@@ -11,7 +11,7 @@ and P3; dependencies may change that order.
 
 | Package | Source findings | Progress in this pass |
 | --- | --- | --- |
-| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | #157, #187, #198 and #253 in PR #292; #172 and #252 implemented; #161 pending |
+| #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | #157/#187/#198/#253: PR #292; #172/#252: PR #293; #161: this change |
 | #165 Usage accounting | #165, #168, #178, #204 | Pending |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Pending |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
@@ -69,3 +69,15 @@ and P3; dependencies may change that order.
   a persistent first-user 500 and a deadline-limited slow first user, while
   subsequent users still lose or update access. Provider-wide authorization
   and transport failures return before any staged account changes are written.
+
+- **#161:** Local sign-in now remembers up to eight devices per account for
+  30 days. Device cookies grant only a separate ten-attempt guessing budget;
+  passwords remain mandatory. Anonymous budget storage and password-work
+  capacity cannot consume the known-device allowance. Operator recovery can
+  write a private curl header file without clearing anonymous throttles.
+  Integration coverage keeps an anonymous username/global/table flood active,
+  verifies known/new recovery devices can sign in, enforces device guessing
+  limits and account/expiry binding, proves cookie-only requests cannot
+  authenticate, and checks the registration cap and retention. The CLI recovery
+  acceptance test uses a mode-0600 header, completes the required password
+  change during a flood and verifies secrets stay out of output and logs.
