@@ -255,13 +255,12 @@ export function RequestsPage() {
         </div>
       </div>
       <ErrorNotice error={query.error ?? prefs.error} />
-      {prefs.data && (
-        <TraceSettings
-          key={`${prefs.data.enabled}-${prefs.data.retention_days}`}
-          preferences={prefs.data}
-        />
-      )}
-      <div className="trace-metrics" aria-label="Recent request summary">
+      {prefs.data && <TraceSettings preferences={prefs.data} />}
+      <div
+        role="group"
+        className="trace-metrics"
+        aria-label="Recent request summary"
+      >
         <Metric
           icon={<Activity size={17} />}
           title="Recent requests"
@@ -292,7 +291,11 @@ export function RequestsPage() {
         />
       </div>
       {query.data && all.length >= query.data.limit && (
-        <p role="status" className="text-sm text-muted-foreground">
+        <p
+          role="status"
+          aria-label="Request history window"
+          className="text-sm text-muted-foreground"
+        >
           Showing the latest {query.data.limit} requests. Filters and totals
           cover this window only.
         </p>
@@ -374,7 +377,7 @@ export function RequestsPage() {
                   <th>Key</th>
                 </tr>
               </thead>
-              <tbody aria-live="polite" aria-relevant="additions">
+              <tbody>
                 {running.map((r) => (
                   <RunningRow
                     key={r.request_id}
@@ -810,6 +813,9 @@ function RequestRow({
 
 function TraceSettings({ preferences }: { preferences: Preferences }) {
   const client = useQueryClient()
+  const controls = useRef<HTMLFormElement>(null)
+  const restoreFocus = useRef(false)
+  const [saved, setSaved] = useState('')
   const [enabled, setEnabled] = useState(preferences.enabled)
   const [days, setDays] = useState(String(preferences.retention_days))
   const save = useMutation({
@@ -819,6 +825,17 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
         retention_days: Number(days),
       }),
     onSuccess: (value) => {
+      if (
+        restoreFocus.current &&
+        (document.activeElement === document.body ||
+          controls.current?.contains(document.activeElement))
+      )
+        controls.current
+          ?.querySelector<HTMLInputElement>('[role="switch"]')
+          ?.focus()
+      setSaved(
+        `Detailed logging ${value.enabled ? 'enabled' : 'disabled'}. Traces kept for ${value.retention_days} days.`,
+      )
       client.setQueryData(['trace-preferences'], value)
       void client.invalidateQueries({ queryKey: ['requests'] })
     },
@@ -830,7 +847,12 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
     Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 30
   function submit(e: FormEvent) {
     e.preventDefault()
-    if (dirty && valid) save.mutate()
+    if (dirty && valid) {
+      restoreFocus.current = !!controls.current?.contains(
+        document.activeElement,
+      )
+      save.mutate()
+    }
   }
   return (
     <section
@@ -851,7 +873,11 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
           </p>
         </div>
       </div>
-      <form onSubmit={submit} className="trace-settings-controls">
+      <form
+        ref={controls}
+        onSubmit={submit}
+        className="trace-settings-controls"
+      >
         <label className="trace-toggle">
           <input
             type="checkbox"
@@ -885,6 +911,13 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
           {save.isPending ? 'Saving…' : 'Save settings'}
         </Button>
       </form>
+      <p
+        role="status"
+        aria-label="Logging settings result"
+        className="trace-footnote"
+      >
+        {saved}
+      </p>
       <p className="trace-footnote">
         Choose 1–30 days. Disabling stops new captures; existing traces expire
         on schedule. Shorter retention also applies to stored traces.

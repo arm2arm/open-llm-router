@@ -831,7 +831,11 @@ export function RoutingSettingsPanel() {
                 onSaved={reload}
               />
               {draft && (
-                <div className="grid gap-2" aria-label="Routing draft status">
+                <div
+                  role="group"
+                  className="grid gap-2"
+                  aria-label="Routing draft status"
+                >
                   {draft.validation?.valid ? (
                     <p className="subtitle">
                       Draft {draft.id} is valid. Activation probes the changed
@@ -849,7 +853,7 @@ export function RoutingSettingsPanel() {
                     </div>
                   )}
                   {data.impact_available && (
-                    <div aria-label="Draft affected users">
+                    <div role="group" aria-label="Draft affected users">
                       <p>
                         Affected users: {data.affected_users.length}. The
                         protected local administrator retains access.

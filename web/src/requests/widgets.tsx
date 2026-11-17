@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { Check, ChevronRight, Copy, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { stringifyExactJSON } from '@/lib/exact-json'
@@ -108,12 +108,14 @@ function Node({
   depth,
   open,
   last,
+  path,
 }: {
   name?: string
   value: unknown
   depth: number
   open: number
   last: boolean
+  path: string
 }) {
   const container = typeof value === 'object' && value !== null
   const [expanded, setExpanded] = useState(depth < open)
@@ -147,7 +149,7 @@ function Node({
           type="button"
           className="json-toggle"
           aria-expanded={expanded}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${path}`}
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronRight size={11} />
@@ -155,13 +157,9 @@ function Node({
         {key}
         {l}
         {!expanded && (
-          <button
-            type="button"
-            className="json-summary"
-            onClick={() => setExpanded(true)}
-          >
+          <span className="json-summary">
             {list ? `${entries.length} items` : `${entries.length} keys`}
-          </button>
+          </span>
         )}
         {!expanded && !list && preview(value as Record<string, unknown>) && (
           <span className="json-preview">
@@ -175,6 +173,7 @@ function Node({
         entries.map(([k, v], i) => (
           <Node
             key={k}
+            path={`${path}/${k.replace(/~/g, '~0').replace(/\//g, '~1')}`}
             name={list ? undefined : k}
             value={v}
             depth={depth + 1}
@@ -196,13 +195,18 @@ export function JsonTree({
   value,
   open = 2,
   title,
+  label,
   download,
 }: {
   value: unknown
   open?: number
   title?: ReactNode
+  label?: string
   download?: string
 }) {
+  const id = useId()
+  const scope =
+    label ?? (typeof title === 'string' ? title : `JSON value ${id}`)
   const text = stringifyExactJSON(value, 2)
   return (
     <div className="json-tree">
@@ -213,18 +217,24 @@ export function JsonTree({
           {download && <DownloadButton value={value} name={download} />}
         </span>
       </div>
-      <div className="json-tree-body" role="tree">
-        <Node value={value} depth={0} open={open} last />
+      <div className="json-tree-body" role="group" aria-label={scope}>
+        <Node path={scope} value={value} depth={0} open={open} last />
       </div>
     </div>
   )
 }
 
 // A JSON tree when the value parses, otherwise preformatted text.
-export function Structured({ value }: { value: string }) {
+export function Structured({
+  value,
+  label,
+}: {
+  value: string
+  label?: string
+}) {
   const parsed = parseJSON(value)
   if (typeof parsed === 'object' && parsed !== null)
-    return <JsonTree value={parsed} open={3} />
+    return <JsonTree value={parsed} label={label} open={3} />
   return <pre className="trace-plain">{value}</pre>
 }
 

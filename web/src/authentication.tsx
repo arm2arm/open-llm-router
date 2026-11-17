@@ -511,7 +511,7 @@ function ChecksPanel({
       </form>
       {results && <Results results={results} />}
       {stored?.test_sign_in && (
-        <div aria-label="Test sign-in result">
+        <div role="group" aria-label="Test sign-in result">
           <Results results={[stored.test_sign_in]} />
         </div>
       )}
@@ -640,7 +640,11 @@ export function AuthenticationSettingsPanel() {
               </ul>
             </div>
           )}
-          <div className="grid gap-2" aria-label="Identity provider URLs">
+          <div
+            role="group"
+            className="grid gap-2"
+            aria-label="Identity provider URLs"
+          >
             <h3 className="panel-title">Register these on the portal client</h3>
             <dl className="grid gap-1 text-sm">
               <div>
@@ -734,7 +738,7 @@ export function AuthenticationSettingsPanel() {
             )
           )}
           {data.settings.draft && (
-            <div className="grid gap-2" aria-label="Draft status">
+            <div role="group" className="grid gap-2" aria-label="Draft status">
               {data.settings.draft.validation?.valid ? (
                 <p className="subtitle">
                   {readyToActivate(data.settings.draft)

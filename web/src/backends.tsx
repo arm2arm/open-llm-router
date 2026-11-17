@@ -676,6 +676,7 @@ function BackendEditor({
                 </Button>
               </div>
               <div
+                role="group"
                 className="backend-detection"
                 aria-label="Backend detection"
                 aria-live="polite"

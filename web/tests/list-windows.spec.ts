@@ -62,9 +62,9 @@ test('capped history identifies an incomplete run window', async ({ page }) => {
     await route.fulfill({ json: body })
   })
   await page.goto('/portal/requests?live=off')
-  await expect(page.getByRole('status')).toContainText(
-    'Showing the latest 200 requests',
-  )
+  await expect(
+    page.getByRole('status', { name: 'Request history window' }),
+  ).toContainText('Showing the latest 200 requests')
   await expect(
     page.getByText('Earlier calls may be outside this window.', {
       exact: false,

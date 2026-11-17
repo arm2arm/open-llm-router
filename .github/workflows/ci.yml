@@ -106,7 +106,7 @@ jobs:
         run: make up
       - name: Probe router and both mock backends
         run: make smoke
-      - name: Portal self-service browser journey
+      - name: Portal browser journeys, accessibility and reflow
         run: cd web && npm run test:e2e
       - name: Clean install without an identity provider
         run: make acceptance-local

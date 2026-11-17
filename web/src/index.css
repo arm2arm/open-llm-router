@@ -406,13 +406,14 @@
   top: 3px;
   left: 3px;
   border-radius: 50%;
-  background: white;
+  background: var(--background);
   transition: transform 150ms;
 }
 .trace-toggle input:checked {
   background: var(--primary);
 }
 .trace-toggle input:checked::after {
+  background: var(--primary-foreground);
   transform: translateX(16px);
 }
 .trace-days {
@@ -807,12 +808,12 @@
   --secondary: #eff4f2;
   --secondary-foreground: #24423b;
   --muted: #f1f5f3;
-  --muted-foreground: #63746e;
+  --muted-foreground: #52675e;
   --accent: #e7f4ee;
   --accent-foreground: #145b47;
   --destructive: #b43939;
   --border: #dce5e0;
-  --input: #d0dcd5;
+  --input: #71857a;
   --ring: #0d7668;
   --radius: 0.65rem;
   --phase-admission: #b9c7c1;
@@ -822,7 +823,7 @@
   --phase-generate: #0d7668;
   --seg-reasoning: #8a73c9;
   --seg-text: #2f9b7c;
-  --seg-tool: #d07a2c;
+  --seg-tool: #8f4a09;
   --json-key: #2f5f8f;
   --json-string: #2f6f3a;
   --json-number: #9a4f12;
@@ -844,7 +845,7 @@
   --accent-foreground: #a7edcf;
   --destructive: #ff9999;
   --border: #30483b;
-  --input: #3f5b4c;
+  --input: #799287;
   --ring: #68d6b2;
   --phase-admission: #4d6559;
   --phase-queue: #e0b45e;
@@ -880,8 +881,10 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 }
-* {
-  border-color: var(--border);
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 }
 body {
   margin: 0;
@@ -1259,6 +1262,10 @@ progress::-moz-progress-bar {
 }
 .daily-chart g:focus {
   outline: none;
+}
+.daily-chart g:focus-visible .chart-hit {
+  stroke: var(--ring);
+  stroke-width: 2;
 }
 .daily-chart .chart-axis {
   stroke: var(--border);
@@ -2110,4 +2117,15 @@ progress::-moz-progress-bar {
   border: 1px solid var(--input);
   letter-spacing: 0;
   text-transform: none;
+}
+
+.agent-access {
+  overflow-wrap: anywhere;
+}
+.agent-access > *,
+.agent-access article {
+  min-width: 0;
+}
+.agent-access pre {
+  max-width: 100%;
 }

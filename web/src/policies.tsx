@@ -317,7 +317,11 @@ export function AccessPreview({ document }: { document: RoutingDocument }) {
         </p>
       )}
       {preview && (
-        <div aria-label="Policy preview results" className="grid gap-2 text-sm">
+        <div
+          role="group"
+          aria-label="Policy preview results"
+          className="grid gap-2 text-sm"
+        >
           <p>
             Models: {preview.models.join(', ') || 'None'}. Aliases:{' '}
             {Object.keys(preview.aliases).join(', ') || 'None'}.

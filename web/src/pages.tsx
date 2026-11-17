@@ -58,6 +58,7 @@ export function DailyChart() {
     refetchInterval: 60_000,
   })
   const [active, setActive] = useState<number | null>(null)
+  const [hover, setHover] = useState<number | null>(null)
   const [showTable, setShowTable] = useState(false)
   const days = query.data?.days ?? []
   const tokens = days.map((d) => d.input_tokens + d.output_tokens)
@@ -66,7 +67,8 @@ export function DailyChart() {
   const height = 160
   const gap = 2
   const bar = days.length ? width / days.length - gap : 0
-  const shown = active ?? days.length - 1
+  const selected = active ?? days.length - 1
+  const shown = hover ?? selected
   const current = days[shown]
   return (
     <section className="panel" aria-label="Tokens per day">
@@ -94,9 +96,9 @@ export function DailyChart() {
           <svg
             className="daily-chart"
             viewBox={`0 0 ${width} ${height + 18}`}
-            role="img"
-            aria-label={`Tokens per day, peak ${number(peak)}`}
-            onMouseLeave={() => setActive(null)}
+            role="listbox"
+            aria-label="Daily token usage; use arrow keys to choose a day"
+            onMouseLeave={() => setHover(null)}
           >
             <line
               x1={0}
@@ -111,12 +113,31 @@ export function DailyChart() {
               return (
                 <g
                   key={d.day}
-                  tabIndex={0}
-                  role="button"
+                  tabIndex={i === selected ? 0 : -1}
+                  data-day={i}
+                  role="option"
+                  aria-selected={i === selected}
                   aria-label={`${shortDay(d.day)}: ${number(tokens[i])} tokens`}
-                  onMouseEnter={() => setActive(i)}
-                  onFocus={() => setActive(i)}
-                  onBlur={() => setActive(null)}
+                  onMouseEnter={() => setHover(i)}
+                  onFocus={() => {
+                    setActive(i)
+                    setHover(null)
+                  }}
+                  onClick={(e) => e.currentTarget.focus()}
+                  onKeyDown={(e) => {
+                    let next = i
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown')
+                      next = Math.min(days.length - 1, i + 1)
+                    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')
+                      next = Math.max(0, i - 1)
+                    else if (e.key === 'Home') next = 0
+                    else if (e.key === 'End') next = days.length - 1
+                    else return
+                    e.preventDefault()
+                    e.currentTarget.ownerSVGElement
+                      ?.querySelector<SVGElement>(`[data-day="${next}"]`)
+                      ?.focus()
+                  }}
                 >
                   {/* The hit target spans the full column, larger than the bar. */}
                   <rect
@@ -125,6 +146,7 @@ export function DailyChart() {
                     width={bar}
                     height={height}
                     fill="transparent"
+                    className="chart-hit"
                   />
                   {h > 0 && (
                     <path
@@ -319,6 +341,7 @@ function UserDetail({
         onSaved={refresh}
       />
       <div
+        role="group"
         className="rounded-md bg-muted p-3 text-sm"
         aria-label="Effective access"
       >

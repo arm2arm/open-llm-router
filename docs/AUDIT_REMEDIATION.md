@@ -16,9 +16,9 @@ and P3; dependencies may change that order.
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
-| #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | All eight fixes implemented; final validation pending |
-| #173 Request history | #173, #174, #229, #258 | Pending |
-| #185 Accessibility | #185, #230, #250, #264 | Pending |
+| #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Completed in PR #309 |
+| #173 Request history | #173, #174, #229, #258 | Completed in PR #310 |
+| #185 Accessibility | #185, #230, #250, #264 | All four findings implemented; CI validation pending |
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Pending |
 | #195 Agent administration | #195, #245, #261 | Pending |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Pending |
@@ -411,3 +411,23 @@ and P3; dependencies may change that order.
   instead of claiming a complete start. User lists show the 500-result cap;
   policy previews search by name/email and retain the selected user across
   searches. PostgreSQL and browser regressions cover both window boundaries.
+
+## Portal accessibility evidence
+
+- **#185:** Shared input styling respects its border, invalid and focus colors.
+  Both themes meet computed 3:1 field/switch contrast and 4.5:1 tool/header text
+  contrast. Home captions and focus indicators meet their contrast bounds.
+  Enabled buttons no longer fade through a low-contrast disabled opacity.
+- **#230:** The daily chart has one roving tab stop, arrow/Home/End navigation
+  and a focus outline even for zero-token days. Logging saves retain form focus
+  and announce the result; route titles name the view. JSON disclosures use named
+  native buttons and path labels instead of an incomplete tree role. A DOM
+  observer verifies filtering and grouping add no live-region announcements.
+- **#250:** Existing dialog height/scroll bounds are verified at 640×360,
+  1366×650 and 844×390. Agent cards and actions reflow at 320/390 pixels; code
+  examples remain independently keyboard-scrollable, with no document overflow.
+- **#264:** Required browser CI runs axe on the home page and main portal views,
+  including both themes, with no rule exclusions. Recommended JSX accessibility
+  linting and a named-container rule also run in `npm run lint`.
+  All 21 focused browser regressions passed; seven synthetic visual checks also
+  passed, with rendered narrow and dark views inspected. See ACCESSIBILITY.md.

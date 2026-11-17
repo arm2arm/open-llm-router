@@ -171,6 +171,7 @@ test containers and database volume. See the [acceptance matrix](docs/ADMIN_GUID
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | deployment, configuration reference, operations, limits, known limitations |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | API, authentication, accounting and limits in detail; tests; code layout |
 | [docs/PORTAL_API.md](docs/PORTAL_API.md) | the portal's JSON API |
+| [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) | portal contrast, keyboard, reflow and automated accessibility checks |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | metrics, dashboard, traces and request logs |
 | [docs/REQUEST_TRACING.md](docs/REQUEST_TRACING.md) | illustrated request viewer, conversation and stream inspection, personal retention and capture limits |
 | [docs/CLIENTS.md](docs/CLIENTS.md) | SDKs, Claude Code, OpenCode and real backends |
