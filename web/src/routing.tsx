@@ -275,6 +275,7 @@ function ModelEditor({
   references,
   backends,
   onRenameBackend,
+  onRename,
   blockers,
   onChange,
   onRemove,
@@ -284,10 +285,13 @@ function ModelEditor({
   references: string[]
   backends: Record<string, Backend>
   onRenameBackend: (id: string, name: string) => void
+  onRename: (name: string) => string | undefined
   blockers: string[]
   onChange: (model: EndpointModel) => void
   onRemove: () => void
 }) {
+  const [editedName, setEditedName] = useState(name)
+  const [nameError, setNameError] = useState('')
   const number = (key: keyof EndpointModel) => (
     <label className="grid gap-1 text-sm">
       {
@@ -324,6 +328,47 @@ function ModelEditor({
           onClick={onRemove}
         >
           <Trash2 /> Remove model
+        </Button>
+      </div>
+      <div className="grid gap-2">
+        <label className="grid gap-1 text-sm">
+          Model name
+          <Input
+            aria-label={`${name} model name`}
+            value={editedName}
+            maxLength={128}
+            placeholder="e.g. aip-fast"
+            aria-invalid={!!nameError}
+            onChange={(event) => {
+              setEditedName(event.target.value)
+              setNameError('')
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                setNameError(onRename(editedName) ?? '')
+              }
+            }}
+          />
+        </label>
+        <p className="subtitle text-sm">
+          The name users select in API clients. Group grants and aliases follow
+          a rename; the upstream model stays the same. Update clients that use
+          the old name.
+        </p>
+        {nameError && (
+          <p role="alert" className="error">
+            {nameError}
+          </p>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          className="justify-self-start"
+          disabled={editedName === name}
+          onClick={() => setNameError(onRename(editedName) ?? '')}
+        >
+          Rename model
         </Button>
       </div>
       {blockers.length > 0 && (
@@ -544,6 +589,40 @@ function DraftEditor({
                 },
               }))
             }
+            onRename={(value) => {
+              const renamed = value.trim()
+              if (
+                !renamed ||
+                renamed === '*' ||
+                new TextEncoder().encode(renamed).length > 128 ||
+                /\p{Cc}/u.test(renamed)
+              )
+                return 'Choose a model name of 1–128 bytes, without control characters or “*”.'
+              if (renamed === name) return undefined
+              if (
+                Object.hasOwn(document.models, renamed) ||
+                Object.hasOwn(document.aliases, renamed)
+              )
+                return 'This name is already used by a model or alias.'
+              const next = copyDocument(document)
+              // An implicit upstream name must retain its original value.
+              next.models = {
+                ...next.models,
+                [renamed]: {
+                  ...next.models[name],
+                  upstream_model: next.models[name].upstream_model || name,
+                },
+              }
+              delete next.models[name]
+              for (const group of Object.values(next.groups))
+                group.models = group.models.map((model) =>
+                  model === name ? renamed : model,
+                )
+              for (const alias of Object.keys(next.aliases))
+                if (next.aliases[alias] === name) next.aliases[alias] = renamed
+              setDocument(next)
+              return undefined
+            }}
             blockers={blockers(name)}
             onChange={(model) =>
               setDocument({

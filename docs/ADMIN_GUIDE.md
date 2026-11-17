@@ -41,6 +41,21 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Recover a lost protected administrator password | `olr admin recover` on the host or in the router container | No restart; works without Keycloak |
 
 The portal and local password API run without OIDC and during a Keycloak outage.
+When institutional login is primary, the sign-in page highlights **Institutional
+login** through Keycloak and keeps local credentials under **Use a local account**.
+The direct `/portal/sign-in/local` recovery page always shows the local form.
+
+In **Admin → Advanced routing**, edit a route's **Model name** and select **Rename
+model**, then save and activate the draft. This replaces generated names such as
+`backend-…/model` with a name such as `aip-fast`. Group grants and alias targets
+follow the rename; the upstream model, backend IDs and replica settings remain
+unchanged. Clients using the old route name must use the new name or an existing
+alias. Backend names are edited separately in each replica's **Backend name** field.
+
+The public **About** page is available at `/portal/about`, from sign-in, the
+portal navigation and the public project overview. It includes developer
+credits, locally served avatars, project links, funding and citation metadata.
+
 An ordinary CLI user has no password credential; putting it in an `admin: true`
 group does not create one. The development account named `admin`
 is a **Keycloak account**, not a protected local router administrator.

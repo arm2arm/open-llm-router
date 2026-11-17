@@ -22,16 +22,22 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/portal/connect')
   await expect(
-    page.getByRole('heading', { name: 'Sign in', exact: true }),
+    page.getByRole('heading', {
+      name: 'Welcome to Open LLM Router',
+      exact: true,
+    }),
   ).toBeVisible()
-  await expect(page.getByLabel('Local username', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Local username', { exact: true })).toBeHidden()
   await expect(
-    page.getByRole('button', { name: 'Continue with Keycloak' }),
+    page.getByRole('button', { name: 'Continue with institutional login' }),
   ).toHaveAttribute('data-variant', 'default')
+  await page.getByText('Use a local account', { exact: true }).click()
   await expect(
     page.getByRole('button', { name: 'Sign in with local account' }),
   ).toHaveAttribute('data-variant', 'outline')
-  await page.getByRole('button', { name: 'Continue with Keycloak' }).click()
+  await page
+    .getByRole('button', { name: 'Continue with institutional login' })
+    .click()
   await expect(page.getByLabel('Username', { exact: true })).toBeVisible()
   await page.getByLabel('Username', { exact: true }).fill('staff')
   await page.getByLabel('Password', { exact: true }).fill('staff-dev-only')
@@ -236,7 +242,7 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   ).toBeVisible()
   await page.goto('/portal/keys')
   await expect(
-    page.getByRole('button', { name: 'Continue with Keycloak' }),
+    page.getByRole('button', { name: 'Continue with institutional login' }),
   ).toBeVisible()
 })
 
@@ -246,7 +252,9 @@ test('development realm admin is identified as a Keycloak account', async ({
 }) => {
   await page.goto('/')
   await page.getByRole('link', { name: 'Sign in', exact: true }).click()
-  await page.getByRole('button', { name: 'Continue with Keycloak' }).click()
+  await page
+    .getByRole('button', { name: 'Continue with institutional login' })
+    .click()
   await page.getByLabel('Username', { exact: true }).fill('admin')
   await page.getByLabel('Password', { exact: true }).fill('admin-dev-only')
   await page.getByRole('button', { name: 'Sign In', exact: true }).click()

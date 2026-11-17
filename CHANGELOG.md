@@ -5,6 +5,13 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Institutional sign-in has a prominent Keycloak card; local credentials are
+  collapsed when institutional login is primary. Direct local recovery stays available.
+- Admins can rename public model routes, including generated names, while
+  preserving upstream model IDs, replicas, group grants and alias targets.
+  New collision names use the backend's readable name instead of its internal ID.
+- A public About page brings together project details, developer credits and
+  avatars, development tools, funding and citation links.
 - Open WebUI Direct Connections can use personal OLR keys through opt-in
   `cors.allowed_origins`. Approved browser preflight is anonymous; inference
   authentication, group limits and streaming cancellation remain enforced.

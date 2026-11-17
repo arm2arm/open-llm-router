@@ -690,6 +690,7 @@ test('clone preserves configuration and model selection under a unique new name'
   original.health_path = '/health'
   document.models.fast.pool[0].weight = 3
   document.models.fast.pool[0].max_inflight = 5
+  document.models['deepseek-r1'] = structuredClone(document.models.fast)
   document.backends!.existingCopy = {
     ...structuredClone(original),
     name: 'Test GPU (copy)',
@@ -734,6 +735,9 @@ test('clone preserves configuration and model selection under a unique new name'
   const copiedRoute = Object.values(saved[0].document.models).find((model) =>
     model.pool.some((replica) => replica.backend === id),
   )!
+  expect(saved[0].document.models['Test GPU (copy 2)/deepseek-r1']).toEqual(
+    copiedRoute,
+  )
   expect(copiedRoute).toMatchObject({
     upstream_model: 'deepseek-r1',
     protocols: document.models.fast.protocols,
@@ -878,4 +882,51 @@ test('replica backend names update shared labels without changing IDs or credent
     Object.keys(before.backends!).sort(),
   )
   expect(saved[0].secrets).toEqual({})
+})
+
+test('model renaming replaces generated names and preserves grants, aliases and replicas', async ({
+  page,
+}) => {
+  const { view, saved } = await workspace(page)
+  connectionFixture(view)
+  const doc = view.settings.active!.document!
+  const generated = 'backend-94683a76/qwen3.8-27b-bf16-1m'
+  doc.models[generated] = {
+    ...structuredClone(doc.models.fast),
+    upstream_model: '',
+  }
+  doc.groups.staff.models = [generated]
+  doc.aliases['aip-chat'] = generated
+  const before = structuredClone(doc)
+  await page.goto('/portal/admin/advanced')
+  const model = page.getByRole('article', {
+    name: `Model ${generated}`,
+    exact: true,
+  })
+  const input = model.getByLabel(`${generated} model name`, { exact: true })
+  await input.fill('fast')
+  await model.getByRole('button', { name: 'Rename model' }).click()
+  await expect(model.getByRole('alert')).toContainText('already used')
+  await input.fill('aip-chat')
+  await model.getByRole('button', { name: 'Rename model' }).click()
+  await expect(model.getByRole('alert')).toContainText('already used')
+  await input.fill('aip-fast')
+  await model.getByRole('button', { name: 'Rename model' }).click()
+  await expect(
+    page.getByRole('article', { name: 'Model aip-fast', exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Save routing draft', exact: true })
+    .click()
+  await expect.poll(() => saved.length).toBe(1)
+  const result = saved[0].document
+  expect(result.models[generated]).toBeUndefined()
+  expect(result.models['aip-fast']).toEqual({
+    ...before.models[generated],
+    upstream_model: generated,
+  })
+  expect(result.groups.staff.models).toEqual(['aip-fast'])
+  expect(result.aliases['aip-chat']).toBe('aip-fast')
+  expect(result.models.fast).toEqual(before.models.fast)
+  expect(result.backends).toEqual(before.backends)
 })

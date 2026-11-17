@@ -4,7 +4,9 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 // deterministic whichever backend serves chat-model.
 async function login(page: Page) {
   await page.goto('/portal/requests')
-  await page.getByRole('button', { name: 'Continue with Keycloak' }).click()
+  await page
+    .getByRole('button', { name: 'Continue with institutional login' })
+    .click()
   await page.getByLabel('Username', { exact: true }).fill('staff')
   await page.getByLabel('Password', { exact: true }).fill('staff-dev-only')
   await page.getByRole('button', { name: 'Sign In', exact: true }).click()

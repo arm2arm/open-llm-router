@@ -223,7 +223,8 @@ CI runs the same commands on every push and pull request.
 
 ## About and acknowledgments
 
-open-llm-router is developed by [Arman Khalatyan](https://github.com/arm2arm) at
+open-llm-router is coauthored by [Arman Khalatyan](https://github.com/arm2arm)
+(project lead and development) and Ing. E.T.L. Strauss (Infrastructure Engineer) at
 the [Leibniz Institute for Astrophysics Potsdam (AIP)](https://www.aip.de/), using
 tools including Hermes, OpenAI Codex and Anthropic Claude Code.
 
@@ -239,8 +240,8 @@ of **[Physics-LLM](https://physics-llm.erumdatahub.de/)**. See
 
 If you use open-llm-router in research or a publication, please cite the software:
 
-> Khalatyan, Arman. *open-llm-router* [Computer software]. Leibniz Institute for
-> Astrophysics Potsdam (AIP). https://github.com/arm2arm/open-llm-router
+> Khalatyan, Arman, & Strauss, E. T. L. *open-llm-router* [Computer software].
+> Leibniz Institute for Astrophysics Potsdam (AIP). https://github.com/arm2arm/open-llm-router
 
 [CITATION.cff](CITATION.cff) supplies machine-readable author and repository
 metadata. Use GitHub's **Cite this repository** menu to export BibTeX or APA, and
