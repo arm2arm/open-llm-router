@@ -1344,6 +1344,12 @@ all remaining unrevoked keys for that owner are revoked transactionally, with an
 returns 503, so an unavailable revocation store is distinguishable from invalid
 credentials. File-policy publication also records these revocations and logs
 storage failures.
+Repeated SSO logins with identical identity claims do not create duplicate
+`user.identity_sync` events, change the last identity-sync timestamp or invalidate
+pending administration previews. A changed name, email, verification flag or group
+membership is persisted and audited. Group order and duplicate memberships do not
+constitute a change. The sync timestamp records the last identity change, not
+every successful login.
 Ordinary users cannot read this API and there are no event-edit/delete endpoints.
 
 Successful mutations and their events commit in the same database transaction.
@@ -1362,7 +1368,14 @@ secrets, key labels, arbitrary override reasons and request content are excluded
 Override events say whether a reason was provided; the current reason remains
 in the separately managed override record. Portal attribution uses authenticated
 UUIDs rather than usernames; CLI attribution identifies the operator OS account
-and host, and IdP-driven updates use an identity-provider actor. Application
+and host, and IdP-driven updates use an identity-provider actor. Agent events and
+administration-key last-use records contain only a source network: IPv4 `/24` or
+IPv6 `/48`, with host bits removed before storage and structured audit logging.
+This prefix may still be personal data. Source-network restrictions continue to
+evaluate the full incoming address in memory. Migration 0027 minimizes existing
+database addresses transactionally and restores append-only guards before commit;
+previously exported events and log files require the site's separate retention
+policy. Application
 changes cannot update, delete or truncate historical events or configuration
 revisions. A database owner/superuser with schema-changing authority is outside
 this application privilege model; use separate operational access and backups.
@@ -1370,8 +1383,9 @@ this application privilege model; use separate operational access and backups.
 Retention is explicit: usage/trace retention never prunes audit events. History
 is retained indefinitely by default, until a site adopts a documented archive and
 retention period. No application API/CLI purges history. Account erasure removes
-the identity, credentials and usage but preserves UUID-only administration
-history; with the directory linkage removed, new portal events are pseudonymous.
+the identity, credentials and usage but preserves administration history, including
+UUIDs, coarse agent source networks and CLI account/host attribution. With the
+directory linkage removed, new portal events are pseudonymous.
 Legacy events/revision labels or operator account/host attribution can still be
 personal data. A site requiring further erasure must use authorized, offline DBA
 maintenance and an approved pseudonym mapping/archive policy, covering logs,

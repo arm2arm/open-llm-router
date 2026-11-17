@@ -410,12 +410,30 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 		groups = []string{}
 	}
 	err = a.changeWith(ctx, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified)
-			VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6) ON CONFLICT(issuer,sub) DO UPDATE SET
-			username=EXCLUDED.username,email=EXCLUDED.email,groups=EXCLUDED.groups,synced_at=EXCLUDED.synced_at,email_verified=EXCLUDED.email_verified
-			WHERE users.enabled RETURNING id`, issuer, sub, username, email, groups, emailVerified).Scan(&id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+		// Serialize even first sign-ins of the same identity. Identical claims
+		// must not execute an INSERT/UPDATE: statement-level invalidation
+		// triggers would otherwise stale previews even with zero changed rows.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(jsonb_build_array($1::text,$2::text)::text,5209426))`, issuer, sub); err != nil {
+			return err
+		}
+		var oldName, oldEmail string
+		var oldGroups []string
+		var enabled, verified bool
+		err := tx.QueryRow(ctx, `SELECT id::text,username,email,groups,enabled,email_verified FROM users WHERE issuer=$1 AND sub=$2 FOR UPDATE`, issuer, sub).Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &verified)
+		if err == nil {
+			if !enabled {
+				return ErrNotFound
+			}
+			oldGroups = slices.Clone(oldGroups)
+			incoming := slices.Clone(groups)
+			slices.Sort(oldGroups)
+			slices.Sort(incoming)
+			if oldName == username && oldEmail == email && verified == emailVerified && slices.Equal(slices.Compact(oldGroups), slices.Compact(incoming)) {
+				return errAuthUnchanged
+			}
+			_, err = tx.Exec(ctx, `UPDATE users SET username=$2,email=$3,groups=$4,synced_at=clock_timestamp(),email_verified=$5 WHERE id=$1`, id, username, email, groups, emailVerified)
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6) RETURNING id::text`, issuer, sub, username, email, groups, emailVerified).Scan(&id)
 		}
 		a.event.TargetID = id
 		return err

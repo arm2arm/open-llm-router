@@ -258,7 +258,7 @@ export function AgentAccessPage() {
                       {k.last_used
                         ? new Date(k.last_used).toLocaleString()
                         : 'never'}
-                      {k.last_ip && ` from ${k.last_ip}`}.
+                      {k.last_ip && ` from network ${k.last_ip}`}.
                     </p>
                     {k.parent_id && (
                       <p className="text-sm">

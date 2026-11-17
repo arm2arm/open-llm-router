@@ -91,7 +91,7 @@ func TestAgentAdministrationLifecycle(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT details->'agent' FROM audit_events WHERE details->'agent'->>'change_id'=$1 AND action='user.override_clear' ORDER BY id DESC LIMIT 1`, overrideChange.ID).Scan(&actorDetails); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`"type": "admin_api_key"`, `"source_ip": "127.0.0.1"`, `"transport": "rest"`, overrideChange.ID} {
+	for _, expected := range []string{`"type": "admin_api_key"`, `"source_ip": "127.0.0.0/24"`, `"transport": "rest"`, overrideChange.ID} {
 		if !strings.Contains(actorDetails, expected) {
 			t.Fatal("mutation audit lost agent attribution")
 		}

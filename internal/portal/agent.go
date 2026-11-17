@@ -181,7 +181,7 @@ func (h *Handler) agentAuth(next func(http.ResponseWriter, *http.Request, agentI
 		defer releaseKey()
 		ctx := context.WithValue(r.Context(), agentContext{}, identity)
 		ctx = audit.WithActor(ctx, *identity.User.AgentActor)
-		_, err = h.pool.Exec(ctx, `UPDATE admin_api_keys SET last_used=clock_timestamp(),last_ip=$2 WHERE id=$1`, identity.Key.ID, identity.IP.String())
+		_, err = h.pool.Exec(ctx, `UPDATE admin_api_keys SET last_used=clock_timestamp(),last_ip=$2 WHERE id=$1`, identity.Key.ID, audit.SourceNetwork(identity.IP.String()))
 		if err != nil {
 			unavailable(w)
 			return

@@ -250,7 +250,9 @@ https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference
 Schema migration 0016 adds independent credential, preview and administration-state
 tables and invalidation triggers. Existing inference credentials remain unchanged.
 Database changes retain their transactional audit events. Agent events include
-owner, key ID, source IP, request/transport/change IDs. Preview responses contain
+owner, key ID, coarse source network (IPv4 `/24` or IPv6 `/48`),
+request/transport/change IDs. Network restrictions evaluate the full source IP
+in memory. Key `last_ip` also contains only this coarse network. Preview responses contain
 the authorized caller's current before/after view, but persisted preview summaries
 keep only operation descriptions and parameter/field names, never those values,
 identity data, key labels or free-text reasons. Status lookup returns that minimal
