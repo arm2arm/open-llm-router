@@ -15,7 +15,7 @@ and P3; dependencies may change that order.
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
-| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds (#164) in this change; remaining findings pending |
+| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance (#176) in this change; remaining findings pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
@@ -265,3 +265,14 @@ and P3; dependencies may change that order.
   backend, forwarded limits match in-flight reservations, daily used tokens stay
   within the quota and reservations drain. Existing concurrent strict, Responses
   and OpenWebUI timing quota regressions remain green.
+
+## Calendar-quota SDK retry evidence
+
+- **#176:** Daily/monthly 429s carry `X-Should-Retry: false` without changing
+  Retry-After or reset metadata. Concurrency, RPM, TPM and 503 responses retain
+  their retry behavior. HTTP contract tests cover both protocol envelopes and all
+  gates. An actual Anthropic SDK 2.8.0 check omits `max_retries`, observes outgoing
+  attempts and requires one prompt `RateLimitError`; a subprocess deadline catches
+  long reset sleeps. Local PostgreSQL/SDK regression and the mandatory CI
+  `make sdk-limits` flow exercise this behavior. The latter first verifies RPM
+  remains retryable, then applies a disposable daily limit and erases its fixture.

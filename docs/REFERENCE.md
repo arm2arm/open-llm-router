@@ -333,7 +333,15 @@ JSON error envelope. `error.type` is `rate_limit_error`; `error.limit` identifie
 is an RFC3339 timestamp, also named in the message. Concurrency uses an estimated one-second
 retry: a stream may release a slot sooner or remain active longer. RPM retries at the
 oldest accepted attempt plus 60 seconds. Day/month quotas reset at local midnight in the
-configured IANA timezone, including daylight-saving changes:
+configured IANA timezone, including daylight-saving changes.
+
+Calendar quota refusals also carry `X-Should-Retry: false`, so the default Anthropic
+SDK returns `RateLimitError` promptly rather than sleeping until the reset. The
+`Retry-After`, `limit` and `reset_at` values remain available for an explicit
+caller decision. Concurrency, RPM, TPM and transient 503 responses remain
+retryable and do not carry this header.
+
+For example:
 
 ```yaml
 limits:
