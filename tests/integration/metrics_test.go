@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/buildinfo"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
@@ -120,6 +121,14 @@ func TestObservabilityMetadataAndTracePropagation(t *testing.T) {
 			for _, sample := range family.Metric {
 				if strings.HasPrefix(family.GetName(), "olr_") {
 					for _, label := range sample.Label {
+						if family.GetName() == "olr_build_info" {
+							expected := map[string]string{"version": buildinfo.Version, "commit": buildinfo.Commit, "go_version": buildinfo.GoVersion()}
+							want, allowed := expected[label.GetName()]
+							if !allowed || label.GetValue() != want {
+								t.Fatal("unexpected build metadata label", label.GetName())
+							}
+							continue
+						}
 						if label.GetName() != "model" && label.GetName() != "replica" && label.GetName() != "protocol" && label.GetName() != "status_class" && label.GetName() != "limit" {
 							t.Fatal("non-aggregate metric label", label.GetName())
 						}
