@@ -1125,6 +1125,20 @@ Omitting a limit means unlimited. Strict quota is configured as a boolean in YAM
 and as `1`/`0` in a user override. With strict quota, generation requests must supply
 an output limit (`max_tokens` or supported `max_completion_tokens`); embeddings
 reserve input size and token-count requests do not reserve generation output.
+Strict mode accepts one text generation: `n` and `best_of`, when present, must be
+integer `1`; array/hosted prompts, remote or inline image/audio/video/file parts,
+audio output and server-executed tools return 400 before backend dispatch.
+Output limits must be positive JSON integers below `2^53`; strings, null,
+fractions and exponent notation are rejected. Nested duplicate fields and more
+than 64 JSON levels are rejected to avoid ambiguous validation.
+The forwarded numeric output limit equals the reservation: Chat Completions keeps
+`max_completion_tokens` when supplied, otherwise uses `max_tokens`; Anthropic and
+legacy Completions use `max_tokens`; Responses uses `max_output_tokens`.
+Conflicting legacy Chat limits are normalized to the larger allowance, with the
+deprecated `max_tokens` removed when using `max_completion_tokens`. This preserves
+reasoning-model compatibility. Embeddings reserve their text input size. Use a
+separate policy with ordinary quota accounting for multimodal or batched work;
+that policy can overshoot within the work already admitted.
 
 ### Change one user's limits in the portal
 

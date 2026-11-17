@@ -219,7 +219,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	meta, err := parseRequest(body)
 	if errors.Is(err, errAmbiguousField) {
-		apierr.Write(w, protocol, 400, "invalid_request_error", "model, stream, max_tokens, max_completion_tokens and max_output_tokens must each appear once, spelled in lower case")
+		apierr.Write(w, protocol, 400, "invalid_request_error", "routing and quota fields must each appear once, spelled in lower case")
 		return
 	}
 	if err != nil || meta.Model == "" {
@@ -307,19 +307,18 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		body, _ = json.Marshal(fields)
 	}
 
+	if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {
+		body, err = strictQuotaRequest(body, r.URL.Path, meta)
+		if err != nil {
+			apierr.Write(w, protocol, 400, "invalid_request_error", err.Error())
+			return
+		}
+	}
 	if h.Limits != nil {
 		admission := limits.Admission{User: principal.UserID, Class: principal.KeyClass}
 		if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {
 			// The request size bounds its input tokens: a token covers at
 			// least one byte of text. Over-reserving lasts only while in flight.
-			if meta.MaxTokens == 0 && r.URL.Path != "/v1/embeddings" {
-				field := "max_tokens"
-				if r.URL.Path == "/v1/responses" {
-					field = "max_output_tokens"
-				}
-				apierr.Write(w, protocol, 400, "invalid_request_error", "your group has a strict quota: set "+field)
-				return
-			}
 			admission.Reserve = meta.MaxTokens + int64(len(body))
 		}
 		admitted := time.Now()

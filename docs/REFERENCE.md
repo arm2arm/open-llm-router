@@ -343,7 +343,12 @@ limits:
 Quota counts **input plus output tokens** from completed/aborted calls, charged to the
 request's start date. The charge updates memory synchronously before releasing the slot,
 then queues the database write. Already admitted calls can overshoot a quota unless the
-group sets `strict_quota`, which reserves `max_tokens` plus the request size before each call.
+group sets `strict_quota`, which reserves its output allowance plus the request size before each call.
+The output allowance uses the API's numeric field (`max_completion_tokens` when
+supplied for Chat, `max_output_tokens` for Responses, otherwise `max_tokens`).
+Strict mode requires positive integer limits and one text generation; batched
+prompts, `n`/`best_of` other than 1, media parts, audio output and hosted tools are
+refused before dispatch. See [strict quota restrictions](ADMIN_GUIDE.md#4-understand-group-and-user-limits).
 Without it, overshoot is bounded by the total tokens of admitted calls. `max_concurrent × max_tokens` bounds only their output,
 not prompt tokens; without finite concurrency and bounded requests there is no fixed bound.
 
