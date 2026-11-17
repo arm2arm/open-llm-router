@@ -158,7 +158,7 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   await page.getByRole('button', { name: 'This month', exact: true }).click()
   await expect(page.getByTestId('usage-table')).toBeVisible()
   await expect(
-    page.getByRole('listbox', { name: /^Tokens per day/ }),
+    page.getByRole('listbox', { name: /^Daily token usage/ }),
   ).toBeVisible()
   await page.getByRole('link', { name: 'My requests', exact: true }).click()
   await expect(
