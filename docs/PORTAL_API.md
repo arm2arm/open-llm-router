@@ -645,3 +645,10 @@ admin sessions and the existing same-origin JSON protections:
 Managed settings documents are limited to 256 KiB of encoded JSON. Routing draft
 requests allow a 512 KiB envelope for the document, secrets and revision metadata.
 Import and the operator CLI enforce the same document limit.
+
+Routing activation and rollback build their settings response in the same
+transaction as the revision change. A failed response read therefore rolls back
+the change; a successful commit publishes the prepared runtime without another
+required database read. Mutation responses may omit draft impact computation;
+read the routing view again to refresh that optional preview. A delayed legacy
+endpoint save cannot overwrite a newer routing publication.

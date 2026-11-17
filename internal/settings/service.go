@@ -711,6 +711,7 @@ func (s *Service[D, P]) Rollback(ctx context.Context, domain string, expected, r
 }
 
 func (s *Service[D, P]) activate(ctx context.Context, domain string, expected, revision int64, actor audit.Actor, kind string, requireChecks bool) (View[D], error) {
+	var committed View[D]
 	err := s.change(ctx, domain, audit.Event{Action: "settings." + kind, Actor: actor, Revision: revision}, func(tx pgx.Tx, event *audit.Event) error {
 		st, err := s.lockedState(ctx, tx, domain, expected)
 		if err != nil {
@@ -761,23 +762,33 @@ func (s *Service[D, P]) activate(ctx context.Context, domain string, expected, r
 			domain, revision, draft); err != nil {
 			return ErrStorage
 		}
-		return recordActivation(ctx, tx, domain, revision, kind, actor)
+		if err := recordActivation(ctx, tx, domain, revision, kind, actor); err != nil {
+			return err
+		}
+		// Build the response on the transaction's snapshot. A failed read rolls back
+		// the mutation; after commit there is no fallible read before publication.
+		committed, err = s.view(ctx, tx, domain)
+		return err
 	})
 	if err != nil {
 		return View[D]{}, err
 	}
-	return s.View(ctx, domain)
+	return committed, nil
 }
 
 // View reports effective values with their sources, the active revision and
 // draft with their checks, conflicts and recent history. It never returns a
 // secret value.
 func (s *Service[D, P]) View(ctx context.Context, domain string) (View[D], error) {
+	return s.view(ctx, s.DB, domain)
+}
+
+func (s *Service[D, P]) view(ctx context.Context, q querier, domain string) (View[D], error) {
 	if err := s.checkDomain(domain); err != nil {
 		return View[D]{}, err
 	}
 	view := View[D]{Domain: domain, Effective: []Setting{}, Conflicts: []Conflict{}, History: []Revision[D]{}}
-	st, managed, err := readState(ctx, s.DB, domain, false)
+	st, managed, err := readState(ctx, q, domain, false)
 	if err != nil {
 		return View[D]{}, err
 	}
@@ -789,12 +800,12 @@ func (s *Service[D, P]) View(ctx context.Context, domain string) (View[D], error
 		return view, nil
 	}
 	view.Managed, view.Version = true, st.version
-	active, err := s.describe(ctx, st.active, "active")
+	active, err := s.describe(ctx, q, st.active, "active")
 	if err != nil {
 		return View[D]{}, err
 	}
 	view.Active = &active.Revision
-	secrets, states, problems, err := s.resolve(ctx, s.DB, active.doc)
+	secrets, states, problems, err := s.resolve(ctx, q, active.doc)
 	if err != nil {
 		return View[D]{}, err
 	}
@@ -803,13 +814,13 @@ func (s *Service[D, P]) View(ctx context.Context, domain string) (View[D], error
 		view.Conflicts = found
 	}
 	if st.draft != 0 {
-		draft, err := s.describe(ctx, st.draft, "draft")
+		draft, err := s.describe(ctx, q, st.draft, "draft")
 		if err != nil {
 			return View[D]{}, err
 		}
 		view.Draft = &draft.Revision
 	}
-	rows, err := s.DB.Query(ctx, `SELECT r.id,r.origin,COALESCE(r.based_on,0),r.created_by_label,r.created_at,
+	rows, err := q.Query(ctx, `SELECT r.id,r.origin,COALESCE(r.based_on,0),r.created_by_label,r.created_at,
 		EXISTS(SELECT 1 FROM settings_activations a WHERE a.revision_id=r.id)
 		FROM settings_revisions r WHERE r.domain=$1 ORDER BY r.id DESC LIMIT 20`, domain)
 	if err != nil {
@@ -840,12 +851,12 @@ func (s *Service[D, P]) View(ctx context.Context, domain string) (View[D], error
 	return view, nil
 }
 
-func (s *Service[D, P]) describe(ctx context.Context, id int64, status string) (revisionRow[D], error) {
-	row, err := s.readRevision(ctx, s.DB, id)
+func (s *Service[D, P]) describe(ctx context.Context, q querier, id int64, status string) (revisionRow[D], error) {
+	row, err := s.readRevision(ctx, q, id)
 	if err != nil {
 		return row, err
 	}
-	_, states, _, err := s.resolve(ctx, s.DB, row.doc)
+	_, states, _, err := s.resolve(ctx, q, row.doc)
 	if err != nil {
 		return row, err
 	}

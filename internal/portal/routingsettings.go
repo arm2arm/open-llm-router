@@ -55,7 +55,11 @@ func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user
 	if settingsError(w, err) {
 		return
 	}
-	out := routingView{Settings: view, CredentialReferences: []string{}, AllowedPrivateNetworks: []string{}, GroupGrants: map[string][]string{}}
+	h.respondRoutingView(w, r, view, false)
+}
+
+func (h *Handler) respondRoutingView(w http.ResponseWriter, r *http.Request, view settings.RoutingView, committed bool) {
+	out := routingView{Settings: view, AffectedUsers: []policyImpact{}, CredentialReferences: []string{}, AllowedPrivateNetworks: []string{}, GroupGrants: map[string][]string{}}
 	out.EncryptionKeyConfigured = h.Routing.Cipher != nil
 	running, _ := h.RoutingRuntime.Snapshot()
 	for name, group := range running.Groups {
@@ -67,7 +71,7 @@ func (h *Handler) routingSettings(w http.ResponseWriter, r *http.Request, _ user
 	if h.Endpoints != nil && h.Endpoints.Policy != nil {
 		out.CredentialReferences, out.AllowedPrivateNetworks = h.Endpoints.Policy.References(), h.Endpoints.Policy.Networks()
 	}
-	if view.Draft != nil {
+	if !committed && view.Draft != nil {
 		candidate, _, err := h.Routing.Candidate(r.Context(), settings.DomainRouting, view.Draft.ID)
 		var invalid *settings.ValidationError
 		if err != nil && !errors.As(err, &invalid) {
@@ -239,16 +243,18 @@ func (h *Handler) switchRouting(w http.ResponseWriter, r *http.Request, u user, 
 	}
 	h.routingMu.Lock()
 	defer h.routingMu.Unlock()
+	var responseView settings.RoutingView
 	if kind == "apply" {
-		view, err := h.Routing.View(r.Context(), settings.DomainRouting)
+		var err error
+		responseView, err = h.Routing.View(r.Context(), settings.DomainRouting)
 		if settingsError(w, err) {
 			return
 		}
-		if !view.Managed {
+		if !responseView.Managed {
 			fail(w, 409, "conflict_error", settings.ErrNotManaged.Error())
 			return
 		}
-		body.Revision = view.Active.ID
+		body.Revision = responseView.Active.ID
 	} else if body.Version <= 0 || body.Revision <= 0 {
 		fail(w, 400, "invalid_request_error", "version and revision are required")
 		return
@@ -279,9 +285,9 @@ func (h *Handler) switchRouting(w http.ResponseWriter, r *http.Request, u user, 
 	}
 	switch kind {
 	case "activate":
-		_, err = h.Routing.Activate(r.Context(), settings.DomainRouting, body.Version, body.Revision, portalActor(u), true)
+		responseView, err = h.Routing.Activate(r.Context(), settings.DomainRouting, body.Version, body.Revision, portalActor(u), true)
 	case "rollback":
-		_, err = h.Routing.Rollback(r.Context(), settings.DomainRouting, body.Version, body.Revision, portalActor(u))
+		responseView, err = h.Routing.Rollback(r.Context(), settings.DomainRouting, body.Version, body.Revision, portalActor(u))
 	default:
 		err = audit.Record(r.Context(), h.pool, audit.Event{Action: "settings.apply", Actor: portalActor(u), TargetType: "settings",
 			TargetID: settings.DomainRouting, Revision: revision, Result: audit.Succeeded})
@@ -291,7 +297,7 @@ func (h *Handler) switchRouting(w http.ResponseWriter, r *http.Request, u user, 
 	}
 	publish()
 	h.SetRoutingRuntime(settings.Snapshot{Domain: settings.DomainRouting, Revision: revision, Config: cfg})
-	h.routingSettings(w, r, u)
+	h.respondRoutingView(w, r, responseView, true)
 }
 
 // verifyRouting applies the outbound destination policy before anything is

@@ -16,7 +16,7 @@ and P3; dependencies may change that order.
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
-| #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
+| #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | All eight fixes implemented; final validation pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Pending |
@@ -368,3 +368,12 @@ and P3; dependencies may change that order.
   detection. File and managed regressions reject trailing-slash, case and default
   port aliases, while a single mixed-case origin is stored canonically. File URLs
   retain their strict origin-only syntax.
+
+- **#207:** Activation/rollback construct their response on the transaction's
+  snapshot before commit. Publication no longer depends on a post-commit view
+  read; routing mutation responses avoid optional impact queries after commit.
+  Endpoint publications compare against their preparation snapshot, so a delayed
+  file-based save cannot overwrite a newer managed revision. PostgreSQL tests
+  cancel the service context immediately when the committing connection is
+  released, and stage a real endpoint save after commit while activating managed
+  policy. Unit checks cover both publication orders.
