@@ -929,6 +929,18 @@ options. With no name supplied, the host is used. New connections default to
 administrator-only access and unlimited shared rates. You can save a connection
 without models, or expand **Enter a model ID manually**.
 
+Use **Clone** on a backend card to open a pre-filled copy with a unique name.
+The URL, selected models, access groups, health path and preset are copied, along
+with each copied model's protocols, timeouts and replica options. The
+original stays unchanged. Review the copy and choose **Save backend** to create
+it, or cancel without creating anything. Saved and deployment API keys are bound
+to the original connection, so enter the key for the new backend if it needs one.
+
+In **Advanced routing**, each linked replica has a **Backend name** field.
+Renaming it updates the shared backend's display name in every selector and card;
+the backend ID, routing references and saved credentials stay the same. Save and
+activate the routing draft to publish the name.
+
 Use **Test connection** on a backend card to check its model catalog from the
 OLR server and send a small generation request through the active router. Choose
 the logical model and its native Chat Completions, Responses or Anthropic Messages

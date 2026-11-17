@@ -5,6 +5,7 @@ import {
   type RoutingDocument,
   type RoutingView,
   type EndpointModel,
+  type EndpointReplica,
   type Replica,
   type BackendPreset,
 } from '@/lib/api'
@@ -168,6 +169,7 @@ export function addBackendModels(
   models: string[],
   groups: string[],
   legacyURL?: string,
+  copyFrom?: { backend?: string; url?: string },
 ) {
   const next = structuredClone(document)
   if (legacyURL)
@@ -191,6 +193,18 @@ export function addBackendModels(
         current.models[name].pool.some((replica) => replica.backend === id),
     )
     if (!names.length) {
+      const matchesSource = (replica: EndpointReplica) =>
+        copyFrom?.backend
+          ? replica.backend === copyFrom.backend
+          : !!copyFrom?.url && !replica.backend && replica.url === copyFrom.url
+      const sourceModel = copyFrom
+        ? Object.entries(document.models).find(
+            ([name, model]) =>
+              (model.upstream_model || name) === upstream &&
+              model.pool.some(matchesSource),
+          )?.[1]
+        : undefined
+      const sourceReplica = sourceModel?.pool.find(matchesSource)
       let name =
         upstream.length <= 128 && !current.models[upstream]
           ? upstream
@@ -199,20 +213,22 @@ export function addBackendModels(
       while (current.models[name])
         name = `${id}/${upstream}`.slice(0, 115) + `-${suffix++}`
       const model: EndpointModel = {
-        upstream_model: upstream,
         protocols: ['openai'],
         timeout_s: 120,
         idle_timeout_s: 30,
         queue_timeout_s: 0,
         session_affinity: false,
         priority: null,
+        ...(sourceModel ? structuredClone(sourceModel) : {}),
+        upstream_model: upstream,
         pool: [
           {
-            backend: id,
-            url: '',
             health_path: '',
             weight: 1,
             max_inflight: 2147483647,
+            ...sourceReplica,
+            backend: id,
+            url: '',
             bearer_token_env: '',
           },
         ],
