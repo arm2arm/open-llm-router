@@ -443,7 +443,7 @@ test('local-only first password change, rotation, revocation and logout', async 
   await page.goto(`${local}/portal/login/local`)
   await expect(page).toHaveURL(`${local}/portal/sign-in/local`)
   await expect(
-    page.getByRole('button', { name: 'Continue with Keycloak' }),
+    page.getByRole('button', { name: 'Continue with institutional login' }),
   ).toHaveCount(0)
   await signIn(page, 'wrong-password')
   await expect(page.getByRole('alert')).toContainText(
@@ -610,10 +610,12 @@ test('unreachable Keycloak keeps the default choice visible and direct local log
 }) => {
   await page.goto(`${outage}/portal/`)
   await expect(
-    page.getByRole('button', { name: 'Continue with Keycloak' }),
+    page.getByRole('button', { name: 'Continue with institutional login' }),
   ).toBeDisabled()
   await expect(
-    page.getByText('Keycloak is temporarily unavailable.', { exact: false }),
+    page.getByText('Institutional login is temporarily unavailable.', {
+      exact: false,
+    }),
   ).toBeVisible()
   await page.goto(`${outage}/portal/sign-in/keycloak`)
   await expect(page).toHaveURL(`${outage}/portal/sign-in?sso=unavailable`)
@@ -1335,7 +1337,9 @@ test('administrator applies and rolls back authentication settings without a res
   const signInPage = await visitor.newPage()
   await signInPage.goto(`${activation}/portal/sign-in`)
   await expect(
-    signInPage.getByRole('button', { name: 'Continue with Keycloak' }),
+    signInPage.getByRole('button', {
+      name: 'Continue with institutional login',
+    }),
   ).toBeEnabled()
   await visitor.close()
 

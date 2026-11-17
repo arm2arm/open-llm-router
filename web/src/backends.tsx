@@ -615,7 +615,23 @@ function BackendEditor({
           'Enter an API key for this host, or turn off Use an API key.',
         )
       const next = addBackendModels(
-        document,
+        {
+          ...document,
+          backends: {
+            ...document.backends,
+            [id]: {
+              name: name.trim() || new URL(origin).host,
+              provider: catalog?.provider || entry?.backend.provider,
+              url: origin,
+              api_key: stored ? { stored } : {},
+              private_network: privateNetwork,
+              health_path:
+                healthPath.trim() || catalog?.health_path || '/v1/models',
+              groups,
+              preset: preset || undefined,
+            },
+          },
+        },
         id,
         models,
         groups,
@@ -626,16 +642,6 @@ function BackendEditor({
             : { backend: entry.id }
           : undefined,
       )
-      next.backends![id] = {
-        name: name.trim() || new URL(origin).host,
-        provider: catalog?.provider || entry?.backend.provider,
-        url: origin,
-        api_key: stored ? { stored } : {},
-        private_network: privateNetwork,
-        health_path: healthPath.trim() || catalog?.health_path || '/v1/models',
-        groups,
-        preset: preset || undefined,
-      }
       if (preset && !entry?.clone)
         for (const model of Object.values(next.models))
           model.pool = model.pool.map((replica) =>

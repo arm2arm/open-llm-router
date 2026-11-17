@@ -277,7 +277,7 @@ for (const method of ['local', 'oidc'])
     } else {
       const opened = context.waitForEvent('page')
       await recovery
-        .getByRole('button', { name: 'Continue with Keycloak' })
+        .getByRole('button', { name: 'Continue with institutional login' })
         .click()
       const popup = await opened
       await popup.waitForLoadState()

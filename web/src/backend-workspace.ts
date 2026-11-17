@@ -205,13 +205,24 @@ export function addBackendModels(
           )?.[1]
         : undefined
       const sourceReplica = sourceModel?.pool.find(matchesSource)
-      let name =
-        upstream.length <= 128 && !current.models[upstream]
-          ? upstream
-          : `${id}/${upstream}`.slice(0, 120)
-      let suffix = 1
-      while (current.models[name])
-        name = `${id}/${upstream}`.slice(0, 115) + `-${suffix++}`
+      // Public model names should not expose the backend's internal identifier.
+      const prefix = current.backends?.[id]?.name?.trim() || 'backend'
+      const fitName = (value: string, suffix = '') => {
+        const characters = [...value]
+        while (
+          new TextEncoder().encode(characters.join('') + suffix).length > 128
+        )
+          characters.pop()
+        return characters.join('') + suffix
+      }
+      const taken = (name: string) =>
+        Object.hasOwn(current.models, name) ||
+        Object.hasOwn(current.aliases, name)
+      let name = fitName(upstream)
+      if (taken(name)) name = fitName(`${prefix}/${upstream}`)
+      let suffix = 2
+      while (taken(name))
+        name = fitName(`${prefix}/${upstream}`, ` (${suffix++})`)
       const model: EndpointModel = {
         protocols: ['openai'],
         timeout_s: 120,

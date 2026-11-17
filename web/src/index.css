@@ -919,19 +919,413 @@ pre {
   place-items: center;
   max-width: none;
   padding: 32px 20px;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    color-mix(in srgb, var(--primary) 9%, transparent),
+    transparent 65%
+  );
 }
 .auth-card {
   width: 100%;
   max-width: 480px;
   padding: 32px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 24px;
   background: var(--background);
-  box-shadow: 0 12px 40px #12352b08;
+  box-shadow: 0 20px 64px #12352b0d;
+}
+.auth-brand {
+  padding: 0;
+  margin-bottom: 32px;
+  font-size: 18px;
+}
+.institutional-signin {
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--primary) 5%, var(--background));
+}
+.institutional-signin-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.institutional-signin-heading h2 {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.institutional-signin-heading p {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.institutional-signin-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--background));
+}
+.institutional-signin-button {
+  width: 100%;
+  min-height: 52px;
+  height: auto;
+  padding: 14px 16px;
+  white-space: normal;
+  line-height: 1.4;
+  text-align: center;
+}
+.institutional-signin-provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.institutional-signin-status {
+  margin-top: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.institutional-signin-secondary {
+  margin-top: 24px;
+}
+.local-signin {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.local-signin summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+}
+.local-signin summary::-webkit-details-marker {
+  display: none;
+}
+.local-signin summary > svg:last-child {
+  margin-left: auto;
+  transition: transform 150ms;
+}
+.local-signin[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.local-signin summary:hover {
+  color: var(--foreground);
+}
+.local-signin summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.local-signin-form {
+  padding-top: 8px;
+}
+@media (max-width: 480px) {
+  .auth-screen {
+    padding: 24px 16px;
+  }
+  .auth-card {
+    padding: 24px 20px;
+    border-radius: 20px;
+  }
+  .institutional-signin {
+    padding: 18px 16px;
+  }
 }
 .auth-card label {
   font-size: 14px;
   font-weight: 550;
+}
+.auth-about-link {
+  display: block;
+  margin-top: 28px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.about-page {
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+}
+.about-header,
+.about-footer {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 24px 28px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  justify-content: space-between;
+}
+.about-header .brand {
+  padding: 0;
+  font-size: 17px;
+}
+.about-content {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 28px 64px;
+  display: grid;
+  gap: 64px;
+}
+.about-content h2 {
+  font-size: 25px;
+  letter-spacing: -0.035em;
+  font-weight: 650;
+  margin-bottom: 20px;
+}
+.about-content h3 {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.about-content p,
+.about-content blockquote {
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+.about-content a:not([data-slot='button']) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--primary);
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.about-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--primary) !important;
+  margin-bottom: 12px;
+}
+.about-hero {
+  padding: 56px 0 44px;
+  max-width: 800px;
+}
+.about-hero h1 {
+  font-size: clamp(32px, 5vw, 48px);
+  letter-spacing: -0.05em;
+  line-height: 1.12;
+  font-weight: 650;
+  margin: 0 0 20px;
+}
+.about-hero .about-lead {
+  color: var(--foreground);
+  font-size: 23px;
+  line-height: 1.45;
+  margin-bottom: 16px;
+}
+.about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 26px 0 22px;
+}
+.about-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.about-badges span {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.about-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.about-feature {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.about-feature > svg {
+  color: var(--primary);
+  margin-bottom: 20px;
+}
+.about-feature p {
+  margin-top: 10px;
+  font-size: 14px;
+}
+.about-development-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.about-person {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--muted);
+}
+.about-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 4px solid var(--background);
+  flex-shrink: 0;
+}
+.about-person h3 {
+  font-size: 21px;
+}
+.about-person p {
+  font-size: 14px;
+  margin-top: 4px;
+}
+.about-person .about-person-role {
+  color: var(--primary);
+  font-weight: 550;
+  margin-top: 8px;
+}
+.about-person-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 20px;
+}
+.about-contribute {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 28px;
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+.about-contribute > svg {
+  color: var(--primary);
+}
+.about-contribute p {
+  font-size: 14px;
+}
+.about-tools {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 28px;
+}
+.about-tools p {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.about-tools ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+  gap: 20px;
+}
+.about-tools li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.about-tool-avatar {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  color: var(--primary);
+  background: var(--accent);
+}
+.about-research-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  border-top: 1px solid var(--border);
+  padding-top: 40px;
+}
+.about-research-grid p,
+.about-research-grid blockquote {
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.about-footer {
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.about-footer span {
+  flex: 1;
+  min-width: 200px;
+}
+.about-footer a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 850px) {
+  .about-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .about-development-grid,
+  .about-tools {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 540px) {
+  .about-header {
+    padding: 20px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .about-content {
+    padding: 0 20px 40px;
+    gap: 40px;
+  }
+  .about-hero {
+    padding: 32px 0 8px;
+  }
+  .about-hero .about-lead {
+    font-size: 20px;
+  }
+  .about-feature-grid,
+  .about-research-grid {
+    grid-template-columns: 1fr;
+  }
+  .about-person {
+    padding: 24px;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .about-tools {
+    padding: 20px;
+  }
 }
 .auth-link {
   display: inline-block;

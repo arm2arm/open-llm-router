@@ -12,6 +12,9 @@ authors:
   - family-names: "Khalatyan"
     given-names: "Arman"
     affiliation: "Leibniz Institute for Astrophysics Potsdam (AIP)"
+  - family-names: "Strauss"
+    given-names: "E. T. L."
+    affiliation: "Leibniz Institute for Astrophysics Potsdam (AIP)"
 repository-code: "https://github.com/arm2arm/open-llm-router"
 url: "https://github.com/arm2arm/open-llm-router"
 license: MIT

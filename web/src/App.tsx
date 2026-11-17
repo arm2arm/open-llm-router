@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { SessionRecovery } from '@/session-recovery'
+import { AboutPage } from '@/about'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -20,6 +21,7 @@ import {
   BarChart3,
   ListOrdered,
   UserRound,
+  Info,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -156,24 +158,27 @@ export default function App() {
       ? 'Request details'
       : path.startsWith('/admin')
         ? `Administration · ${({ users: 'Users', presets: 'Backend presets', keycloak: 'Keycloak', advanced: 'Advanced routing', history: 'History', agents: 'Agent access' } as Record<string, string>)[path.split('/')[2]] ?? 'Backends'}`
-        : path.startsWith('/sign-in')
-          ? 'Sign in'
-          : ((
-              {
-                '/': 'Overview',
-                '/keys': 'API keys',
-                '/usage': 'Usage',
-                '/requests': 'My requests',
-                '/connect': 'Client setup',
-                '/account': 'Account',
-                '/password': 'Change password',
-              } as Record<string, string>
-            )[path] ?? 'Portal')
+        : path === '/about'
+          ? 'About'
+          : path.startsWith('/sign-in')
+            ? 'Sign in'
+            : ((
+                {
+                  '/': 'Overview',
+                  '/keys': 'API keys',
+                  '/usage': 'Usage',
+                  '/requests': 'My requests',
+                  '/connect': 'Client setup',
+                  '/account': 'Account',
+                  '/password': 'Change password',
+                } as Record<string, string>
+              )[path] ?? 'Portal')
     document.title = `${view} · Open LLM Router`
   }, [location.pathname])
   const session = useQuery({
     queryKey: ['session'],
     queryFn: () => api<Session>('auth/session'),
+    enabled: location.pathname !== '/about',
   })
   const [dark, setDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches,
@@ -183,6 +188,7 @@ export default function App() {
   }, [dark])
   // An explicit local route permits switching identities even when an existing
   // SSO session is valid. Successful local login revokes that old session.
+  if (location.pathname === '/about') return <AboutPage />
   if (location.pathname === '/sign-in/local') return <SignIn />
   if (session.isPending)
     return (
@@ -306,6 +312,10 @@ function Workspace({
           <NavLink to="/account" className="nav-link">
             <UserRound size={18} />
             Account
+          </NavLink>
+          <NavLink to="/about" className="nav-link">
+            <Info size={18} />
+            About
           </NavLink>
           {me.data?.admin && (
             <NavLink to="/admin" end className="nav-link">

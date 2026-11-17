@@ -7,7 +7,14 @@ import {
 } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowUpRight, KeyRound, Layers3 } from 'lucide-react'
+import {
+  ArrowUpRight,
+  Building2,
+  ChevronDown,
+  KeyRound,
+  Layers3,
+  ShieldCheck,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { safeNext } from '@/lib/session-state'
@@ -30,11 +37,14 @@ export function AuthFrame({
   return (
     <main id="main" className="auth-screen">
       <div className="auth-card">
-        <div className="brand mb-8">
+        <div className="brand auth-brand">
           <Layers3 className="brand-mark" size={39} />
           <span>Open LLM Router</span>
         </div>
         {children}
+        <Link className="auth-about-link" to="/about">
+          About Open LLM Router
+        </Link>
       </div>
     </main>
   )
@@ -74,15 +84,25 @@ export function SignIn({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const sso = methods.data?.oidc
-  // Administrators choose which option is primary; both stay available.
+  // Respect the site's primary method; local recovery always remains available.
   const keycloakFirst = methods.data?.default !== 'local'
   const keycloak = !directLocal && sso?.configured && (
     <section
-      aria-label="Keycloak sign-in"
-      className={keycloakFirst ? 'mb-7' : 'mt-7'}
+      aria-label="Institutional sign-in"
+      className={`institutional-signin ${keycloakFirst ? '' : 'institutional-signin-secondary'}`}
     >
+      <div className="institutional-signin-heading">
+        <span className="institutional-signin-icon">
+          <Building2 aria-hidden="true" size={24} />
+        </span>
+        <div>
+          <h2>Institutional login</h2>
+          <p>Use your university or organization account.</p>
+        </div>
+      </div>
       <Button
-        className="w-full"
+        type="button"
+        className="institutional-signin-button"
         variant={keycloakFirst ? 'default' : 'outline'}
         disabled={!sso.available}
         onClick={() => {
@@ -92,15 +112,18 @@ export function SignIn({
           else redirect(url.href)
         }}
       >
-        Continue with Keycloak <ArrowUpRight />
+        Continue with institutional login <ArrowUpRight aria-hidden="true" />
       </Button>
-      <p className="subtitle">
-        {!sso.available
-          ? 'Keycloak is temporarily unavailable. You can still sign in with a local account.'
-          : keycloakFirst
-            ? 'Recommended for your organization account.'
-            : 'Use your organization account.'}
+      <p className="institutional-signin-provider">
+        <ShieldCheck aria-hidden="true" size={15} /> Secure sign-in with
+        Keycloak
       </p>
+      {!sso.available && (
+        <p role="status" className="institutional-signin-status">
+          Institutional login is temporarily unavailable. Use a local account
+          below.
+        </p>
+      )}
     </section>
   )
 
@@ -133,6 +156,65 @@ export function SignIn({
     }
   }
 
+  const localForm = (
+    <form
+      onSubmit={(event) => void login(event)}
+      aria-label="Local sign-in"
+      className="grid gap-4"
+    >
+      {!directLocal && (
+        <div>
+          <p className="subtitle">For accounts created on this router.</p>
+        </div>
+      )}
+      <FormError error={error} />
+      <div className="grid gap-2">
+        <label htmlFor="username">Local username</label>
+        <Input
+          id="username"
+          name="username"
+          autoComplete="username"
+          required
+          maxLength={256}
+          disabled={pending}
+          aria-invalid={!!error}
+          aria-describedby={error ? 'auth-error' : undefined}
+        />
+      </div>
+      <div className="grid gap-2">
+        <label htmlFor="password">Local password</label>
+        <Input
+          id="password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          required
+          maxLength={1024}
+          disabled={pending}
+          aria-invalid={!!error}
+          aria-describedby={error ? 'auth-error' : undefined}
+        />
+      </div>
+      {methods.data && !methods.data.local.available && (
+        <p role="alert" className="error">
+          Local sign-in is temporarily unavailable. Contact your administrator.
+        </p>
+      )}
+      <Button
+        type="submit"
+        variant={keycloakFirst && sso?.available ? 'outline' : 'default'}
+        disabled={pending || !methods.data?.local.available}
+      >
+        <KeyRound />
+        {pending ? 'Signing in…' : 'Sign in with local account'}
+      </Button>
+      <p className="subtitle text-sm">
+        The protected local administrator is separate from a Keycloak
+        administrator.
+      </p>
+    </form>
+  )
+
   return (
     <AuthFrame embedded={embedded}>
       <h1>{directLocal ? 'Sign in with a local account' : 'Sign in'}</h1>
@@ -142,10 +224,10 @@ export function SignIn({
           Your session ended. Sign in again to return to your previous page.
         </p>
       )}
-      {embedded && (
+      {embedded && sso?.configured && (
         <p className="subtitle mb-5">
-          Keycloak opens in a new tab. Return here after signing in; your open
-          forms stay here.
+          Institutional login opens in a new tab. Return here after signing in;
+          your open forms stay here.
         </p>
       )}
       {changed && (
@@ -168,65 +250,20 @@ export function SignIn({
         </div>
       )}
       {keycloakFirst && keycloak}
-      <form
-        onSubmit={(event) => void login(event)}
-        aria-label="Local sign-in"
-        className="grid gap-4"
-      >
-        {!directLocal && (
-          <div>
-            <h2 className="panel-title">Local account</h2>
-            <p className="subtitle">Use your router username and password.</p>
-          </div>
-        )}
-        <FormError error={error} />
-        <div className="grid gap-2">
-          <label htmlFor="username">Local username</label>
-          <Input
-            id="username"
-            name="username"
-            autoComplete="username"
-            required
-            maxLength={256}
-            disabled={pending}
-            aria-invalid={!!error}
-            aria-describedby={error ? 'auth-error' : undefined}
-          />
-        </div>
-        <div className="grid gap-2">
-          <label htmlFor="password">Local password</label>
-          <Input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            maxLength={1024}
-            disabled={pending}
-            aria-invalid={!!error}
-            aria-describedby={error ? 'auth-error' : undefined}
-          />
-        </div>
-        {methods.data && !methods.data.local.available && (
-          <p role="alert" className="error">
-            Local sign-in is temporarily unavailable. Contact your
-            administrator.
-          </p>
-        )}
-        <Button
-          type="submit"
-          variant={keycloakFirst && sso?.available ? 'outline' : 'default'}
-          disabled={pending || !methods.data?.local.available}
-        >
-          <KeyRound />
-          {pending ? 'Signing in…' : 'Sign in with local account'}
-        </Button>
-      </form>
+      {!methods.isPending &&
+        (keycloakFirst && sso?.configured && !directLocal ? (
+          <details className="local-signin">
+            <summary>
+              <KeyRound aria-hidden="true" size={16} />
+              <span>Use a local account</span>
+              <ChevronDown aria-hidden="true" size={16} />
+            </summary>
+            <div className="local-signin-form">{localForm}</div>
+          </details>
+        ) : (
+          localForm
+        ))}
       {!keycloakFirst && keycloak}
-      <p className="subtitle mt-5">
-        The protected local administrator is separate from a Keycloak
-        administrator, even when both use the name <strong>admin</strong>.
-      </p>
       {directLocal && (
         <Link className="auth-link mt-5" to="/sign-in">
           All sign-in options
