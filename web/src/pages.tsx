@@ -1,4 +1,4 @@
-import { Fragment, useState, type FormEvent } from 'react'
+import { Fragment, useId, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Server,
@@ -187,7 +187,7 @@ const limitLabels: Record<string, string> = {
   tpm: 'Tokens per minute',
   max_concurrent: 'Concurrent (interactive)',
   max_concurrent_batch: 'Concurrent (batch)',
-  strict_quota: 'Strict quota (1 on, 0 off)',
+  strict_quota: 'Strict quota',
 }
 
 function UserDetail({
@@ -206,6 +206,11 @@ function UserDetail({
   })
   const [field, setField] = useState('tokens_per_day')
   const [value, setValue] = useState('')
+  const [mode, setMode] = useState('limited')
+  const [strictEnabled, setStrictEnabled] = useState(true)
+  const [valueError, setValueError] = useState<string | null>(null)
+  const valueId = useId()
+  const valueInput = useRef<HTMLInputElement>(null)
   const [reason, setReason] = useState('')
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: ['admin-user', id] })
@@ -213,13 +218,14 @@ function UserDetail({
     await cache.invalidateQueries({ queryKey: ['admin-groups'] })
   }
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (override: number | null) =>
       api(`admin/users/${id}/overrides/${field}`, 'PUT', {
-        value: value.trim() === '' ? null : Number(value),
+        value: override,
         reason,
       }),
     onSuccess: async () => {
       setValue('')
+      setMode('limited')
       setReason('')
       await refresh()
     },
@@ -237,11 +243,38 @@ function UserDetail({
   const data = query.data
   function submit(event: FormEvent) {
     event.preventDefault()
-    save.mutate()
+    setValueError(null)
+    if (field === 'strict_quota') {
+      save.mutate(strictEnabled ? 1 : 0)
+      return
+    }
+    if (mode === 'unlimited') {
+      save.mutate(null)
+      return
+    }
+    const maximum = ['tokens_per_day', 'tokens_per_month', 'tpm'].includes(
+      field,
+    )
+      ? Number.MAX_SAFE_INTEGER
+      : 2 ** 31 - 1
+    const parsed = Number(value.trim())
+    if (
+      !/^\d+$/.test(value.trim()) ||
+      !Number.isSafeInteger(parsed) ||
+      parsed < 1 ||
+      parsed > maximum
+    ) {
+      setValueError(
+        `Enter a whole number from 1 to ${number(maximum)}, or choose Unlimited.`,
+      )
+      valueInput.current?.focus()
+      return
+    }
+    save.mutate(parsed)
   }
   if (!data) return <Failure error={query.error} />
   return (
-    <div className="p-6 grid grid-cols-1 gap-4 border-t whitespace-normal">
+    <div className="user-detail p-6 grid grid-cols-1 gap-4 border-t whitespace-normal">
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <div className="font-semibold">{data.user.username}</div>
@@ -351,13 +384,22 @@ function UserDetail({
           </tbody>
         </table>
       </div>
-      <form className="flex flex-wrap gap-3 items-end" onSubmit={submit}>
+      <form
+        className="user-override-form flex flex-wrap gap-3 items-end"
+        onSubmit={submit}
+        aria-label="Set user override"
+        noValidate
+      >
         <label className="field">
           Limit
           <select
             className="select"
             value={field}
-            onChange={(e) => setField(e.target.value)}
+            onChange={(e) => {
+              setField(e.target.value)
+              setValueError(null)
+              save.reset()
+            }}
           >
             {Object.entries(limitLabels).map(([name, label]) => (
               <option key={name} value={name}>
@@ -366,14 +408,55 @@ function UserDetail({
             ))}
           </select>
         </label>
-        <label className="field">
-          Value (empty: unlimited)
-          <Input
-            inputMode="numeric"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-        </label>
+        {field === 'strict_quota' ? (
+          <label className="field">
+            Strict quota setting
+            <select
+              className="select"
+              value={strictEnabled ? 'on' : 'off'}
+              onChange={(e) => setStrictEnabled(e.target.value === 'on')}
+            >
+              <option value="on">Enabled</option>
+              <option value="off">Disabled</option>
+            </select>
+          </label>
+        ) : (
+          <>
+            <label className="field">
+              Override type
+              <select
+                className="select"
+                value={mode}
+                onChange={(e) => {
+                  setMode(e.target.value)
+                  setValueError(null)
+                  save.reset()
+                }}
+              >
+                <option value="limited">Set a limit</option>
+                <option value="unlimited">Unlimited</option>
+              </select>
+            </label>
+            {mode === 'limited' && (
+              <label className="field" htmlFor={valueId}>
+                Value
+                <Input
+                  id={valueId}
+                  ref={valueInput}
+                  inputMode="numeric"
+                  value={value}
+                  aria-invalid={!!valueError}
+                  aria-describedby={valueError ? `${valueId}-error` : undefined}
+                  onChange={(e) => {
+                    setValue(e.target.value)
+                    setValueError(null)
+                    save.reset()
+                  }}
+                />
+              </label>
+            )}
+          </>
+        )}
         <label className="field">
           Reason
           <Input
@@ -386,6 +469,15 @@ function UserDetail({
           Set override
         </Button>
       </form>
+      {valueError && (
+        <p
+          id={`${valueId}-error`}
+          role="alert"
+          className="text-sm text-destructive"
+        >
+          {valueError}
+        </p>
+      )}
       <Failure error={save.error} />
       <AdminUserKeys id={id} keys={data.keys} onSaved={refresh} />
     </div>

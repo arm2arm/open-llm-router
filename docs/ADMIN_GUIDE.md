@@ -1145,7 +1145,11 @@ that policy can overshoot within the work already admitted.
 1. Sign in with a configured administrator's Keycloak account and open **Admin**.
 2. Search by username/email and expand the user.
 3. Inspect effective limits and existing overrides.
-4. Select the field, enter a positive value and a reason, then **Set override**.
+4. Select the field and **Set a limit**, enter a positive whole number and a reason,
+   then **Set override**. Use digits without separators or suffixes: `1000`, not
+   `1,000` or `10k`. Invalid or empty values show an inline error and send no change.
+   Choose **Unlimited** explicitly to remove a numeric limit. For **Strict quota**,
+   choose **Enabled** or **Disabled** instead.
    Empty value means unlimited for numeric limits; strict quota requires `1` or `0`.
 5. Use **Clear** to return a field to the group policy. **Enable user** and
    **Disable user** control router access; the UI prevents disabling yourself.

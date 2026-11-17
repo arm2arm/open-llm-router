@@ -15,7 +15,7 @@ and P3; dependencies may change that order.
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
-| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance (#176) in this change; remaining findings pending |
+| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values (#184) in this change; remaining findings pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
@@ -276,3 +276,16 @@ and P3; dependencies may change that order.
   long reset sleeps. Local PostgreSQL/SDK regression and the mandatory CI
   `make sdk-limits` flow exercise this behavior. The latter first verifies RPM
   remains retryable, then applies a disposable daily limit and erases its fixture.
+
+## Explicit override values evidence
+
+- **#184:** The administrator form accepts only positive digit-only integers
+  within the field's safe range. Blank values, separators, suffixes, fractions,
+  negatives and overflow show an associated inline error, focus the value field
+  and send no mutation. Unlimited requires an explicit selection; strict quota
+  uses Enabled/Disabled controls. The mutation receives a validated number or an
+  explicitly selected null, never a NaN converted to null. Playwright exercises
+  the actual form with invalid inputs, a valid 1000 limit, explicit unlimited,
+  concurrency/RPM range overflow and strict-quota disabled. It asserts payloads,
+  absence of invalid requests and no browser exceptions. Desktop/mobile visual
+  checks cover control alignment and wrapping.

@@ -1164,6 +1164,15 @@ progress::-moz-progress-bar {
   background: var(--background);
   font-size: 14px;
 }
+.user-override-form .field {
+  margin-bottom: 0;
+}
+@media (max-width: 767px) {
+  .user-detail {
+    width: calc(100vw - 3rem);
+    max-width: 100%;
+  }
+}
 .error {
   padding: 14px 18px;
   color: var(--destructive);
