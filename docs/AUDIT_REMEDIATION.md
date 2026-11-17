@@ -22,8 +22,8 @@ and P3; dependencies may change that order.
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Completed in PR #312 |
 | #195 Agent administration | #195, #245, #261 | Completed in PR #313 |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Completed in PR #314 |
-| #183 Releases | #183, #193, #220, #221, #225, #242 | Implemented; local policy, cross-build and metadata checks pass; CI pending |
-| #237 Startup diagnostics | #237, #238, #241 | Pending |
+| #183 Releases | #183, #193, #220, #221, #225, #242 | Completed in PR #315 |
+| #237 Startup diagnostics | #237, #238, #241 | Implemented; local health/sync/rule checks pass; CI pending |
 | #223 Regression coverage | #222, #223, #243, #246 | Pending |
 | #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Pending |
 
@@ -529,3 +529,19 @@ and P3; dependencies may change that order.
 
 Repository settings for #193 were applied and read back successfully: main protections,
 immutable release-tag rules, optional approval mode, secret scanning and Action pinning.
+
+## Startup and readiness diagnostics evidence
+
+- **#237:** The observability metric table includes queue, health, sync, trace and build
+  series with exact labels. Shipped alert rules cover every pilot stop condition.
+  Promtool validates them and proves database readiness loss while metrics remain up,
+  plus accounting-loss detection. The local/CI monitoring stack loads and tests rules.
+- **#238:** Group-sync errors retain the sanitized causes added in PR #293. OIDC retries
+  now log typed, fixed diagnostic classifications, including HTTP status, without URLs
+  or provider bodies. Aggregate counters, configured interval and last complete sync
+  timestamp distinguish errors, successful work and advisory-lock skips. Real fixture
+  tests cover an authorization outage followed by recovery. A real database/listener
+  integration test verifies health gauges and readiness transitions. Finite first-byte
+  buckets extend through 7200 seconds, with a regression for a 125-second observation.
+- **#241:** Completed in PR #310: separate connection and migration deadlines with
+  migration version/name/duration logging and slow/stalled-migration tests.

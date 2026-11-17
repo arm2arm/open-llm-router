@@ -95,7 +95,9 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 				syncer, err := groupsync.New(attempt, oidcCfg, secret, s.pool, s.log)
 				cancel()
 				if err != nil {
-					s.stats.Record(groupsync.Result{}, err)
+					if ctx.Err() == nil {
+						s.stats.Record(groupsync.Result{}, err)
+					}
 					return err
 				}
 				syncer.Stats = s.stats

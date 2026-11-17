@@ -83,6 +83,42 @@ func TestGroupSyncAdminOutageCannotDisableUsers(t *testing.T) {
 	}
 }
 
+func TestGroupSyncRunMetricsRecoverAfterProviderOutage(t *testing.T) {
+	f := startTokenRouter(t)
+	syncPeople(t, f, 1)
+	s := newSyncer(t, f)
+	s.Stats = &groupsync.Stats{}
+	f.provider.mu.Lock()
+	f.provider.adminStatus = 401
+	f.provider.mu.Unlock()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run(ctx, 100*time.Millisecond) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(5 * time.Second)
+	for s.Stats.Failure.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("failed run not counted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if s.Stats.LastSuccess.Load() != 0 {
+		t.Fatal("provider failure advanced success time")
+	}
+	f.provider.mu.Lock()
+	f.provider.adminStatus = 0
+	f.provider.mu.Unlock()
+	for s.Stats.Success.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("recovered run not counted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if s.Stats.LastSuccess.Load() == 0 {
+		t.Fatal("successful recovery omitted timestamp")
+	}
+}
+
 func TestGroupSyncDisableLimitStagesAllChanges(t *testing.T) {
 	f := startTokenRouter(t)
 	f.oidc.SyncMaxDisable = 1
