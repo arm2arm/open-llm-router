@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -69,4 +69,17 @@ test('operator instructions and user-key help cannot promise key recovery', () =
     install,
     /admins should be able to copy|API-key encryption key are|Copy key is disabled/i,
   )
+})
+
+test('a file outside the repository is not a valid GitHub relative target', () => {
+  const parent = mkdtempSync(path.join(os.tmpdir(), 'olr-doc-boundary-'))
+  try {
+    const root = path.join(parent, 'repo')
+    mkdirSync(root)
+    writeFileSync(path.join(parent, 'outside.md'), '# Outside\n')
+    writeFileSync(path.join(root, 'source.md'), '[outside](../outside.md)\n')
+    assert.match(checkLinks(root, ['source.md'])[0], /outside repository/)
+  } finally {
+    rmSync(parent, { recursive: true })
+  }
 })

@@ -62,6 +62,14 @@ export function checkLinks(root, files) {
         let target = pathname
           ? path.resolve(path.dirname(source), pathname)
           : source
+        const relative = path.relative(root, target)
+        if (
+          relative === '..' ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        ) {
+          throw new Error('target outside repository')
+        }
         if (!existsSync(target)) throw new Error('missing target')
         if (!fragment) continue
         if (statSync(target).isDirectory())
