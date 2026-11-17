@@ -16,7 +16,7 @@ import (
 // {"model":"secret","MODEL":"allowed"} would otherwise be authorized as one
 // model and served as another by a backend that serves both.
 // Output-token limits size strict-quota reservations.
-var routingFields = []string{"model", "stream", "max_tokens", "max_completion_tokens", "max_output_tokens"}
+var routingFields = []string{"model", "stream", "max_tokens", "max_completion_tokens", "max_output_tokens", "n", "best_of", "prompt"}
 
 var errAmbiguousField = errors.New("ambiguous routing field")
 
@@ -82,6 +82,9 @@ func parseRequest(body []byte) (requestMeta, error) {
 					meta.MaxOutputTokens = int64(math.Ceil(limit))
 				}
 			}
+		default:
+			var skip json.RawMessage
+			err = decoder.Decode(&skip)
 		}
 		if err != nil {
 			return meta, err

@@ -14,8 +14,8 @@ and P3; dependencies may change that order.
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
-| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation: PR #301; audit minimization: PR #302; churn protection: PR #303; data export/departed-user lifecycle (#239) in this change |
-| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
+| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
+| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds (#164) in this change; remaining findings pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
@@ -247,3 +247,21 @@ and P3; dependencies may change that order.
   automatic deletion. CLI tests remove an older candidate and cascaded records,
   retain a fresh account and confirm repeated disabling preserves age while
   re-enabling resets it. Runbook/pilot instructions rehearse export and age review.
+
+## Strict-quota request bounds evidence
+
+- **#164:** Strict mode rejects completion multipliers, array/hosted prompts,
+  non-integer output limits, remote/inline media, audio output and hosted tools
+  before dispatch. Nested duplicate fields, case-variant controls and more than
+  64 levels are rejected. Valid single text requests forward a numeric allowance
+  equal to the output reservation, preserving large unknown JSON integers.
+  Acceptance interpretation: the effective API-native field is used instead of
+  always injecting `max_tokens`. Chat preserves `max_completion_tokens` when
+  supplied; Responses uses `max_output_tokens`; Anthropic/legacy Completions use
+  `max_tokens`. This avoids breaking reasoning models: the
+  [official Chat reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+  documents that deprecated `max_tokens` is incompatible with o-series models.
+  Unit and real PostgreSQL/proxy regressions verify invalid shapes never reach a
+  backend, forwarded limits match in-flight reservations, daily used tokens stay
+  within the quota and reservations drain. Existing concurrent strict, Responses
+  and OpenWebUI timing quota regressions remain green.
