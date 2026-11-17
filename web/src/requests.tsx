@@ -57,6 +57,7 @@ import { useLive, useNow, type LiveStatus, type Running } from './requests/live'
 type Preferences = {
   enabled: boolean
   retention_days: number
+  updated_at?: string | null
   available: boolean
 }
 type Filter = 'all' | 'stream' | 'errors' | 'traces' | 'tools' | 'truncated'
@@ -822,6 +823,12 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
       <p className="trace-footnote">
         Choose 1–30 days. Disabling stops new captures; existing traces expire
         on schedule. Shorter retention also applies to stored traces.
+        {preferences.updated_at && (
+          <>
+            {' '}
+            Last changed {new Date(preferences.updated_at).toLocaleString()}.
+          </>
+        )}
       </p>
       <ErrorNotice error={save.error} />
     </section>

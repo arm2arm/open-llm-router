@@ -13,7 +13,7 @@ and P3; dependencies may change that order.
 | --- | --- | --- |
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
-| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Sanitization: PR #296; admission/storage bounds in this change; consent, usage fidelity and API examples pending |
+| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Sanitization: PR #296; bounds: PR #297; consent and API examples in this change; terminal usage fidelity pending |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
@@ -110,6 +110,18 @@ and P3; dependencies may change that order.
   Deployment budgets are 60 s versus the default 30 s HTTP grace plus 12 s flushes.
 
 ## Trace sanitization evidence
+
+- **#214:** An actual pre-0014 fixture reproduces erasure-only implicit consent.
+  Migration 0022 requires a new choice for all enabled pre-provenance preferences,
+  preserves retention and leaves historical consent dates unknown. A dedicated
+  timestamp and transactional `trace.preferences` event record each enabled or
+  retention change; repeated saves and erasure do not fabricate new choices.
+  A database failure inserting history rolls back the preference too. The API
+  returns the timestamp and the settings panel displays the last change.
+- **#233:** The portal API example shows `available:false`, `enabled:false` and
+  `updated_at:null`, explains both gates, and requires clients to ignore additive
+  unknown fields in key, usage and current-user responses. The reference no longer
+  calls capture default-enabled, and migration documentation states the actual rule.
 
 - **#166:** Capture begins only after request/model/user/backend/replica admission.
   A PostgreSQL regression floods 400/403/404 and 429 rejections without creating

@@ -45,7 +45,11 @@ func (h *Handler) saveTracePreferences(w http.ResponseWriter, r *http.Request, u
 		unavailable(w)
 		return
 	}
-	p.Available = h.Traces.Enabled()
+	p, err := h.Traces.Preferences(r.Context(), u.ID)
+	if err != nil {
+		unavailable(w)
+		return
+	}
 	respond(w, 200, p)
 }
 func (h *Handler) clearTraces(w http.ResponseWriter, r *http.Request, u user) {

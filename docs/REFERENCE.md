@@ -308,8 +308,10 @@ their TTFB remains available, but their generation rates are excluded from avera
 
 ## Personal request content
 
-Separate from metadata accounting, `internal/requesttrace` provides default-enabled,
-user-controlled content capture and a completed-request trace viewer. Retention defaults
+Separate from metadata accounting, `internal/requesttrace` provides content capture
+that is **off by default**, requires a site gate and explicit personal opt-in, and
+has a completed-request trace viewer. Preference changes have timestamps and audit
+records independent of erasure. Retention defaults
 to 7 days and each user can choose 1–30 days. Two background workers decode and store
 bounded content independently of usage accounting. See [REQUEST_TRACING.md](REQUEST_TRACING.md)
 for exact limits, privacy, deletion and failure behavior. Existing metadata-only history

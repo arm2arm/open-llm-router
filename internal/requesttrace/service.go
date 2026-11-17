@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/activity"
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/usage"
 	"github.com/jackc/pgx/v5"
@@ -43,10 +44,11 @@ const (
 )
 
 type Preferences struct {
-	Available     bool  `json:"available"`
-	Enabled       bool  `json:"enabled"`
-	RetentionDays int   `json:"retention_days"`
-	Generation    int64 `json:"-"`
+	Available     bool       `json:"available"`
+	Enabled       bool       `json:"enabled"`
+	RetentionDays int        `json:"retention_days"`
+	UpdatedAt     *time.Time `json:"updated_at"`
+	Generation    int64      `json:"-"`
 }
 
 func defaults() Preferences { return Preferences{Enabled: false, RetentionDays: 7} }
@@ -189,7 +191,7 @@ func (s *Service) refresh(ctx context.Context) error {
 
 func (s *Service) Preferences(ctx context.Context, user string) (Preferences, error) {
 	var p Preferences
-	err := s.pool.QueryRow(ctx, `SELECT trace_enabled, trace_retention_days, trace_generation FROM users WHERE id=$1`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation)
+	err := s.pool.QueryRow(ctx, `SELECT trace_enabled, trace_retention_days, trace_generation, trace_preferences_set_at FROM users WHERE id=$1`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation, &p.UpdatedAt)
 	p.Available = s.Enabled()
 	return p, err
 }
@@ -203,11 +205,21 @@ func (s *Service) Save(ctx context.Context, user string, p Preferences) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `UPDATE users SET trace_enabled=$2, trace_retention_days=$3, trace_generation=trace_generation+1 WHERE id=$1 RETURNING trace_generation`, user, p.Enabled, p.RetentionDays).Scan(&p.Generation); err != nil {
+		var old Preferences
+		if err := tx.QueryRow(ctx, `SELECT trace_enabled,trace_retention_days,trace_generation,trace_preferences_set_at FROM users WHERE id=$1 FOR UPDATE`, user).Scan(&old.Enabled, &old.RetentionDays, &old.Generation, &old.UpdatedAt); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE request_traces SET expires_at=LEAST(expires_at,started_at+make_interval(days=>$2)) WHERE user_id=$1 AND expires_at>started_at+make_interval(days=>$2)`, user, p.RetentionDays)
-		return err
+		if old.Enabled == p.Enabled && old.RetentionDays == p.RetentionDays && old.UpdatedAt != nil {
+			p.Generation, p.UpdatedAt = old.Generation, old.UpdatedAt
+			return nil
+		}
+		if err := tx.QueryRow(ctx, `UPDATE users SET trace_enabled=$2, trace_retention_days=$3, trace_generation=trace_generation+1,trace_preferences_set_at=clock_timestamp() WHERE id=$1 RETURNING trace_generation,trace_preferences_set_at`, user, p.Enabled, p.RetentionDays).Scan(&p.Generation, &p.UpdatedAt); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE request_traces SET expires_at=LEAST(expires_at,started_at+make_interval(days=>$2)) WHERE user_id=$1 AND expires_at>started_at+make_interval(days=>$2)`, user, p.RetentionDays); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, audit.Event{Action: "trace.preferences", Actor: audit.Actor{Type: "portal_user", ID: user}, TargetType: "user", TargetID: user, Result: audit.Succeeded, Details: map[string]any{"enabled": p.Enabled, "retention_days": p.RetentionDays, "updated_at": p.UpdatedAt}})
 	})
 	if err == nil {
 		next := make(map[string]Preferences)

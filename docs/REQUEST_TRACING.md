@@ -260,8 +260,15 @@ true only after the data owner approves retention and the privacy notice is publ
 Users must then explicitly enable Detailed logging. To stop capture site-wide, set false
 and restart every router. The service gate prevents buffer copies and writes even for
 opted-in users, and invalidates in-flight captures when toggled. Preferences survive
-restart. Migration disables legacy implicit consent (`trace_generation=0`) and changes
-the database default; explicitly saved preferences remain, subject to the site gate.
+restart. Migration 0014 changed the database default and disabled accounts whose
+`trace_generation` was zero. That counter also advanced on erasure, so it could
+not prove an explicit choice. Corrective migration 0022 disables **all existing
+enabled preferences**, preserves retention and requires a fresh personal opt-in.
+It does not invent historical consent timestamps. New saves record a dedicated
+`trace_preferences_set_at` timestamp and a `trace.preferences` audit entry containing
+the user ID, new enabled/retention values and timestamp in the same transaction.
+Unchanged repeated saves retain that timestamp; erasure invalidates pending captures
+without changing the timestamp or preference. The portal shows the last change.
 Existing traces are not erased by disabling; use deletion/retention for that purpose.
 
 The content tables (`request_traces`) are separate from usage accounting tables but
