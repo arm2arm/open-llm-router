@@ -22,6 +22,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/db"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
+	"github.com/arm2arm/open-llm-router/internal/groupsync"
 	"github.com/arm2arm/open-llm-router/internal/home"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
@@ -179,7 +180,8 @@ func serve(args []string) error {
 	defer authenticator.Close()
 	authenticator.Forwarders = cfg.Forwarders
 
-	ssoServices := newOIDCServices(cfg, database, credentialDB, authenticator, log)
+	syncStats := &groupsync.Stats{}
+	ssoServices := newOIDCServices(cfg, database, credentialDB, authenticator, log, syncStats)
 	defer ssoServices.Close()
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
@@ -216,6 +218,9 @@ func serve(args []string) error {
 		return err
 	}
 	observabilityOptions.PoolSource = forwarder.CurrentPools
+	observabilityOptions.DatabaseHealth = func(ctx context.Context) bool { return database.Ping(ctx) == nil }
+	observabilityOptions.InvalidationHealth = func() bool { _, healthy := authenticator.Freshness(); return healthy }
+	observabilityOptions.GroupSync = syncStats
 	observability, err := metrics.New(ctx, observabilityOptions, forwarder.Pools, accounting)
 	if err != nil {
 		return err

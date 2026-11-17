@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,7 +44,7 @@ type Options struct {
 func New(ctx context.Context, cfg *config.OIDC) (*Client, error) {
 	client, err := NewWith(ctx, cfg, Options{})
 	if err != nil {
-		return nil, errors.New("OIDC discovery failed")
+		return nil, &discoveryError{cause: err}
 	}
 	return client, nil
 }
@@ -82,7 +83,8 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 		}
 		rt = backchannel{public, internal, rt}
 	}
-	rt = responseLimit{next: rt}
+	var responseStatus atomic.Int32
+	rt = responseLimit{next: rt, status: &responseStatus}
 	client := &http.Client{Transport: rt, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, client), cfg.Issuer)
 	if err != nil {
@@ -90,6 +92,9 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 		var mismatch *oidc.IssuerMismatchError
 		if errors.As(err, &mismatch) {
 			return nil, ErrIssuerMismatch
+		}
+		if status := int(responseStatus.Load()); status >= 300 {
+			return nil, &providerStatusError{status: status}
 		}
 		// The cause may name URLs; New and callers expose fixed messages only.
 		return nil, fmt.Errorf("OIDC discovery failed: %w", err)
@@ -118,12 +123,18 @@ const maxResponseBytes = 1 << 20
 
 var errResponseTooLarge = errors.New("identity provider response exceeds 1 MiB")
 
-type responseLimit struct{ next http.RoundTripper }
+type responseLimit struct {
+	next   http.RoundTripper
+	status *atomic.Int32
+}
 
 func (t responseLimit) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := t.next.RoundTrip(r)
 	if err != nil {
 		return nil, err
+	}
+	if t.status != nil {
+		t.status.Store(int32(resp.StatusCode))
 	}
 	if resp.ContentLength > maxResponseBytes {
 		resp.Body.Close()
