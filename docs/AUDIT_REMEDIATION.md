@@ -363,3 +363,8 @@ and P3; dependencies may change that order.
   duration conversion, with field-specific errors naming the maximum. File and
   managed tests reject both the first out-of-range value and the reported overflow
   value. A real routed request with all three maximum values completes normally.
+
+- **#257:** Deployment origins use the managed URL normalizer before duplicate
+  detection. File and managed regressions reject trailing-slash, case and default
+  port aliases, while a single mixed-case origin is stored canonically. File URLs
+  retain their strict origin-only syntax.

@@ -381,6 +381,16 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		}
 		for i := range model.Pool {
 			r := &model.Pool[i]
+			// Keep deployment origins strict, but canonicalize equivalent spellings
+			// with the same function used for managed endpoint input.
+			if isBackendURL(r.URL) {
+				origin, err := NormalizeBackendURL(r.URL)
+				if err != nil {
+					problems = append(problems, fmt.Sprintf("models.%s.pool[%d].url: %s", name, i, err))
+				} else {
+					r.URL = origin
+				}
+			}
 			if r.BearerTokenEnv == "" {
 				continue
 			}
