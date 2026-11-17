@@ -30,6 +30,7 @@ const settingLabels: Record<string, string> = {
   sync_client_id: 'Sync client ID',
   sync_client_secret: 'Sync client secret',
   sync_interval_s: 'Sync interval (seconds)',
+  sync_max_disable: 'Maximum users disabled per sync run',
 }
 const checkLabels: Record<string, string> = {
   discovery: 'Discovery',
@@ -214,6 +215,7 @@ function DraftEditor({
           : null,
       sync_client_id: text('sync_client_id'),
       sync_interval_s: Number(fields.get('sync_interval_s')),
+      sync_max_disable: Number(fields.get('sync_max_disable')),
     }
     for (const name of [
       'portal_client_secret',
@@ -365,6 +367,23 @@ function DraftEditor({
             aria-label={settingLabels.sync_interval_s}
             disabled={disabled}
           />
+        </label>
+        <label className="grid gap-2 text-sm">
+          {settingLabels.sync_max_disable}
+          <Input
+            name="sync_max_disable"
+            type="number"
+            min={1}
+            max={10000}
+            required
+            defaultValue={document.sync_max_disable ?? 10}
+            aria-label={settingLabels.sync_max_disable}
+            disabled={disabled}
+          />
+          <span className="subtitle">
+            If more users would be disabled, the run changes no accounts. Check
+            the identity provider before raising this safety limit.
+          </span>
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">

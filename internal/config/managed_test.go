@@ -58,7 +58,7 @@ models:
 		t.Fatal(err)
 	}
 	want := map[string]string{"enabled": SourceFile, "issuer": SourceFile, "portal_client_id": SourceFile, "audience": SourceEnvironment,
-		"portal_client_secret": SourceEnvironment, "groups_claim": SourceDefault, "sync_client_secret": SourceDefault, "sync_interval_s": SourceDefault}
+		"portal_client_secret": SourceEnvironment, "groups_claim": SourceDefault, "sync_client_secret": SourceDefault, "sync_interval_s": SourceDefault, "sync_max_disable": SourceDefault}
 	for name, source := range want {
 		if cfg.AuthSources[name] != source {
 			t.Fatalf("%s: %s, want %s", name, cfg.AuthSources[name], source)

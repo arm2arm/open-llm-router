@@ -166,6 +166,7 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `oidc.groups_claim`, `username_claim` | `groups`, `preferred_username` | claim names |
 | `oidc.audience` | — | enables access tokens on `/v1/*` with this `aud` |
 | `oidc.sync_client_id`, `sync_interval_s` | `olr-sync`, 900 | group sync (runs when its secret is set) |
+| `oidc.sync_max_disable` | 10 | maximum users a sync run may disable; 1–10000 |
 | `oidc.required_claim` | — | `{name, value}` a portal login must carry |
 | `models.<name>.protocols` | — | `openai`, `anthropic` or both |
 | `models.<name>.upstream_model` | the name | model name sent to the backend |
@@ -603,6 +604,18 @@ with their keys and sessions; changed groups → stored, effective for existing 
 Users are not re-enabled automatically: use `olr admin user list` and the portal's admin page,
 or `PUT /portal/api/admin/users/{id}/enabled`. Each run logs `msg="group sync"` with counts, or
 `group sync failed`.
+
+A working admin user-list route is required before checking individuals. A
+realm-wide 404, bad service-account authorization or transport outage changes no
+accounts. Remote state is staged before writes; if more than
+`oidc.sync_max_disable` users would be disabled, **no accounts change**, including
+group updates. Investigate the provider and routing first, then temporarily raise
+the limit for a confirmed bulk departure. The SSO editor exposes the same limit.
+An individual user's failed lookup is counted and does not prevent other users'
+updates. Logs include `checked`, `updated`, `disabled`, `failed`, `remaining` and
+a safe error cause. Deadline-limited scans reserve time to apply completed reads
+and resume after the last attempted user on the next run; this cursor is local
+to the running syncer and resets on restart.
 
 ## Open WebUI and other trusted forwarders
 

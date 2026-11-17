@@ -164,6 +164,8 @@ type OIDC struct {
 	// refreshed every SyncIntervalS seconds (default 900).
 	SyncClientID  string `yaml:"sync_client_id"`
 	SyncIntervalS int    `yaml:"sync_interval_s"`
+	// SyncMaxDisable stops a run before any writes when more users would be disabled.
+	SyncMaxDisable int `yaml:"sync_max_disable"`
 	// RequiredClaim, if set, must be in the ID token at portal login: a
 	// string claim equal to Value, or an array containing it. Env:
 	// OIDC_REQUIRED_CLAIM=name=value.
@@ -356,6 +358,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		}
 		if cfg.OIDC.SyncClientID == "" {
 			cfg.OIDC.SyncClientID = "olr-sync"
+		}
+		if cfg.OIDC.SyncMaxDisable == 0 {
+			cfg.OIDC.SyncMaxDisable = 10
 		}
 		if cfg.OIDC.SyncIntervalS == 0 {
 			cfg.OIDC.SyncIntervalS = 900
@@ -630,6 +635,10 @@ func (c *Config) validate() Problems {
 		}
 		if rc := c.OIDC.RequiredClaim; rc != nil && (rc.Name == "" || rc.Value == "") {
 			add("oidc.required_claim: name and value must both be set")
+		}
+		// Zero keeps the default for callers constructing Config directly.
+		if c.OIDC.SyncMaxDisable < 0 || c.OIDC.SyncMaxDisable > 10000 {
+			add("oidc.sync_max_disable: must be between 1 and 10000")
 		}
 		if c.OIDC.SyncIntervalS < 60 {
 			add("oidc.sync_interval_s: must be at least 60")

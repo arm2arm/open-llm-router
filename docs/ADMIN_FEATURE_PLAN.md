@@ -195,7 +195,8 @@ invalidation generation, so disablement, overrides and membership changes reach
 the next request on every path. Tokens issued before the latest membership update
 can only narrow the stored groups and never rewrite them. Login, API tokens and
 group sync share one group-name rule (`group_names: leaf|path`); sync reads
-Keycloak paths and refuses ambiguous duplicate leaf names.
+Keycloak paths and maps same-named leaves to one policy consistently. Use path
+format when groups with the same leaf name need different access.
 
 Completed for #81: the settings service is generic over domains; the **routing**
 domain stores complete revisions of logical models, endpoint pools and aliases.

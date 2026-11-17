@@ -117,6 +117,7 @@ var AuthSettings = []AuthSetting{
 	{"sync_client_id", "sync_client_id", "OIDC_SYNC_CLIENT_ID"},
 	{"sync_client_secret", "", EnvOIDCSyncSecret},
 	{"sync_interval_s", "sync_interval_s", ""},
+	{"sync_max_disable", "sync_max_disable", ""},
 }
 
 // authSources mirrors how Parse applies values: environment variables other

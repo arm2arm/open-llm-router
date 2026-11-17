@@ -66,6 +66,9 @@ func TestParseValid(t *testing.T) {
 	if cfg.OIDC.GroupsClaim != "groups" || cfg.OIDC.UsernameClaim != "preferred_username" {
 		t.Errorf("claim defaults = %q, %q", cfg.OIDC.GroupsClaim, cfg.OIDC.UsernameClaim)
 	}
+	if cfg.OIDC.SyncMaxDisable != 10 {
+		t.Fatal("missing group-sync disable guard", cfg.OIDC.SyncMaxDisable)
+	}
 	m := cfg.Models["chat-model"]
 	if len(m.Pool) != 2 || m.Pool[0].URL != "http://backend-a:8000" || m.Pool[0].Weight != 2 || m.Pool[1].MaxInflight != 32 {
 		t.Errorf("chat-model pool = %+v", m.Pool)
@@ -82,6 +85,15 @@ func TestParseValid(t *testing.T) {
 	}
 	if cfg.Aliases["claude-sonnet-4-5"] != "chat-model" {
 		t.Errorf("aliases = %v", cfg.Aliases)
+	}
+}
+
+func TestSyncDisableLimitValidation(t *testing.T) {
+	for _, limit := range []int{-1, 10001} {
+		input := change(t, "  portal_client_id: olr-portal", "  portal_client_id: olr-portal\n  sync_max_disable: "+strconv.Itoa(limit))
+		if _, err := Parse([]byte(input), lookupIn(validEnv)); err == nil || !strings.Contains(err.Error(), "sync_max_disable") {
+			t.Fatal("unsafe disable limit accepted", limit, err)
+		}
 	}
 }
 

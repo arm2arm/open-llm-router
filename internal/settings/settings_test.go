@@ -66,7 +66,7 @@ func decodeAuthentication(data []byte) (Authentication, error) {
 
 func TestDecodeIsStrictAndNeverEchoesValues(t *testing.T) {
 	doc, err := decodeAuthentication([]byte(`{"enabled":true,"issuer":"https://idp.example/realms/a","portal_client_id":"olr-portal"}`))
-	if err != nil || doc.GroupsClaim != "groups" || doc.UsernameClaim != "preferred_username" || doc.SyncClientID != "olr-sync" || doc.SyncIntervalS != 900 {
+	if err != nil || doc.GroupsClaim != "groups" || doc.UsernameClaim != "preferred_username" || doc.SyncClientID != "olr-sync" || doc.SyncIntervalS != 900 || doc.SyncMaxDisable != 10 {
 		t.Fatal("defaults", err, doc)
 	}
 	for _, input := range []string{
@@ -85,7 +85,7 @@ func TestDecodeIsStrictAndNeverEchoesValues(t *testing.T) {
 
 func TestDocumentProblems(t *testing.T) {
 	valid := Authentication{Enabled: true, DefaultSignIn: "keycloak", GroupNames: "leaf", Issuer: "https://idp.example/realms/a", PortalClientID: "olr-portal",
-		GroupsClaim: "groups", UsernameClaim: "preferred_username", SyncClientID: "olr-sync", SyncIntervalS: 900,
+		GroupsClaim: "groups", UsernameClaim: "preferred_username", SyncClientID: "olr-sync", SyncIntervalS: 900, SyncMaxDisable: 10,
 		PortalClientSecret: SecretRef{Env: config.EnvOIDCClientSecret}}
 	if p := valid.problems(); len(p) != 0 {
 		t.Fatal(p)
@@ -95,6 +95,7 @@ func TestDocumentProblems(t *testing.T) {
 		"portal_client_id":     func(a *Authentication) { a.PortalClientID = "" },
 		"backchannel_url":      func(a *Authentication) { a.BackchannelURL = "ftp://idp" },
 		"sync_interval_s":      func(a *Authentication) { a.SyncIntervalS = 5 },
+		"sync_max_disable":     func(a *Authentication) { a.SyncMaxDisable = 10001 },
 		"required_claim":       func(a *Authentication) { a.RequiredClaim = &RequiredClaim{Name: "affiliation"} },
 		"audience":             func(a *Authentication) { a.Audience = "line\nbreak" },
 		"portal_client_secret": func(a *Authentication) { a.PortalClientSecret = SecretRef{Env: "OLR_DATABASE_URL"} },
@@ -108,7 +109,7 @@ func TestDocumentProblems(t *testing.T) {
 		}
 	}
 	// Disabled SSO keeps retained values without requiring them.
-	disabled := Authentication{DefaultSignIn: "keycloak", GroupNames: "leaf", SyncIntervalS: 900}
+	disabled := Authentication{DefaultSignIn: "keycloak", GroupNames: "leaf", SyncIntervalS: 900, SyncMaxDisable: 10}
 	if p := disabled.problems(); len(p) != 0 {
 		t.Fatal("disabled", p)
 	}
