@@ -14,7 +14,7 @@ and P3; dependencies may change that order.
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
-| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation (#213) in this change; remaining findings pending |
+| #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Preview lifecycle/credential erasure: PR #300; history filtering/revocation: PR #301; audit minimization (#244) in this change; remaining findings pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
@@ -199,3 +199,18 @@ and P3; dependencies may change that order.
   503. Tests inject an UPDATE failure, verify rollback, then confirm one successful
   event despite repeated use. Policy-publication revocations use the same service
   and log lookup/storage failures without secret values.
+
+## Administration attribution minimization evidence
+
+- **#244:** Agent sources are reduced to IPv4 `/24` or IPv6 `/48` before audit
+  storage/logging and key last-use updates. Database insert/update guards enforce
+  this even for older application writers. Migration 0027 minimizes historical
+  database addresses in one transaction, restoring the append-only guard before
+  commit. Upgrade tests cover IPv4, IPv6, mapped IPv4 and invalid historical values
+  and confirm history still rejects UPDATE/TRUNCATE afterward. Authorization uses
+  the original address. Documentation describes the retained prefixes, permanent
+  history and separately managed historical logs/exports. Identical SSO claims
+  skip mutations and audit/invalidation entirely; concurrent first sign-ins are
+  serialized. Portal callback and concurrent-sync tests verify one initial event,
+  no state/timestamp changes on identical claims, and a new event/state version on
+  changed membership.

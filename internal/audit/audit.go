@@ -86,6 +86,7 @@ func OperatorCLI() Actor {
 // Write emits one JSON log line, message "admin audit", with the event nested
 // under "event" in the shape of its JSON tags.
 func Write(w io.Writer, e Event) {
+	e.Actor.SourceIP = SourceNetwork(e.Actor.SourceIP)
 	if e.Time.IsZero() {
 		e.Time = time.Now().UTC()
 	}
@@ -100,6 +101,7 @@ type executor interface {
 // event that must outlive a rolled-back change). Details must already be
 // redacted: field names, counts and IDs, never values of secrets.
 func Record(ctx context.Context, db executor, e Event) error {
+	e.Actor.SourceIP = SourceNetwork(e.Actor.SourceIP)
 	if e.Actor.KeyID != "" {
 		if e.Details == nil {
 			e.Details = map[string]any{}

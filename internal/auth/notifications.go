@@ -124,6 +124,8 @@ func (a Admin) change(ctx context.Context, sql string, args ...any) error {
 	})
 }
 
+var errAuthUnchanged = errors.New("authentication state unchanged")
+
 func (a Admin) changeWith(ctx context.Context, mutate func(pgx.Tx) error) error {
 	conn, err := pgx.ConnectConfig(ctx, a.Pool.Config().ConnConfig.Copy())
 	if err != nil {
@@ -164,6 +166,9 @@ func (a Admin) changeWith(ctx context.Context, mutate func(pgx.Tx) error) error 
 		}
 		return nil
 	})
+	if errors.Is(err, errAuthUnchanged) {
+		return nil
+	}
 	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
 	}
