@@ -831,7 +831,7 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
           controls.current?.contains(document.activeElement))
       )
         controls.current
-          .querySelector<HTMLInputElement>('[role="switch"]')
+          ?.querySelector<HTMLInputElement>('[role="switch"]')
           ?.focus()
       setSaved(
         `Detailed logging ${value.enabled ? 'enabled' : 'disabled'}. Traces kept for ${value.retention_days} days.`,
