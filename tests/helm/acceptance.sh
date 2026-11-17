@@ -161,6 +161,14 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 sso() {
+  # Router readiness intentionally does not depend on Keycloak. Discovery may
+  # still be backing off after the identity provider's initial cold start.
+  local available=false
+  for attempt in $(seq 1 90); do
+    if curl --fail --silent --max-time 2 "$base/portal/api/auth" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["oidc"]["available"] else 1)' 2>/dev/null; then available=true; break; fi
+    sleep 1
+  done
+  [ "$available" = true ] || { echo 'SSO discovery did not become available'; return 1; }
   python3 - "$base" "$work/initial-secret.json" <<'PYSSO'
 import base64, json, sys
 sys.path.insert(0, "tests/clients")
