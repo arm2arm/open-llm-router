@@ -195,7 +195,7 @@ func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, err
 // routing is only the import baseline while routing is managed.
 func (r *Routing) conflicts(file *config.Config, _ map[string]string, _ bool) []Conflict {
 	var found []Conflict
-	encode := func(m config.Model) string { data, _ := json.Marshal(m); return string(data) }
+	encode := func(value any) string { data, _ := json.Marshal(value); return string(data) }
 	for _, name := range slices.Sorted(maps.Keys(file.Models)) {
 		if managed, ok := r.Models[name]; !ok || encode(managed) != encode(file.Models[name]) {
 			found = append(found, Conflict{Setting: "models." + name, Source: config.SourceFile, Where: "models." + name})
@@ -204,6 +204,22 @@ func (r *Routing) conflicts(file *config.Config, _ map[string]string, _ bool) []
 	for _, alias := range slices.Sorted(maps.Keys(file.Aliases)) {
 		if r.Aliases[alias] != file.Aliases[alias] {
 			found = append(found, Conflict{Setting: "aliases." + alias, Source: config.SourceFile, Where: "aliases." + alias})
+		}
+	}
+	if r.Groups != nil { // legacy revisions continue to use the file's policies
+		names := map[string]bool{}
+		for name := range file.Groups {
+			names[name] = true
+		}
+		for name := range r.Groups {
+			names[name] = true
+		}
+		for _, name := range slices.Sorted(maps.Keys(names)) {
+			managed, managedOK := r.Groups[name]
+			original, fileOK := file.Groups[name]
+			if managedOK != fileOK || encode(managed) != encode(original) {
+				found = append(found, Conflict{Setting: "groups." + name, Source: config.SourceFile, Where: "groups." + name})
+			}
 		}
 	}
 	return found

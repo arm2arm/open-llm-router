@@ -229,3 +229,24 @@ func TestRoutingDocument(t *testing.T) {
 		t.Fatal("empty routing must allow backend-first setup")
 	}
 }
+
+func TestRoutingGroupConflictsAreCompleteAndLegacyAware(t *testing.T) {
+	file := parse(t, "groups:\n  staff: {models: [m], rpm: 3}\n  file-only: {models: [m]}\n", nil)
+	var doc Routing
+	doc.baseline(file)
+	rpm := 8
+	doc.Groups["staff"] = config.Group{Models: []string{"m"}, RPM: &rpm}
+	delete(doc.Groups, "file-only")
+	doc.Groups["managed-only"] = config.Group{Models: []string{"m"}}
+	var names []string
+	for _, c := range doc.conflicts(file, nil, true) {
+		names = append(names, c.Setting)
+	}
+	if !slices.Equal(names, []string{"groups.file-only", "groups.managed-only", "groups.staff"}) {
+		t.Fatal("incomplete policy conflicts", names)
+	}
+	doc.Groups = nil
+	if conflicts := doc.conflicts(file, nil, true); len(conflicts) != 0 {
+		t.Fatal("legacy groups incorrectly conflict", conflicts)
+	}
+}

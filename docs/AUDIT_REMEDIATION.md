@@ -338,3 +338,9 @@ and P3; dependencies may change that order.
   legacy per-model values in that mode. The legacy editor is hidden. API
   regressions cover import and a later activation; the managed routing browser
   scenario asserts the obsolete editor and buttons are absent.
+
+- **#210:** Drafts that omit groups inherit the committed active revision inside
+  the settings transaction, not a possibly stale runtime/file snapshot. Group
+  conflicts include changed, file-only and managed-only names; legacy omissions
+  do not create policy conflicts. The PostgreSQL regression deliberately leaves
+  `Current` pinned to the file and verifies the draft keeps the active override.

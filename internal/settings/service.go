@@ -575,9 +575,6 @@ func (s *Service[D, P]) SaveDraft(ctx context.Context, domain string, expected i
 		if err != nil {
 			return err
 		}
-		if routing, ok := any(doc).(*Routing); ok && routing.Groups == nil {
-			routing.Groups = s.current().Groups
-		}
 		var problems []string
 		bindings := doc.secrets()
 		for _, name := range slices.Sorted(maps.Keys(secrets)) {
@@ -600,6 +597,11 @@ func (s *Service[D, P]) SaveDraft(ctx context.Context, domain string, expected i
 		active, err := s.readRevision(ctx, tx, st.active)
 		if err != nil {
 			return err
+		}
+		if routing, ok := any(doc).(*Routing); ok && routing.Groups == nil {
+			// Draft omission means retain the committed policy, even if this process
+			// has not applied it yet (for example an operator CLI invocation).
+			routing.Groups = any(active.doc).(*Routing).Groups
 		}
 		stored := []string{}
 		for _, name := range slices.Sorted(maps.Keys(secrets)) {

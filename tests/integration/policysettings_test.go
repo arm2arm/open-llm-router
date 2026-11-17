@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
@@ -162,5 +163,49 @@ func TestManagedPoliciesPreviewEnforcementAndRollback(t *testing.T) {
 	snapshot, err := service.Apply(t.Context(), f.cfg, slog.New(slog.DiscardHandler))
 	if err != nil || snapshot.Config.Groups["students"].Models[0] != "chat-model" {
 		t.Fatal("restart", err)
+	}
+}
+
+func TestRoutingDraftOmissionKeepsCommittedPoliciesWithStaleRuntime(t *testing.T) {
+	db := openDatabase(t, newDatabase(t).dsn)
+	file, err := config.Parse([]byte("models:\n  chat:\n    protocols: [openai]\n    timeout_s: 5\n    pool: [{url: 'http://backend:8000', weight: 1, max_inflight: 4}]\ngroups:\n  staff: {models: [chat], rpm: 3}\n"), func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := settings.RoutingService{DB: db, File: file, Current: func() *config.Config { return file }}
+	actor := audit.Actor{Type: "operator_cli", Name: "policy-omission"}
+	v, err := s.Import(t.Context(), settings.DomainRouting, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := *v.Active.Document
+	staff := doc.Groups["staff"]
+	staff.RPM = limitPtr(8)
+	doc.Groups["staff"] = staff
+	b, _ := json.Marshal(doc)
+	v, err = s.SaveDraft(t.Context(), settings.DomainRouting, v.Version, b, nil, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err = s.Activate(t.Context(), settings.DomainRouting, v.Version, v.Draft.ID, actor, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = json.Marshal(map[string]any{"models": v.Active.Document.Models, "aliases": v.Active.Document.Aliases})
+	v, err = s.SaveDraft(t.Context(), settings.DomainRouting, v.Version, b, nil, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rpm := v.Draft.Document.Groups["staff"].RPM; rpm == nil || *rpm != 8 {
+		t.Fatal("omission restored stale file policy", rpm)
+	}
+	found := false
+	for _, c := range v.Conflicts {
+		if c.Setting == "groups.staff" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("managed group conflict is invisible", v.Conflicts)
 	}
 }
