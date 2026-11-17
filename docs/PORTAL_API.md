@@ -341,11 +341,15 @@ These routes require a full admin browser session. Mutation requests use the
 normal JSON and same-origin checks (8 KiB body limit, unknown fields refused).
 Resolved backend secrets are excluded from all responses and revisions.
 
-- `GET /portal/api/admin/endpoints` returns `models`, `credential_references` and
+- `GET /portal/api/admin/endpoints` returns `managed`, `models`, `credential_references` and
   `allowed_private_networks`. Each entry contains `model`, `configuration`, current
   `revision` (initially `0`), `source` (`file` or `database`), `file_configuration`
   and the latest 20 `history` entries. History contains `id`, `created_at`, `file`
   and `configuration` (`null` denotes file ownership).
+  When complete routing revisions are managed, `managed` is `true` and `models`
+  is an empty array. Startup YAML values are not presented as current endpoints.
+  Read and edit the models through the routing-settings API instead; the portal
+  hides the per-model endpoint editor.
 - `POST /portal/api/admin/endpoints/test` accepts `model` and `configuration`.
   It validates and probes without saving/publishing. Health results return 200
   with `{ok, message, replicas}`; `ok:false` means the probe failed. Validation

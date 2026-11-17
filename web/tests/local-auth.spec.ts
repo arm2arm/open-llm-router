@@ -1407,6 +1407,12 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
     'routing revision 1',
   )
 
+  await expect(
+    page.getByRole('region', { name: 'Endpoint configuration', exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: /^Edit endpoints for/ }),
+  ).toHaveCount(0)
   // A model granted by a group policy cannot be removed here.
   const draft = panel.getByRole('form', { name: 'Edit routing draft' })
   await expect(

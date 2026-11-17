@@ -333,3 +333,8 @@ and P3; dependencies may change that order.
   the portal, bound agent operation and actual CLI, applies it and checks its
   unhealthy runtime state. A formerly file-trusted origin that becomes forbidden
   remains blocked on activation, rollback and Apply.
+
+- **#208:** The endpoint response explicitly reports managed routing and omits
+  legacy per-model values in that mode. The legacy editor is hidden. API
+  regressions cover import and a later activation; the managed routing browser
+  scenario asserts the obsolete editor and buttons are absent.

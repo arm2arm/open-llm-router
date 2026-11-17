@@ -6,6 +6,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
+	"github.com/arm2arm/open-llm-router/internal/settings"
 )
 
 func (h *Handler) endpointService(w http.ResponseWriter) bool {
@@ -37,11 +38,18 @@ func (h *Handler) endpointList(w http.ResponseWriter, r *http.Request, _ user) {
 	if !h.endpointService(w) {
 		return
 	}
-	entries, err := h.Endpoints.View(r.Context())
+	managed, err := settings.Managed(r.Context(), h.pool, settings.DomainRouting)
 	if endpointError(w, err) {
 		return
 	}
-	respond(w, 200, map[string]any{"models": entries, "credential_references": h.Endpoints.Policy.References(), "allowed_private_networks": h.Endpoints.Policy.Networks()})
+	entries := []endpoints.Entry{}
+	if !managed {
+		entries, err = h.Endpoints.View(r.Context())
+		if endpointError(w, err) {
+			return
+		}
+	}
+	respond(w, 200, map[string]any{"managed": managed, "models": entries, "credential_references": h.Endpoints.Policy.References(), "allowed_private_networks": h.Endpoints.Policy.Networks()})
 }
 
 type endpointBody struct {
