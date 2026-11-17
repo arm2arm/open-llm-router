@@ -15,6 +15,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/buildinfo"
+	"github.com/arm2arm/open-llm-router/internal/groupsync"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
 	"github.com/arm2arm/open-llm-router/internal/usage"
@@ -32,11 +33,14 @@ import (
 )
 
 type Options struct {
-	PoolSource    func() *pool.Manager
-	Token         string
-	TraceEndpoint string // full OTLP/HTTP traces URL; empty disables spans
-	IncludeUserID bool
-	Exporter      sdktrace.SpanExporter // optional replacement for tests
+	DatabaseHealth     func(context.Context) bool
+	InvalidationHealth func() bool
+	GroupSync          *groupsync.Stats
+	PoolSource         func() *pool.Manager
+	Token              string
+	TraceEndpoint      string // full OTLP/HTTP traces URL; empty disables spans
+	IncludeUserID      bool
+	Exporter           sdktrace.SpanExporter // optional replacement for tests
 }
 
 func Environment(lookup func(string) string) (Options, error) {
@@ -72,6 +76,7 @@ func New(ctx context.Context, options Options, pools *pool.Manager, writer inter
 		ConstLabels: prometheus.Labels{"version": buildinfo.Version, "commit": buildinfo.Commit, "go_version": buildinfo.GoVersion()}})
 	build.Set(1)
 	o.Registry.MustRegister(build)
+	o.registerDiagnostics(options)
 	labels := []string{"model", "replica", "protocol", "status_class"}
 	counter := func(name, help string) *prometheus.CounterVec {
 		c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "olr_" + name, Help: help}, labels)
@@ -87,7 +92,7 @@ func New(ctx context.Context, options Options, pools *pool.Manager, writer inter
 	o.input = counter("input_tokens_total", "Observed input tokens.")
 	o.output = counter("output_tokens_total", "Observed output tokens.")
 	o.duration = histogram("request_duration_seconds", "Total proxy call duration.", []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900})
-	o.ttfb = histogram("time_to_first_token_seconds", "Time to first upstream body byte, including selection and request processing.", []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30})
+	o.ttfb = histogram("time_to_first_token_seconds", "Time to first upstream body byte, including selection and request processing.", []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 180, 300, 600, 900, 3600, 7200})
 	o.tps = histogram("output_tokens_per_second", "Stream output tokens divided by time after first upstream byte.", []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000})
 	o.rejections = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "olr_limit_rejections_total", Help: "Calls rejected by a configured quota or concurrency limit."}, []string{"model", "protocol", "limit"})
 	o.Registry.MustRegister(o.rejections, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

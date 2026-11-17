@@ -29,6 +29,8 @@ services:
       - "127.0.0.1:${PROMETHEUS_PORT:-9091}:9090"
     volumes:
       - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/router-alerts.yml:/etc/prometheus/router-alerts.yml:ro
+      - ../observability/router-alerts.test.yml:/etc/prometheus/router-alerts.test.yml:ro
       - ../observability/vllm-targets.json:/etc/prometheus/vllm-targets.json:ro
       - prometheus-data:/prometheus
     healthcheck:

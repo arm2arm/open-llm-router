@@ -12,6 +12,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/groupsync"
+	"github.com/arm2arm/open-llm-router/internal/oidcclient"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +23,7 @@ import (
 // independently of listening/local authentication; failed discovery is
 // retried and API keys remain usable throughout an IdP outage.
 type oidcServices struct {
+	stats       *groupsync.Stats
 	pool        *pgxpool.Pool
 	credentials *pgxpool.Pool
 	work        *auth.WorkLimiter
@@ -33,8 +35,11 @@ type oidcServices struct {
 	stop        func()
 }
 
-func newOIDCServices(cfg *config.Config, pool, credentials *pgxpool.Pool, authenticator *auth.Authenticator, log *slog.Logger) *oidcServices {
-	s := &oidcServices{pool: pool, credentials: credentials, work: authenticator.WorkBudget(), log: log, fresh: authenticator.Freshness, stop: func() {}}
+func newOIDCServices(cfg *config.Config, pool, credentials *pgxpool.Pool, authenticator *auth.Authenticator, log *slog.Logger, stats *groupsync.Stats) *oidcServices {
+	if stats == nil {
+		stats = &groupsync.Stats{}
+	}
+	s := &oidcServices{stats: stats, pool: pool, credentials: credentials, work: authenticator.WorkBudget(), log: log, fresh: authenticator.Freshness, stop: func() {}}
 	authenticator.Tokens = func(ctx context.Context, raw string) (auth.Principal, error) {
 		if !s.audience.Load() {
 			return auth.Principal{}, auth.ErrInvalidKey // not a key, and IdP tokens are off
@@ -53,6 +58,9 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stop()
+	s.stats.Enabled.Store(false)
+	s.stats.IntervalSeconds.Store(0)
+	s.stats.LastSuccess.Store(0)
 	s.audience.Store(false)
 	s.verifier.Store(nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,35 +69,41 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 		s.audience.Store(true)
 		oidcCfg := cfg.OIDC
 		wg.Go(func() {
-			retryOIDC(ctx, s.log, "API tokens", func(ctx context.Context) bool {
+			retryOIDC(ctx, s.log, "API tokens", func(ctx context.Context) error {
 				attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
 				verifier, err := apitoken.New(attempt, oidcCfg, s.credentials, s.fresh, s.work)
 				cancel()
 				if err != nil {
-					return false
+					return err
 				}
 				defer verifier.Close()
 				s.verifier.Store(verifier)
 				s.log.Info("OIDC API tokens available")
 				<-ctx.Done()
 				s.verifier.CompareAndSwap(verifier, nil)
-				return true
+				return nil
 			})
 		})
 	}
 	if cfg.OIDC != nil && cfg.OIDCSyncSecret != "" {
+		s.stats.Enabled.Store(true)
+		s.stats.IntervalSeconds.Store(int64(cfg.OIDC.SyncIntervalS))
 		oidcCfg, secret := cfg.OIDC, cfg.OIDCSyncSecret
 		wg.Go(func() {
-			retryOIDC(ctx, s.log, "group sync", func(ctx context.Context) bool {
+			retryOIDC(ctx, s.log, "group sync", func(ctx context.Context) error {
 				attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
 				syncer, err := groupsync.New(attempt, oidcCfg, secret, s.pool, s.log)
 				cancel()
 				if err != nil {
-					return false
+					if ctx.Err() == nil {
+						s.stats.Record(groupsync.Result{}, err)
+					}
+					return err
 				}
+				syncer.Stats = s.stats
 				defer syncer.Close()
 				syncer.Run(ctx, time.Duration(oidcCfg.SyncIntervalS)*time.Second)
-				return true
+				return nil
 			})
 		})
 	}
@@ -104,15 +118,20 @@ func (s *oidcServices) Close() {
 	s.stop = func() {}
 }
 
-func retryOIDC(ctx context.Context, log *slog.Logger, service string, initialize func(context.Context) bool) {
+func retryOIDC(ctx context.Context, log *slog.Logger, service string, initialize func(context.Context) error) {
 	for ctx.Err() == nil {
-		if initialize(ctx) {
+		err := initialize(ctx)
+		if err == nil {
 			return
 		}
 		if ctx.Err() != nil {
 			return
 		}
-		log.Warn("OIDC service unavailable; retrying", "service", service)
+		cause := oidcclient.DiagnosticCause(err)
+		if errors.Is(err, groupsync.ErrNotKeycloak) {
+			cause = "group sync issuer is not a Keycloak realm"
+		}
+		log.Warn("OIDC service unavailable; retrying", "service", service, "cause", cause)
 		timer := time.NewTimer(10 * time.Second)
 		select {
 		case <-ctx.Done():

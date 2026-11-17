@@ -30,6 +30,7 @@ const lock int64 = 0x4f4c5253594e43 // "OLRSYNC"
 // Syncer reads users through the Keycloak admin REST API with a read-only
 // service account (client credentials; realm-management view-users).
 type Syncer struct {
+	Stats  *Stats
 	mu     sync.Mutex
 	cursor string // resume after the last attempted user, including failures
 	cfg    *config.OIDC
@@ -43,6 +44,7 @@ type Syncer struct {
 // Result counts what one run did.
 type Result struct {
 	Checked, Updated, Disabled, Failed, Remaining int
+	Skipped                                       bool
 }
 
 // New discovers the provider and derives the admin API from the issuer,
@@ -132,6 +134,7 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 	defer conn.Release()
 	var locked bool
 	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lock).Scan(&locked); err != nil || !locked {
+		result.Skipped = err == nil
 		return result, err
 	}
 	defer func() {
@@ -299,6 +302,9 @@ func (s *Syncer) Run(ctx context.Context, interval time.Duration) {
 		runCtx, cancel := context.WithTimeout(ctx, interval)
 		result, err := s.Sync(runCtx)
 		cancel()
+		if ctx.Err() == nil {
+			s.Stats.Record(result, err)
+		}
 		if err != nil && ctx.Err() == nil {
 			s.log.Error("group sync failed", "error", err, "checked", result.Checked, "updated", result.Updated, "disabled", result.Disabled, "failed", result.Failed, "remaining", result.Remaining)
 		} else if err == nil {

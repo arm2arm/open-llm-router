@@ -30,12 +30,24 @@ policy/limit rejections. They do not count portal, health, model-list or usage A
 | `olr_output_tokens_per_second` | histogram of measured streaming throughput |
 | `olr_replica_in_flight` | gauge of current replica leases, including failed attempts until release |
 | `olr_replica_healthy` | gauge: 1 for healthy/outside cooldown, otherwise 0 |
+| `olr_queue_waiting{model}` | gauge of calls waiting for replica capacity; no replica label |
 | `olr_limit_rejections_total` | rejections by `max_concurrent`, `max_concurrent_batch`, `rpm`, `tpm`, `tokens_per_day`, `tokens_per_month` |
 | `olr_usage_write_failures_total`, `olr_usage_dropped_total` | failed database transactions and dropped queued records |
+| `olr_database_reachable` | current database ping result, bounded to one second per scrape; 0 means database-dependent readiness fails |
+| `olr_invalidation_listener_connected` | authentication invalidation listener is connected and usable |
+| `olr_group_sync_enabled`, `olr_group_sync_interval_seconds` | configured sync state and interval; no labels |
+| `olr_group_sync_runs_total{result}` | complete sync runs and initialization failures; result is `success`, `error` or `skipped` (another worker held the lock) |
+| `olr_group_sync_last_success_timestamp_seconds` | Unix time of last complete successful sync; 0 until success with the current settings; skips and errors do not advance it |
+| `olr_content_trace_writes_total`, `olr_content_trace_failures_total` | persisted optional traces and failed writes/retention operations; no labels |
+| `olr_content_trace_deletions_total`, `olr_content_trace_dropped_total` | deleted traces and captures skipped by capacity, rate, storage or preference limits; no labels |
+| `olr_content_trace_retention_backlog` | expired traces awaiting deletion at the last successful retention pass; no labels |
+| `olr_build_info{version,commit,go_version}` | constant gauge of 1 identifying the binary; build-controlled labels |
 
 Call metrics have only canonical configured `model`, configured replica origin,
 `protocol` and `status_class` labels. Rejections have model/protocol/limit; pool gauges
-have model/replica. Invalid model requests use an empty model label, preventing caller-
+have model/replica except the model-only queue gauge. Sync counters use a fixed result
+label and build info uses fixed build identity; health/trace series have no labels.
+Invalid model requests use an empty model label, preventing caller-
 controlled cardinality. Status classes include `2xx`–`5xx`, `error` and `aborted`.
 There are no user, key, group, request-ID or trace-ID metric labels. Standard Go and
 process collectors are included. Counters reset on process restart.
@@ -45,6 +57,48 @@ protocol role/start event before generated text. Throughput is output tokens div
 by latency after that byte, for streams with positive output and duration. Missing
 measurements are not histogram observations. Usage accounting remains asynchronous;
 metrics record the observed call even when its database write fails.
+
+First-byte histogram buckets include 60, 120, 180, 300, 600, 900, 3600 and 7200 seconds,
+so queues longer than 30 seconds remain measurable in finite buckets. OIDC retry logs
+include a classified cause (for example DNS, connection refusal, timeout or HTTP status),
+without URLs or provider response bodies. Group-sync failures log sanitized causes and
+progress counts. A configured sync that has never succeeded remains at timestamp 0;
+check client credentials and Keycloak's read-only admin scopes before trusting removals.
+
+## Alerts and readiness
+
+[`router-alerts.yml`](../deploy/observability/router-alerts.yml) ships rules for process
+loss, database readiness loss, invalidation disconnects, sustained errors, accounting
+loss, stale group sync, persistent queues, unhealthy replicas, long first-byte latency
+and optional trace storage/retention failures. The local observability stack loads them.
+For production, load the file through your Prometheus rule configuration or convert the
+group into your Prometheus Operator's rule resource, and route `critical`/`warning`
+alerts to the site's response channel. Thresholds are starting values for the pilot.
+
+`up{job="olr"}` alone proves that `/metrics` responds. It stays 1 during a database
+outage. `OLRDatabaseUnavailable` uses `olr_database_reachable == 0`, the same database
+ping condition as `/readyz`, and fires after one minute even while metrics remain up.
+An external HTTP/blackbox probe of `/readyz` is an alternative readiness signal; alert
+on `probe_success == 0` for that specific target. Inference replica failures do not
+make the administrative portal unready, so monitor replica/error/queue signals too.
+
+The pilot's accounting stop condition is `OLRAccountingLoss`: **any increase** in
+`olr_usage_dropped_total` or `olr_usage_write_failures_total` over five minutes. Check
+database connectivity, writer logs and capacity before continuing acceptance. The
+high-error rule requires over 5% errors for five minutes with at least 0.1 requests/s;
+process loss has its own two-minute alert. Group-sync freshness alerts are conditional
+on sync being configured and use twice the configured interval plus a ten-minute hold.
+Trace drops can be expected when limits or preferences refuse capture; investigate
+their rate rather than treating every skipped capture as an accounting failure.
+
+CI runs `promtool check rules` and synthetic rule tests. The tests prove that a database
+outage alerts while `up` remains 1 and that an accounting drop alerts independently.
+To validate edited rules with the local stack:
+
+```sh
+docker compose --env-file .env -f deploy/compose/docker-compose.yml -f deploy/compose/observability.yml exec -T prometheus promtool check rules /etc/prometheus/router-alerts.yml
+docker compose --env-file .env -f deploy/compose/docker-compose.yml -f deploy/compose/observability.yml exec -T --workdir /etc/prometheus prometheus promtool test rules router-alerts.test.yml
+```
 
 ## Dashboard and local stack
 
