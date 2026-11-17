@@ -3,6 +3,7 @@ package limits
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -448,5 +449,61 @@ func TestExhaustedMonthWinsOverTemporaryDailyReservation(t *testing.T) {
 	var r *Rejection
 	if !errors.As(err, &r) || r.Limit != "tokens_per_month" || r.Reason != "" {
 		t.Fatalf("permanent refusal masked: %#v %v", r, err)
+	}
+}
+
+func TestTPMUnlimitedUsageDoesNotBecomeRestoredDebt(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	limited := policy.Policy{TPM: ptr(int64(20000))}
+	acquire(t, m, "u", limited).Release()
+	for range 60 {
+		l := acquire(t, m, "u", policy.Policy{})
+		l.Complete(usage.Record{StartedAt: c.Now(), Model: "m", InputTokens: 50000, OutputTokens: 50000})
+		c.Add(time.Minute)
+	}
+	if s := snapshot(t, m, "u", limited); s.Remaining.TPM == nil || *s.Remaining.TPM != 20000 {
+		t.Fatalf("unlimited usage created debt: %+v", s.Remaining)
+	}
+	acquire(t, m, "u", limited).Release()
+}
+
+func TestTPMUnlimitedSnapshotResetsBucketAndLateUnlimitedCompletionIsFree(t *testing.T) {
+	m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+	limited := policy.Policy{TPM: ptr(int64(100))}
+	acquire(t, m, "u", limited).Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 150})
+	if s := snapshot(t, m, "u", policy.Policy{}); s.Remaining.TPM != nil {
+		t.Fatal("unlimited snapshot exposed a bucket")
+	}
+	late := acquire(t, m, "u", policy.Policy{})
+	if s := snapshot(t, m, "u", limited); s.Remaining.TPM == nil || *s.Remaining.TPM != 100 {
+		t.Fatal("snapshot did not reset finite debt", s.Remaining)
+	}
+	late.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 100000})
+	if s := snapshot(t, m, "u", limited); *s.Remaining.TPM != 100 {
+		t.Fatal("late unlimited completion charged restored bucket", *s.Remaining.TPM)
+	}
+	acquire(t, m, "u", limited).Release()
+}
+
+func TestTPMFiniteAdmissionDebtSurvivesPolicyChange(t *testing.T) {
+	for _, completeWhileUnlimited := range []bool{false, true} {
+		t.Run(fmt.Sprint(completeWhileUnlimited), func(t *testing.T) {
+			m, c := setup(t, "UTC", "2026-05-05T12:00:00Z", nil)
+			limited := policy.Policy{TPM: ptr(int64(100))}
+			finite := acquire(t, m, "u", limited)
+			acquire(t, m, "u", policy.Policy{}).Release()
+			if !completeWhileUnlimited {
+				acquire(t, m, "u", limited).Release()
+			}
+			finite.Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 150})
+			if completeWhileUnlimited {
+				// Further unlimited calls/lookups must not discard outstanding finite debt.
+				acquire(t, m, "u", policy.Policy{}).Complete(usage.Record{StartedAt: c.Now(), Model: "m", OutputTokens: 100000})
+				snapshot(t, m, "u", policy.Policy{})
+			}
+			rejected(t, m, "u", limited, "tpm", 31)
+			c.Add(31 * time.Second)
+			acquire(t, m, "u", limited).Release()
+		})
 	}
 }

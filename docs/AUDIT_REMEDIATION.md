@@ -15,7 +15,7 @@ and P3; dependencies may change that order.
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
 | #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Completed in PRs #296, #297, #298 and #299 |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Completed across PRs #300–304 |
-| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; batch override inheritance (#189) and reservation feedback (#203) implemented; TPM transitions pending |
+| #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; batch override inheritance (#189) and reservation feedback (#203) implemented; TPM transitions (#249) implemented; checks and final package review pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
 | #173 Request history | #173, #174, #229, #258 | Pending |
 | #185 Accessibility | #185, #230, #250, #264 | Pending |
@@ -311,3 +311,14 @@ and P3; dependencies may change that order.
   Both HTTP envelopes expose the reason and remaining amount with the matching
   retry header behavior. Existing strict-concurrency and default SDK regressions
   exercise the surrounding admission path.
+
+## Unlimited TPM transition evidence
+
+- **#249:** Leases record whether admission used a finite TPM. Unlimited calls
+  cannot debit either an old or restored bucket. Admission and usage lookup reset
+  the old bucket on an unlimited policy. Outstanding finite-policy completions
+  still settle: debt incurred while the bucket is disabled is carried into its
+  next finite interval. Race-tested regressions cover the reported hour of heavy
+  unlimited usage, restoration with a full bucket, snapshot-only transitions,
+  unlimited calls completing late, and finite calls completing both during and
+  after the unlimited interval. Existing finite-bucket debt/refill checks remain.

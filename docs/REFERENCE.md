@@ -327,6 +327,13 @@ RPM gate consumes an attempt even if the quota gate or backend later rejects it;
 concurrency rejection consumes no RPM. `/v1/messages/count_tokens` uses these gates but
 does not charge tokens. `/v1/models` and `/v1/me/usage` consume no limits.
 
+TPM charges follow the policy that admitted the call. Usage admitted while TPM
+is unlimited is never debited, even if it completes after a finite limit returns.
+Observing an unlimited policy through admission or usage lookup resets the old
+bucket, so restoring a finite limit starts it full. Outstanding calls admitted
+under a finite limit still settle their charge; this can leave debt in the
+restored bucket until it refills.
+
 A finite per-user `max_concurrent` override also caps batch concurrency, including
 otherwise unlimited groups. An explicit per-user `max_concurrent_batch` override
 (including unlimited) takes precedence. The portal effective-limit preview shows

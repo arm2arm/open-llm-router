@@ -91,7 +91,10 @@ type userState struct {
 	tpmLevel float64
 	tpmAt    time.Time
 	tpmSet   bool
-	reserved int64 // strict-quota reservations of calls in flight
+	// Finite-policy calls that finish while the bucket is disabled still owe
+	// their admission-time charge when a finite policy returns.
+	tpmPendingDebt float64
+	reserved       int64 // strict-quota reservations of calls in flight
 }
 
 // Key classes.
@@ -113,7 +116,8 @@ func (s *userState) inFlight() int { return s.inflight[0] + s.inflight[1] }
 func (s *userState) refillTPM(tpm int64, now time.Time) {
 	capacity := float64(tpm)
 	if !s.tpmSet {
-		s.tpmLevel, s.tpmAt, s.tpmSet = capacity, now, true
+		s.tpmLevel, s.tpmAt, s.tpmSet = capacity-s.tpmPendingDebt, now, true
+		s.tpmPendingDebt = 0
 		return
 	}
 	if elapsed := now.Sub(s.tpmAt).Seconds(); elapsed > 0 {
@@ -121,6 +125,12 @@ func (s *userState) refillTPM(tpm int64, now time.Time) {
 	}
 	s.tpmLevel = min(s.tpmLevel, capacity)
 	s.tpmAt = now
+}
+
+// disableTPM starts an unlimited interval. Completed debt from the previous
+// interval is cleared; outstanding finite-policy leases settle separately.
+func (s *userState) disableTPM() {
+	s.tpmSet, s.tpmLevel = false, 0
 }
 
 // Admission describes one call: the key's class and, for strict quotas, the
@@ -197,7 +207,7 @@ func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) 
 		return nil, reject(gate, now, now.Add(time.Second))
 	}
 	s.inflight[class]++
-	lease := &Lease{manager: m, state: s, class: class}
+	lease := &Lease{manager: m, state: s, class: class, tpm: p.TPM != nil}
 	pruneRPM(s, now)
 	if p.RPM != nil {
 		if len(s.requests) >= *p.RPM {
@@ -216,6 +226,8 @@ func (m *Manager) AcquireFor(ctx context.Context, a Admission, p policy.Policy) 
 			s.mu.Unlock()
 			return nil, reject("tpm", now, now.Add(wait))
 		}
+	} else {
+		s.disableTPM()
 	}
 	s.mu.Unlock()
 	if err := m.ensureLoaded(ctx, s, now); err != nil {
@@ -303,6 +315,7 @@ type Lease struct {
 	state    *userState
 	class    int
 	reserved int64
+	tpm      bool // whether the admitting policy had a finite token bucket
 }
 
 func (l *Lease) Release()                     { l.finish(nil) }
@@ -332,8 +345,13 @@ func (l *Lease) finish(record *usage.Record) {
 				totals.rateSum += record.TokensPerSecond()
 				totals.rateCount++
 			}
-			if s.tpmSet {
-				s.tpmLevel -= float64(add(max(record.InputTokens, 0), record.OutputTokens))
+			if l.tpm {
+				tokens := float64(add(max(record.InputTokens, 0), record.OutputTokens))
+				if s.tpmSet {
+					s.tpmLevel -= tokens
+				} else {
+					s.tpmPendingDebt += tokens
+				}
 			}
 		}
 		s.reserved -= l.reserved
@@ -467,6 +485,8 @@ func (m *Manager) Snapshot(ctx context.Context, user string, p policy.Policy) (S
 		s.refillTPM(*p.TPM, now)
 		left := max(0, int64(s.tpmLevel))
 		result.Remaining.TPM = &left
+	} else {
+		s.disableTPM()
 	}
 	if p.RPM != nil {
 		used, left := len(s.requests), max(0, *p.RPM-len(s.requests))
