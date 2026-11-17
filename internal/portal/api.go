@@ -2,6 +2,7 @@ package portal
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
@@ -30,7 +31,20 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request, u user) {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"keys": keys})
+	defaults, maximum := h.keyLifetimePolicy()
+	respond(w, 200, map[string]any{"keys": keys, "policy": map[string]int{"default_lifetime_days": defaults, "max_lifetime_days": maximum}})
+}
+
+func (h *Handler) keyLifetimePolicy() (defaults, maximum int) {
+	maximum = h.cfg.Auth.MaxKeyLifetimeDays
+	if maximum == 0 {
+		maximum = config.DefaultMaxKeyLifetimeDays
+	}
+	defaults = h.cfg.Auth.DefaultKeyLifetimeDays
+	if defaults == 0 {
+		defaults = config.DefaultKeyLifetimeDays
+	}
+	return min(defaults, maximum), maximum
 }
 func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 	release, ok := h.keyMutationBudget(w, u.ID)
@@ -51,15 +65,11 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, u user) {
 		fail(w, 400, "invalid_request_error", "label must contain 1 to 100 bytes")
 		return
 	}
-	maximum := h.cfg.Auth.MaxKeyLifetimeDays
-	if maximum == 0 {
-		maximum = config.DefaultMaxKeyLifetimeDays
-	}
-	days := h.cfg.Auth.DefaultKeyLifetimeDays
+	days, maximum := h.keyLifetimePolicy()
 	if body.ExpiresInDays != nil {
 		days = *body.ExpiresInDays
 		if days < 1 || days > maximum {
-			fail(w, 400, "invalid_request_error", "expires_in_days exceeds site policy or is less than one")
+			fail(w, 400, "invalid_request_error", fmt.Sprintf("expires_in_days must be between 1 and %d days (site maximum)", maximum))
 			return
 		}
 	}

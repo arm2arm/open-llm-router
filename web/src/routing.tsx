@@ -408,6 +408,12 @@ function DraftEditor({
   base: RoutingRevision
   onSaved: () => Promise<void>
 }) {
+  const [loaded, setLoaded] = useState(() => ({
+    base,
+    version: view.settings.version,
+  }))
+  const changedElsewhere =
+    loaded.version !== view.settings.version || loaded.base.id !== base.id
   const [document, setDocument] = useState(() =>
     copyDocument(base.document as RoutingDocument),
   )
@@ -434,10 +440,21 @@ function DraftEditor({
     setPending(true)
     setError(null)
     try {
-      await api('admin/settings/routing/draft', 'PUT', {
-        version: view.settings.version,
-        document,
+      const saved = await api<RoutingView>(
+        'admin/settings/routing/draft',
+        'PUT',
+        {
+          version: loaded.version,
+          document,
+        },
+      )
+      setLoaded({
+        base: saved.settings.draft!,
+        version: saved.settings.version,
       })
+      setDocument(
+        copyDocument(saved.settings.draft!.document as RoutingDocument),
+      )
       await onSaved()
     } catch (error) {
       setError(asError(error))
@@ -456,8 +473,8 @@ function DraftEditor({
       }}
     >
       <h3 className="panel-title">
-        {view.settings.draft
-          ? `Routing draft ${view.settings.draft.id}`
+        {loaded.base.status === 'draft'
+          ? `Routing draft ${loaded.base.id}`
           : 'New routing draft'}
       </h3>
       <p className="subtitle">
@@ -465,6 +482,26 @@ function DraftEditor({
         Backend API keys are encrypted when saved.
       </p>
       <Failure error={error} />
+      {changedElsewhere && (
+        <div role="status" className="notice">
+          <p>
+            Settings changed elsewhere. Your edits are kept. Saving will check
+            for conflicts.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={() => {
+              setLoaded({ base, version: view.settings.version })
+              setDocument(copyDocument(base.document as RoutingDocument))
+              setError(null)
+            }}
+          >
+            Load latest and discard local edits
+          </Button>
+        </div>
+      )}
       <fieldset disabled={pending} className="grid gap-4 min-w-0">
         <h4 className="font-medium">Route settings</h4>
         {models.map((name) => (
@@ -627,6 +664,7 @@ function AliasAdder({
 }
 
 export function RoutingSettingsPanel() {
+  const [editorReset, setEditorReset] = useState(0)
   const cache = useQueryClient()
   const view = useQuery({
     queryKey,
@@ -656,6 +694,7 @@ export function RoutingSettingsPanel() {
     try {
       await api(`admin/settings/routing/${path}`, 'POST', body)
       await reload()
+      if (path === 'discard') setEditorReset((value) => value + 1)
     } catch (error) {
       setError(asError(error))
     } finally {
@@ -825,7 +864,7 @@ export function RoutingSettingsPanel() {
                 </div>
               )}
               <DraftEditor
-                key={`${(draft ?? active)?.id}-${settings.version}`}
+                key={editorReset}
                 view={data}
                 base={(draft ?? active) as RoutingRevision}
                 onSaved={reload}

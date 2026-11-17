@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowUpRight, KeyRound, Layers3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { safeNext } from '@/lib/session-state'
 import {
   redirect,
   request,
@@ -18,7 +19,14 @@ import {
   type Session,
 } from '@/lib/api'
 
-export function AuthFrame({ children }: { children: ReactNode }) {
+export function AuthFrame({
+  children,
+  embedded = false,
+}: {
+  children: ReactNode
+  embedded?: boolean
+}) {
+  if (embedded) return <div>{children}</div>
   return (
     <main id="main" className="auth-screen">
       <div className="auth-card">
@@ -44,11 +52,20 @@ function FormError({ error }: { error: string }) {
   ) : null
 }
 
-export function SignIn() {
+export function SignIn({
+  embedded = false,
+  onAuthenticated,
+}: { embedded?: boolean; onAuthenticated?: () => Promise<void> } = {}) {
   const location = useLocation()
   const directLocal = location.pathname === '/sign-in/local'
   const changed =
     new URLSearchParams(location.search).get('password') === 'changed'
+  const params = new URLSearchParams(location.search)
+  const next = safeNext(
+    embedded
+      ? window.location.pathname + window.location.search + window.location.hash
+      : params.get('next'),
+  )
   const methods = useQuery({
     queryKey: ['auth-methods'],
     queryFn: () => request<AuthMethods>('auth'),
@@ -68,7 +85,12 @@ export function SignIn() {
         className="w-full"
         variant={keycloakFirst ? 'default' : 'outline'}
         disabled={!sso.available}
-        onClick={() => redirect(sso.login_url)}
+        onClick={() => {
+          const url = new URL(sso.login_url, window.location.origin)
+          url.searchParams.set('next', next)
+          if (embedded) window.open(url.href, '_blank', 'noopener,noreferrer')
+          else redirect(url.href)
+        }}
       >
         Continue with Keycloak <ArrowUpRight />
       </Button>
@@ -95,7 +117,9 @@ export function SignIn() {
         { username: data.get('username'), password: data.get('password') },
       )
       form.reset()
-      redirect(result.must_change_password ? '/portal/password' : '/portal/')
+      if (result.must_change_password) redirect('/portal/password')
+      else if (onAuthenticated) await onAuthenticated()
+      else redirect(next)
     } catch (error) {
       setError(
         error instanceof Error
@@ -110,9 +134,20 @@ export function SignIn() {
   }
 
   return (
-    <AuthFrame>
+    <AuthFrame embedded={embedded}>
       <h1>{directLocal ? 'Sign in with a local account' : 'Sign in'}</h1>
       <p className="subtitle mb-6">Access your models, API keys and usage.</p>
+      {!embedded && params.get('expired') === '1' && (
+        <p role="status" className="notice mb-5">
+          Your session ended. Sign in again to return to your previous page.
+        </p>
+      )}
+      {embedded && (
+        <p className="subtitle mb-5">
+          Keycloak opens in a new tab. Return here after signing in; your open
+          forms stay here.
+        </p>
+      )}
       {changed && (
         <p role="status" className="notice mb-5">
           Password changed. All local sessions have been signed out. Sign in

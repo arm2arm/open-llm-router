@@ -695,3 +695,24 @@ func TestProductionTelemetryOverridesRequireTLS(t *testing.T) {
 		})
 	}
 }
+
+func TestPortalBaseURLCanonicalOrigin(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"https://LLM.example.org:443", "https://llm.example.org"},
+		{"https://LLM.example.org:443/", "https://llm.example.org"},
+		{"http://LLM.example.org:80", "http://llm.example.org"},
+		{"https://LLM.example.org:8443", "https://llm.example.org:8443"},
+		{"https://[2001:db8::1]:443/", "https://[2001:db8::1]"},
+	} {
+		cfg, err := Parse([]byte("models: {}\ngroups: {admins: {models: ['*'], admin: true}}\n"), lookupIn(map[string]string{"PORTAL_BASE_URL": tc.raw}))
+		if err != nil || cfg.Portal.BaseURL != tc.want {
+			t.Fatal(tc.raw, cfg, err)
+		}
+	}
+	for _, raw := range []string{"https://example.org/v1", "https://user:password@example.org", "https://example.org?", "https://example.org#"} {
+		_, err := Parse([]byte("models: {}\ngroups: {}\n"), lookupIn(map[string]string{"PORTAL_BASE_URL": raw}))
+		if err == nil || !strings.Contains(err.Error(), "PORTAL_BASE_URL") || strings.Contains(err.Error(), "password") {
+			t.Fatal("unsafe portal origin accepted or disclosed", err)
+		}
+	}
+}

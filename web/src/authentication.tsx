@@ -177,13 +177,20 @@ function SecretField({
 
 function DraftEditor({
   view,
-  base,
+  base: incomingBase,
   onChanged,
 }: {
   view: AuthenticationView
   base: SettingsRevision
   onChanged: () => Promise<void>
 }) {
+  const [loaded, setLoaded] = useState(() => ({
+    base: incomingBase,
+    version: view.settings.version,
+  }))
+  const { base } = loaded
+  const changedElsewhere =
+    loaded.version !== view.settings.version || base.id !== incomingBase.id
   const document = base.document as AuthenticationDocument
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -230,10 +237,18 @@ function DraftEditor({
     setPending(true)
     setError(null)
     try {
-      await api('admin/settings/authentication/draft', 'PUT', {
-        version: view.settings.version,
-        document: next,
-        secrets,
+      const saved = await api<AuthenticationView>(
+        'admin/settings/authentication/draft',
+        'PUT',
+        {
+          version: loaded.version,
+          document: next,
+          secrets,
+        },
+      )
+      setLoaded({
+        base: saved.settings.draft!,
+        version: saved.settings.version,
       })
       await onChanged()
     } catch (error) {
@@ -266,10 +281,10 @@ function DraftEditor({
       onSubmit={(event) => void save(event)}
       aria-label="Edit authentication draft"
       className="grid gap-4"
-      key={`${base.id}-${view.settings.version}`}
+      key={`${base.id}-${loaded.version}`}
     >
       <h3 className="panel-title">
-        {view.settings.draft ? `Draft revision ${base.id}` : 'New draft'}
+        {base.status === 'draft' ? `Draft revision ${base.id}` : 'New draft'}
       </h3>
       <p className="subtitle">
         Based on{' '}
@@ -279,6 +294,25 @@ function DraftEditor({
         . Saving creates a new draft; it does not change how people sign in.
       </p>
       <Failure error={error} />
+      {changedElsewhere && (
+        <div role="status" className="notice">
+          <p>
+            Settings changed elsewhere. Your edits are kept. Saving will check
+            for conflicts.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={() => {
+              setLoaded({ base: incomingBase, version: view.settings.version })
+              setError(null)
+            }}
+          >
+            Load latest and discard local edits
+          </Button>
+        </div>
+      )}
       <label className="flex gap-2 items-center text-sm">
         <input
           type="checkbox"
@@ -520,6 +554,7 @@ function ChecksPanel({
 }
 
 export function AuthenticationSettingsPanel() {
+  const [editorReset, setEditorReset] = useState(0)
   const cache = useQueryClient()
   const view = useQuery({
     queryKey,
@@ -539,6 +574,7 @@ export function AuthenticationSettingsPanel() {
     try {
       await api(`admin/settings/authentication/${path}`, 'POST', body)
       await reload()
+      if (path === 'discard') setEditorReset((value) => value + 1)
     } catch (error) {
       setError(asError(error))
     } finally {
@@ -734,7 +770,12 @@ export function AuthenticationSettingsPanel() {
             </div>
           ) : (
             target && (
-              <DraftEditor view={data} base={target} onChanged={reload} />
+              <DraftEditor
+                key={editorReset}
+                view={data}
+                base={target}
+                onChanged={reload}
+              />
             )
           )}
           {data.settings.draft && (

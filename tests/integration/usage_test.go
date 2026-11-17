@@ -45,6 +45,8 @@ type usageOptions struct {
 	configure   func(*config.Config, *proxy.Handler, *server.Server, *pgxpool.Pool)
 	forwarders  *config.Forwarders
 	tokens      func(*pgxpool.Pool) func(*auth.Authenticator)
+	// portalConfig adjusts immutable portal configuration before New starts background work.
+	portalConfig func(*config.Config)
 	// portal adjusts a portal handler before it serves requests.
 	portal func(*portal.Handler, *config.Config, *pgxpool.Pool, *proxy.Handler)
 }

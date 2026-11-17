@@ -343,6 +343,14 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	}
 	if value, ok := lookup("PORTAL_BASE_URL"); ok {
 		cfg.Portal.BaseURL = strings.TrimSuffix(value, "/")
+		if isBackendURL(cfg.Portal.BaseURL) {
+			origin, err := NormalizeBackendURL(cfg.Portal.BaseURL)
+			if err != nil {
+				problems = append(problems, "PORTAL_BASE_URL: must be an HTTP(S) origin without credentials, path, query or fragment")
+			} else {
+				cfg.Portal.BaseURL = origin
+			}
+		}
 	}
 	if value, ok := lookup("PORTAL_COOKIE_SECURE"); ok {
 		secure, err := strconv.ParseBool(value)

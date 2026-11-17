@@ -53,6 +53,9 @@ func startPortal(t *testing.T, options ...usageOptions) *portalFixture {
 		cfg.Portal = config.Portal{BaseURL: "http://portal.example.test", CookieSecure: false}
 		cfg.Groups["students"] = config.Group{Models: []string{"chat-model"}, RPM: limitPtr(20)}
 		cfg.Groups["admins"] = config.Group{Models: []string{"*"}, Admin: true}
+		if opt.portalConfig != nil {
+			opt.portalConfig(cfg)
+		}
 		h, err := portal.New(t.Context(), cfg, pool, forwarder.Limits)
 		if err != nil {
 			t.Fatal(err)

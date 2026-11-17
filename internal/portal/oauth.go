@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -23,9 +24,41 @@ var MaxPendingLogins = 10000
 
 var errTooManyLogins = errors.New("too many pending logins")
 
+func safeReturnTo(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || len(raw) > 2048 || !strings.HasPrefix(raw, "/portal/") || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/portal/") || strings.ContainsAny(parsed.Path, "\\\r\n\x00") {
+		return "/portal/"
+	}
+	cleaned := path.Clean(parsed.Path)
+	if cleaned != "/portal" && !strings.HasPrefix(cleaned, "/portal/") {
+		return "/portal/"
+	}
+	if cleaned == "/portal" {
+		cleaned = "/portal/"
+	}
+	parsed.Path, parsed.RawPath = cleaned, ""
+	for _, prefix := range []string{"/portal/sign-in", "/portal/login", "/portal/logout", "/portal/callback"} {
+		if parsed.Path == prefix || strings.HasPrefix(parsed.Path, prefix+"/") {
+			return "/portal/"
+		}
+	}
+	return parsed.String()
+}
+
+func loginDestination(path string, r *http.Request) string {
+	if r.URL.Query().Get("next") == "" {
+		return path
+	}
+	destination, _ := url.Parse(path)
+	query := destination.Query()
+	query.Set("next", safeReturnTo(r.URL.Query().Get("next")))
+	destination.RawQuery = query.Encode()
+	return destination.String()
+}
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if h.current().oidc == nil {
-		http.Redirect(w, r, "/portal/login/local", http.StatusSeeOther)
+		http.Redirect(w, r, loginDestination("/portal/login/local", r), http.StatusSeeOther)
 		return
 	}
 	sso := h.requireSSO(w)
@@ -41,7 +74,7 @@ func (h *Handler) browserLogin(w http.ResponseWriter, r *http.Request) {
 	state := h.current()
 	sso := state.provider.Load()
 	if !h.safeCookies() || !state.available.Load() || sso == nil {
-		http.Redirect(w, r, "/portal/sign-in?sso=unavailable", http.StatusSeeOther)
+		http.Redirect(w, r, loginDestination("/portal/sign-in?sso=unavailable", r), http.StatusSeeOther)
 		return
 	}
 	h.startLogin(w, r, sso)
@@ -57,7 +90,7 @@ func (h *Handler) startLogin(w http.ResponseWriter, r *http.Request, sso *ssoPro
 	// opened through an alias (such as 127.0.0.1 instead of localhost) would
 	// otherwise lose its browser binding when the provider redirects back.
 	if !strings.EqualFold(r.Host, base.Host) {
-		http.Redirect(w, r, h.cfg.Portal.BaseURL+"/portal/login", http.StatusSeeOther)
+		http.Redirect(w, r, loginDestination(h.cfg.Portal.BaseURL+"/portal/login", r), http.StatusSeeOther)
 		return
 	}
 	state, nonce, browser, verifier := randomToken(), randomToken(), randomToken(), oauth2.GenerateVerifier()
@@ -73,9 +106,9 @@ func (h *Handler) startLogin(w http.ResponseWriter, r *http.Request, sso *ssoPro
 		}
 		// The login route is public: bound the rows it can create. The count
 		// is not serialized across concurrent logins, so the cap is approximate.
-		result, err := tx.Exec(r.Context(), `INSERT INTO portal_login_attempts(id_hash,state_hash,nonce,verifier,expires)
-			SELECT $1,$2,$3,$4,clock_timestamp()+interval '10 minutes'
-			WHERE (SELECT count(*) FROM portal_login_attempts) < $5`, idHash[:], stateHash[:], nonce, verifier, MaxPendingLogins)
+		result, err := tx.Exec(r.Context(), `INSERT INTO portal_login_attempts(id_hash,state_hash,nonce,verifier,expires,return_to)
+   SELECT $1,$2,$3,$4,clock_timestamp()+interval '10 minutes',$6
+   WHERE (SELECT count(*) FROM portal_login_attempts) < $5`, idHash[:], stateHash[:], nonce, verifier, MaxPendingLogins, safeReturnTo(r.URL.Query().Get("next")))
 		if err == nil && result.RowsAffected() == 0 {
 			return errTooManyLogins
 		}
@@ -111,8 +144,8 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stateHash := sha256.Sum256([]byte(query.Get("state")))
-	var nonce, verifier string
-	err := h.pool.QueryRow(r.Context(), `DELETE FROM portal_login_attempts WHERE id_hash=$1 AND state_hash=$2 AND expires>clock_timestamp() RETURNING nonce,verifier`, idHash[:], stateHash[:]).Scan(&nonce, &verifier)
+	var nonce, verifier, returnTo string
+	err := h.pool.QueryRow(r.Context(), `DELETE FROM portal_login_attempts WHERE id_hash=$1 AND state_hash=$2 AND expires>clock_timestamp() RETURNING nonce,verifier,return_to`, idHash[:], stateHash[:]).Scan(&nonce, &verifier, &returnTo)
 	if errors.Is(err, pgx.ErrNoRows) {
 		fail(w, 400, "invalid_request_error", "invalid or expired login state")
 		return
@@ -193,7 +226,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cookie(w, sessionCookie, session, sessionLifetime)
-	http.Redirect(w, r, "/portal/", http.StatusSeeOther)
+	http.Redirect(w, r, safeReturnTo(returnTo), http.StatusSeeOther)
 }
 
 // hasRequiredClaim reports whether the ID token carries the configured claim:

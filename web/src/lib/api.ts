@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query'
 import { parseExactJSON } from './exact-json'
+import { sessionEnded, setSessionEnded } from './session-state'
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -76,11 +77,21 @@ export async function api<T>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (sessionEnded())
+    throw new ApiError(
+      'Your session ended. Sign in again to continue.',
+      401,
+      'session_expired',
+    )
   try {
     return await request<T>(path, method, body, signal)
   } catch (error) {
     if (error instanceof ApiError) {
-      if (error.status === 401) redirect('/portal/sign-in')
+      if (
+        error.status === 401 &&
+        (path !== 'auth/session' || queryClient.getQueryData(['session']))
+      )
+        setSessionEnded(true)
       if (error.code === 'password_change_required')
         redirect('/portal/password')
     }

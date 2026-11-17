@@ -18,8 +18,8 @@ and P3; dependencies may change that order.
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Completed in PR #309 |
 | #173 Request history | #173, #174, #229, #258 | Completed in PR #310 |
-| #185 Accessibility | #185, #230, #250, #264 | All four findings implemented; CI validation pending |
-| #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Pending |
+| #185 Accessibility | #185, #230, #250, #264 | Completed in PR #311 |
+| #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Implemented; local validation passed; PR/CI pending |
 | #195 Agent administration | #195, #245, #261 | Pending |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Pending |
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Pending |
@@ -431,3 +431,24 @@ and P3; dependencies may change that order.
   linting and a named-container rule also run in `npm run lint`.
   All 21 focused browser regressions passed; seven synthetic visual checks also
   passed, with rendered narrow and dark views inspected. See ACCESSIBILITY.md.
+
+- **#201:** Accepted public portal origins normalize host case, default ports
+  and a trailing slash. Config tests also reject paths, credentials and empty
+  query/fragment delimiters. PostgreSQL-backed login and logout checks cover
+  HTTPS/443, HTTP/80 and a retained non-default port with canonical browser origins.
+- **#226/#227:** Pending key creation and one-time secrets cannot be dismissed
+  accidentally. Administration key creation and rotation require the review step;
+  failed revokes announce their error inside the dialog. Synthetic browser checks
+  cover Escape, outside clicks, acknowledgement and implicit form submission.
+- **#228:** Authentication and routing drafts retain their original version and
+  inputs when settings refetch. Notices offer an explicit reload; stale saves
+  use the original version and display the server conflict. Both editors have
+  browser regressions, including an unsaved authentication secret.
+- **#262:** Key-list policy metadata and creation validation share one lifetime
+  calculation. The UI displays the default and limits choices to the site maximum;
+  API and browser checks cover maxima of 30, 90 and 120 days.
+- **#263:** Background 401s preserve open forms behind a session recovery dialog.
+  Same-account local sign-in resumes them; SSO can run in another tab. Local and
+  OIDC return destinations are restricted to portal pages; OIDC stores the return
+  path with its one-time login attempt (migration 32). Browser and PostgreSQL
+  regressions cover recovery, expired cookies and hostile return destinations.
