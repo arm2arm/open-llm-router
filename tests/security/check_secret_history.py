@@ -15,6 +15,23 @@ spec.loader.exec_module(history)
 
 
 class SecretHistory(unittest.TestCase):
+    def test_public_example_exception_does_not_exempt_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copy2(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
+            example = root / "deploy/compose/pilot.env.example"
+            example.parent.mkdir(parents=True)
+            def scan():
+                return subprocess.run(["gitleaks", "dir", "--redact", "--no-banner"], cwd=root, capture_output=True, text=True)
+            example.write_text("OIDC_PORTAL_CLIENT_SECRET=\nOIDC_AUDIENCE=olr-api\n")
+            self.assertEqual(scan().returncode, 0, "public example assignment was classified as a secret")
+            # The same file/path is still scanned for actual credential shapes.
+            value = "ghp_" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(36))
+            example.write_text("OIDC_PORTAL_CLIENT_SECRET=" + value + "\nOIDC_AUDIENCE=olr-api\n")
+            result = scan()
+            self.assertEqual(result.returncode, 1, "example exception hid a credential")
+            self.assertNotIn(value, result.stdout + result.stderr)
+
     def test_deleted_synthetic_token_is_detected_only_in_history(self):
         self.assertIsNotNone(shutil.which("gitleaks"), "install the pinned Gitleaks tool first")
         with tempfile.TemporaryDirectory() as directory:

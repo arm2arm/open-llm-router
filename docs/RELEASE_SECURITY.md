@@ -143,8 +143,8 @@ the history scan. Initial pushes without a base scan all reachable history. The
 synthetic history regression test verifies this without printing its fixture.
 GitHub currently reports
 non-provider patterns and validity checks disabled; Gitleaks supplies the generic-secret
-alternative. Its only allowlist matches a specific public variable name consumed after
-an empty example secret; it does not exempt a file or actual credential value.
+alternative. Its only allowlist matches the public `OIDC_AUDIENCE` name or its exact `=olr-api` example
+assignment consumed after an empty example secret; it does not exempt a file or actual credential value.
 
 ### Pinned image and tool updates
 
