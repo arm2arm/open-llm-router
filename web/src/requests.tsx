@@ -87,7 +87,9 @@ function matches(r: Row, search: string, filter: Filter, since: number) {
       (filter === 'stream' && r.stream) ||
       (filter === 'errors' && !ok(r.status)) ||
       (filter === 'traces' && r.trace_available) ||
-      (filter === 'tools' && !!s && s.tool_calls + s.tool_results > 0) ||
+      (filter === 'tools' &&
+        !!s &&
+        (s.tool_calls === null || s.tool_calls + s.tool_results > 0)) ||
       (filter === 'truncated' && !!s?.truncated))
   )
 }
@@ -200,7 +202,17 @@ export function RequestsPage() {
     if (e.key === 'j') step(1)
     if (e.key === 'k') step(-1)
   }
-  const tools = all.reduce((s, r) => s + (r.trace_summary?.tool_calls ?? 0), 0)
+  const tools = all.reduce(
+    (s, r) =>
+      s +
+      (r.trace_summary?.tool_calls ??
+        r.trace_summary?.observed_tool_calls ??
+        0),
+    0,
+  )
+  const toolCountsUnknown = all.some(
+    (r) => r.trace_summary?.tool_calls === null,
+  )
   const listed = new Set(all.map((r) => r.request_id))
   const running = [...live.running.values()]
     .filter((r) => !listed.has(r.request_id))
@@ -250,8 +262,12 @@ export function RequestsPage() {
         <Metric
           icon={<Wrench size={17} />}
           title="Tool calls"
-          value={n(tools)}
-          hint={`${n(all.filter((r) => r.stream).length)} streamed requests`}
+          value={`${toolCountsUnknown ? '≥ ' : ''}${n(tools)}`}
+          hint={
+            toolCountsUnknown
+              ? 'Some tool counts are unknown: capture limited'
+              : `${n(all.filter((r) => r.stream).length)} streamed requests`
+          }
         />
         <Metric
           icon={<ArrowUpRight size={17} />}
@@ -286,7 +302,7 @@ export function RequestsPage() {
             <option value="stream">Streaming</option>
             <option value="errors">Errors & interrupted</option>
             <option value="traces">With traces</option>
-            <option value="tools">With tool calls</option>
+            <option value="tools">Tool calls &amp; unknown counts</option>
             <option value="truncated">Truncated capture</option>
           </select>
           <select
@@ -589,7 +605,13 @@ function GroupRow({
             <strong>Agent run</strong>
           </button>
           <span>{plural(s.calls, 'call')}</span>
-          {s.toolCalls > 0 && <span>{plural(s.toolCalls, 'tool call')}</span>}
+          {(s.toolCalls > 0 || s.toolCallsUnknown) && (
+            <span>
+              {s.toolCallsUnknown ? '≥ ' : ''}
+              {plural(s.toolCalls, 'tool call')}
+              {s.toolCallsUnknown ? ' · some counts unknown' : ''}
+            </span>
+          )}
           <span title="From the first request to the end of the last">
             {ms(s.end - s.start)} total · {ms(s.busy)} in the model
           </span>
@@ -610,7 +632,11 @@ function GroupRow({
           {ordered.map((r, i) => {
             const left = ((Date.parse(r.time) - s.start) / span) * 100
             const width = (r.latency_ms / span) * 100
-            const label = `Call ${i + 1}: ${ms(r.latency_ms)}, ${r.trace_summary?.tool_calls ?? 0} tool calls, status ${r.status}`
+            const toolLabel =
+              r.trace_summary?.tool_calls === null
+                ? 'tool-call count unknown'
+                : `${r.trace_summary?.tool_calls ?? 0} tool calls`
+            const label = `Call ${i + 1}: ${ms(r.latency_ms)}, ${toolLabel}, status ${r.status}`
             return r.trace_available && r.request_id ? (
               <button
                 type="button"
@@ -702,7 +728,7 @@ function RequestRow({
         )}
       </td>
       <td>
-        {s && s.tool_calls > 0 && (
+        {s && s.tool_calls !== null && s.tool_calls > 0 && (
           <span className="trace-tool-chip">
             <Wrench size={11} />
             {plural(s.tool_calls, 'call')} requested
@@ -713,7 +739,15 @@ function RequestRow({
             {plural(s.tool_results, 'result')} sent
           </span>
         )}
-        {s && s.tool_calls + s.tool_results === 0 && (
+        {s?.tool_calls === null && (
+          <span className="trace-secondary">
+            Unknown · capture limited
+            {(s.observed_tool_calls ?? 0) > 0
+              ? ` · at least ${plural(s.observed_tool_calls!, 'call')} observed`
+              : ''}
+          </span>
+        )}
+        {s && s.tool_calls !== null && s.tool_calls + s.tool_results === 0 && (
           <span className="trace-secondary">
             {s.tools ? `${plural(s.tools, 'tool')} declared` : '—'}
           </span>

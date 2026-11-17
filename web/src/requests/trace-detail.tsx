@@ -331,9 +331,11 @@ function Overview({
               </span>
             }
             hint={
-              d.result?.finish_reasons.length
-                ? label(d.result.finish_reasons.join(', '))
-                : `${record.protocol} · ${operation(record)}`
+              d.output_truncated
+                ? 'Finish reason unknown · capture limited'
+                : d.result?.finish_reasons.length
+                  ? label(d.result.finish_reasons.join(', '))
+                  : `${record.protocol} · ${operation(record)}`
             }
           />
         </div>

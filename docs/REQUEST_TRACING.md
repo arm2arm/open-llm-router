@@ -192,7 +192,8 @@ and backend budgets, and replica admission succeed. Calls rejected locally with
 400, 403, 404 or 429 store no request or response content.
 
 Bounds per request are **1 MiB copied input**, **384 KiB stored input text**,
-**32 KiB total parameters**, **128 KiB per raw preview**, **256 KiB output**, **2,048 observed writes**, **1,000
+**32 KiB total parameters**, **128 KiB per raw preview**, **256 KiB of raw output bytes
+(including SSE JSON/framing)**, **2,048 observed writes**, **1,000
 displayed stream events** and **200 raw stream frames (64 KiB)**. At most **32
 captures** can be active or queued per process, with **4 per user** and **30 new
 captures per user per minute** in a process-local fixed window. The budget map
@@ -215,7 +216,16 @@ Input over 1 MiB is omitted as a whole,
 because partial JSON is never decoded; binary payloads are removed before the text
 budget applies, so a request with images keeps its text. Output keeps only its
 captured prefix and complete events. The viewer explains truncation; forwarding is
-unaffected. Parsing/serialization has additional bounded worker memory/CPU
+unaffected. When output capture stops, the complete tool-call count and finish
+reason are **unknown**, not zero; summaries keep any observed calls as a lower
+bound, and the tool-call filter includes unknown counts for review. An input-only
+limit does not erase facts from complete output. Limited legacy traces are treated
+conservatively as unknown because older versions did not distinguish those limits.
+Provider usage is observed separately before optional client filtering, retaining
+cached/reasoning token metadata even after the content prefix fills. This buffer
+keeps at most four recent usage objects within a 64 KiB total budget; only numeric
+fields enter the stored statistics. It does not expose hidden usage to the client.
+Parsing/serialization has additional bounded worker memory/CPU
 cost. No external telemetry SDK or service is required for personal tracing.
 
 Capacity pressure skips new traces rather than blocking inference. The table shows

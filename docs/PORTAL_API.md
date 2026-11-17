@@ -209,6 +209,15 @@ content type. All access is scoped to the session user; admin status adds no con
   `upstream_status`, `content_type`), `result` (`id`, `model`, `system_fingerprint`,
   `finish_reasons`, numeric `usage` flattened with dots) and `summary`. Messages carry a
   `hash`. Traces without `v` were stored by older routers.
+  Version 3 omits free-text stream fragments from events/frames; complete redacted
+  text is in the reconstructed conversation. Version 4 adds `output_truncated`:
+  when true, `summary.tool_calls` is null (unknown), `observed_tool_calls` is a
+  lower bound and the complete finish reason is unknown. A general `truncated`
+  flag can also mean an input/parameters limit while output facts remain known.
+  Provider numeric usage is observed independently of client filtering and content
+  capture bounds. Clients must accept null tool counts rather than treating them
+  as a factual zero. Limited legacy list summaries receive the same conservative
+  unknown count on upgrade.
 - `GET /portal/api/requests/events`: `text/event-stream` of the caller's request
   lifecycle, metadata only. After `event: ready`, each `data:` line is a JSON object with
   `type` (`started`, `progress`, `finished`, `trace_ready`), `request_id` and, depending on

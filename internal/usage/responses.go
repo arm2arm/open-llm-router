@@ -6,6 +6,7 @@ import "bytes"
 // than maxEvent. Observe its JSON incrementally even when the SSE buffer becomes
 // opaque, so a valid long response retains its usage and completion marker.
 func (s *Stream) observeResponse(p []byte) {
+	s.response.UsageObserver = s.UsageObserver
 	for len(p) > 0 {
 		c := p[0]
 		if c == '\r' || c == '\n' {

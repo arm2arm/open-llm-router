@@ -23,15 +23,16 @@ import (
 const (
 	// MaxInput bounds the bytes copied from the request. Binary payloads are
 	// removed in the worker; MaxInputText then bounds the normalized text.
-	MaxInput      = 1 << 20
-	MaxInputText  = 384 << 10
-	MaxRaw        = 128 << 10
-	MaxFrames     = 200
-	MaxFrameRaw   = 64 << 10
-	MaxOutput     = 256 << 10
-	MaxChunks     = 2048
-	MaxEvents     = 1000
-	MaxParameters = 32 << 10
+	MaxInput         = 1 << 20
+	MaxInputText     = 384 << 10
+	MaxRaw           = 128 << 10
+	MaxFrames        = 200
+	MaxFrameRaw      = 64 << 10
+	MaxOutput        = 256 << 10
+	MaxChunks        = 2048
+	MaxEvents        = 1000
+	MaxParameters    = 32 << 10
+	MaxProviderUsage = 64 << 10
 	// Stored JSON content and the number of retained traces are bounded per
 	// account across replicas. Existing content expires normally after upgrade.
 	MaxStoredBytes        = 64 << 20
@@ -239,20 +240,22 @@ type chunk struct {
 	MS  int64
 }
 type Capture struct {
-	user          string
-	epoch         uint64
-	service       *Service
-	generation    int64
-	operation     string
-	session       string
-	routing       Routing
-	input, output []byte
-	chunks        []chunk
-	truncated     bool
-	outputStopped bool
-	jsonResponse  bool
-	began         time.Time
-	record        usage.Record
+	user               string
+	epoch              uint64
+	service            *Service
+	generation         int64
+	operation          string
+	session            string
+	routing            Routing
+	input, output      []byte
+	providerUsage      [][]byte
+	providerUsageBytes int
+	chunks             []chunk
+	truncated          bool
+	outputStopped      bool
+	jsonResponse       bool
+	began              time.Time
+	record             usage.Record
 }
 
 // Begin never performs network I/O or waits for capacity. Unknown (new) users
@@ -437,6 +440,30 @@ func (c *Capture) Write(p []byte) {
 	c.output = append(c.output, p...)
 	c.chunks = append(c.chunks, chunk{len(c.output), time.Since(c.began).Milliseconds()})
 }
+
+// Usage copies bounded upstream metadata independently of the client-visible
+// output prefix. Numeric decoding happens only in the background worker.
+func (c *Capture) Usage(raw []byte) {
+	if c == nil || len(raw) == 0 || len(raw) > MaxProviderUsage {
+		return
+	}
+	if c.service != nil {
+		c.service.gate.RLock()
+		defer c.service.gate.RUnlock()
+		if !c.service.enabled || c.epoch != c.service.epoch {
+			return
+		}
+	}
+	// Keep recent snapshots, including Anthropic's separate input/output usage.
+	for len(c.providerUsage) > 0 && (len(c.providerUsage) >= 4 || c.providerUsageBytes+len(raw) > MaxProviderUsage) {
+		c.providerUsageBytes -= len(c.providerUsage[0])
+		c.providerUsage[0] = nil
+		c.providerUsage = c.providerUsage[1:]
+	}
+	c.providerUsage = append(c.providerUsage, append([]byte(nil), raw...))
+	c.providerUsageBytes += len(raw)
+}
+
 func (c *Capture) Finish(r usage.Record) {
 	if c == nil {
 		return

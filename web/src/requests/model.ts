@@ -52,7 +52,8 @@ export type Result = {
 export type Summary = {
   input_messages: number
   output_messages: number
-  tool_calls: number
+  tool_calls: number | null
+  observed_tool_calls?: number
   tool_results: number
   tools: number
   finish_reason?: string
@@ -75,6 +76,7 @@ export type Detail = {
   result?: Result
   summary?: Summary
   truncated: boolean
+  output_truncated?: boolean
   warnings: string[]
 }
 export type Trace = { request_id: string; expires_at: string; detail: Detail }
@@ -308,6 +310,7 @@ export type RunStats = {
   input: number
   output: number
   toolCalls: number
+  toolCallsUnknown: boolean
   failed: number
   models: string[]
 }
@@ -321,7 +324,15 @@ export function runStats(rows: Row[]): RunStats {
     busy: rows.reduce((s, r) => s + r.latency_ms, 0),
     input: rows.reduce((s, r) => s + r.input_tokens, 0),
     output: rows.reduce((s, r) => s + r.output_tokens, 0),
-    toolCalls: rows.reduce((s, r) => s + (r.trace_summary?.tool_calls ?? 0), 0),
+    toolCalls: rows.reduce(
+      (s, r) =>
+        s +
+        (r.trace_summary?.tool_calls ??
+          r.trace_summary?.observed_tool_calls ??
+          0),
+      0,
+    ),
+    toolCallsUnknown: rows.some((r) => r.trace_summary?.tool_calls === null),
     failed: rows.filter((r) => !ok(r.status)).length,
     models: [...new Set(rows.map((r) => r.model).filter(Boolean))],
   }

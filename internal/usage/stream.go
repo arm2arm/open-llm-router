@@ -19,6 +19,7 @@ type Stream struct {
 	Protocol       string
 	HideUsage      bool
 	Totals         Totals
+	UsageObserver  func([]byte)
 	emit           func([]byte) error
 	buffer         []byte
 	data           []byte
@@ -166,9 +167,9 @@ func (s *Stream) inspect(event []byte) bool {
 	if s.Protocol == config.ProtocolAnthropic {
 		switch string(name) {
 		case "message_start":
-			s.Totals.readUsage(field(field(data, "message"), "usage"), s.Protocol, true, false)
+			s.readUsage(field(field(data, "message"), "usage"), true, false)
 		case "message_delta":
-			s.Totals.readUsage(field(data, "usage"), s.Protocol, true, true)
+			s.readUsage(field(data, "usage"), true, true)
 		case "content_block_delta":
 			switch string(field(field(data, "delta"), "type")) {
 			case `"text_delta"`, `"thinking_delta"`, `"input_json_delta"`:
@@ -189,7 +190,7 @@ func (s *Stream) inspect(event []byte) bool {
 		s.Totals.StreamError = true
 	}
 	if raw := field(data, "usage"); len(raw) > 0 && raw[0] == '{' {
-		valid := s.Totals.readUsage(raw, s.Protocol, true, true)
+		valid := s.readUsage(raw, true, true)
 		choices := trim(field(data, "choices"))
 		if valid && s.HideUsage && len(choices) >= 2 && choices[0] == '[' && choices[len(choices)-1] == ']' && len(trim(choices[1:len(choices)-1])) == 0 {
 			return true
@@ -199,6 +200,14 @@ func (s *Stream) inspect(event []byte) bool {
 		s.Totals.ContentEvents++
 	}
 	return false
+}
+
+func (s *Stream) readUsage(raw []byte, input, output bool) bool {
+	valid := s.Totals.readUsage(raw, s.Protocol, input, output)
+	if s.UsageObserver != nil && len(raw) <= maxUsage && len(raw) > 0 && raw[0] == '{' {
+		s.UsageObserver(raw)
+	}
+	return valid
 }
 
 func openAIContent(choice []byte) bool {

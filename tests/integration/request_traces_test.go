@@ -173,7 +173,7 @@ func TestPersonalRequestTraces(t *testing.T) {
 		t.Fatalf("trace: %d %s", resp.StatusCode, data)
 	}
 	// Version 2: raw request, routing by pool position, header names only.
-	for _, want := range []string{`"v":3`, `"request":{`, `"replica 1 of 1"`, `"X-Private-Header"`, `"upstream_status":200`, `"frames":[{`} {
+	for _, want := range []string{`"v":4`, `"request":{`, `"replica 1 of 1"`, `"X-Private-Header"`, `"upstream_status":200`, `"frames":[{`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("trace lacks %s: %s", want, data)
 		}

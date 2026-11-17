@@ -13,7 +13,7 @@ and P3; dependencies may change that order.
 | --- | --- | --- |
 | #172 Authentication and identity sync | #157, #161, #172, #187, #198, #252, #253 | PRs #292, #293, #294 |
 | #165 Usage accounting | #165, #168, #178, #204 | Completed in PR #295 |
-| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Sanitization: PR #296; bounds: PR #297; consent and API examples in this change; terminal usage fidelity pending |
+| #166 Trace privacy and bounds | #166, #182, #214, #215, #216, #233, #251, #260 | Sanitization: PR #296; bounds: PR #297; consent/API examples: PR #298; terminal usage fidelity in this change |
 | #169 History and user erasure | #169, #170, #213, #239, #244, #248 | Pending |
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Pending |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Pending |
@@ -110,6 +110,18 @@ and P3; dependencies may change that order.
   Deployment budgets are 60 s versus the default 30 s HTTP grace plus 12 s flushes.
 
 ## Trace sanitization evidence
+
+- **#216:** A bounded upstream usage observer feeds numeric provider metadata to
+  the worker before client filtering and independently of output capture limits.
+  Tests retain cached/reasoning usage when clients omit stream usage, including
+  a 3,000-token response followed by a tool call. Cut output has a null complete
+  tool-call count and unknown finish reason, with observed counts as lower bounds;
+  an input-only limit preserves known output facts. Migration 0023 updates limited
+  historical list summaries conservatively. History metrics, run labels, filters
+  and the detail panel represent unknown counts explicitly. PostgreSQL/proxy tests
+  verify unchanged complete client output and separately persisted terminal usage;
+  unit tests also cover Anthropic's separate usage events, byte-split Responses
+  events, metadata-buffer bounds and the latest provider totals.
 
 - **#214:** An actual pre-0014 fixture reproduces erasure-only implicit consent.
   Migration 0022 requires a new choice for all enabled pre-provenance preferences,

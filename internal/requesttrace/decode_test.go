@@ -30,7 +30,7 @@ func TestOpenAITraceContentAndOmissions(t *testing.T) {
 	if !strings.Contains(string(d.Request), `"temperature":0.5`) || !strings.Contains(string(d.Request), "image payload omitted") || !strings.Contains(string(d.Response), `"finish_reason":"tool_calls"`) {
 		t.Fatalf("raw previews: %s", b)
 	}
-	if d.Summary.ToolCalls != 1 || d.Summary.ToolResults != 1 || d.Summary.FinishReason != "tool_calls" || d.Version != DetailVersion {
+	if (d.Summary.ToolCalls == nil || *d.Summary.ToolCalls != 1) || d.Summary.ToolResults != 1 || d.Summary.FinishReason != "tool_calls" || d.Version != DetailVersion {
 		t.Fatalf("summary: %+v", d.Summary)
 	}
 	if d.Input[0].Hash == "" || d.Input[0].Hash == d.Input[1].Hash {
