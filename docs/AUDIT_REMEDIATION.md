@@ -393,3 +393,8 @@ and P3; dependencies may change that order.
   EXPLAIN ANALYZE regression seeds 200,000 direct and forwarded rows, checks bounded plans
   for empty users, forwarder accounts and busy recipients, and verifies mixed
   direct/forwarded ordering without leaking another recipient's calls.
+
+- **#258:** Migration 0031 adds `(user_id, day)` to daily usage. A seeded
+  PostgreSQL regression checks the actual administrator summary query against
+  45,000 rows, verifies its user-leading index plan and monthly totals, checks
+  the cascade's user predicate plan, and deletes a user to verify cleanup.
