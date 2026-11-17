@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +122,20 @@ func TestAdministrationHistoryAPIAndCLI(t *testing.T) {
 	output, err := cmd.CombinedOutput()
 	if err != nil || json.Unmarshal(output, &page) != nil || len(page.Events) != 1 || page.Events[0].Action != "user.delete" {
 		t.Fatalf("CLI history: %v %s", err, output)
+	}
+	// Equal bounds are meaningful: both CLI flags must survive parsing even
+	// though their string values are identical.
+	stamp := page.Events[0].Time.Format(time.RFC3339Nano)
+	wantID := page.Events[0].ID
+	cmd = exec.CommandContext(t.Context(), binary, "admin", "history", "-from", stamp, "-to", stamp)
+	cmd.Env = append(os.Environ(), "OLR_DATABASE_URL="+f.pool.Config().ConnString())
+	output, err = cmd.CombinedOutput()
+	if err != nil || json.Unmarshal(output, &page) != nil || len(page.Events) != 1 || page.Events[0].ID != wantID {
+		t.Fatal("CLI equal time bounds did not select exactly the stamped event", err, len(page.Events))
+	}
+	_ = json.Unmarshal(call("GET", "/portal/api/admin/history?from="+url.QueryEscape(stamp)+"&to="+url.QueryEscape(stamp), nil, 200), &page)
+	if len(page.Events) != 1 || page.Events[0].ID != wantID {
+		t.Fatal("CLI and portal exact time windows differ")
 	}
 }
 

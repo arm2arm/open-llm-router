@@ -3,9 +3,12 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var ErrFilter = errors.New("invalid audit history filter")
@@ -44,10 +47,44 @@ func List(ctx context.Context, db reader, filter Filter) (Page, error) {
 	if filter.Limit < 1 || filter.Limit > 200 || filter.Before < 0 || len(filter.Action) > 128 || len(filter.TargetID) > 256 || len(filter.ActorID) > 36 || filter.Result != "" && filter.Result != Succeeded && filter.Result != Failed && filter.Result != Refused || filter.From != nil && filter.To != nil && filter.From.After(*filter.To) {
 		return Page{}, ErrFilter
 	}
-	rows, err := db.Query(ctx, `SELECT id,occurred_at,action,actor_type,COALESCE(actor_id::text,''),COALESCE(actor_name,''),COALESCE(actor_host,''),COALESCE(target_type,''),COALESCE(target_id,''),COALESCE(revision,0),result,COALESCE(reason,''),details
- FROM audit_events WHERE ($1='' OR action=$1) AND ($2='' OR actor_id::text=$2) AND ($3='' OR target_id=$3) AND ($4='' OR result=$4)
- AND ($5::timestamptz IS NULL OR occurred_at >= $5) AND ($6::timestamptz IS NULL OR occurred_at <= $6) AND ($7::bigint=0 OR id<$7)
- ORDER BY id DESC LIMIT $8`, filter.Action, filter.ActorID, filter.TargetID, filter.Result, filter.From, filter.To, filter.Before, filter.Limit+1)
+	if filter.ActorID != "" {
+		var id pgtype.UUID
+		if err := id.Scan(filter.ActorID); err != nil || !id.Valid {
+			return Page{}, ErrFilter
+		}
+	}
+	// Include only requested predicates. This keeps actor/target lookup sargable
+	// even after prepared statements switch from custom to generic plans.
+	var args []any
+	where := []string{"true"}
+	add := func(predicate string, value any) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(predicate, len(args)))
+	}
+	if filter.Action != "" {
+		add("action=$%d", filter.Action)
+	}
+	if filter.ActorID != "" {
+		add("actor_id=$%d::uuid", filter.ActorID)
+	}
+	if filter.TargetID != "" {
+		add("target_id=$%d", filter.TargetID)
+	}
+	if filter.Result != "" {
+		add("result=$%d", filter.Result)
+	}
+	if filter.From != nil {
+		add("occurred_at >= $%d::timestamptz", filter.From)
+	}
+	if filter.To != nil {
+		add("occurred_at <= $%d::timestamptz", filter.To)
+	}
+	if filter.Before > 0 {
+		add("id < $%d", filter.Before)
+	}
+	args = append(args, filter.Limit+1)
+	query := `SELECT id,occurred_at,action,actor_type,COALESCE(actor_id::text,''),COALESCE(actor_name,''),COALESCE(actor_host,''),COALESCE(target_type,''),COALESCE(target_id,''),COALESCE(revision,0),result,COALESCE(reason,''),details FROM audit_events WHERE ` + strings.Join(where, " AND ") + fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
+	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
 		return Page{}, errors.New("audit history is unavailable")
 	}

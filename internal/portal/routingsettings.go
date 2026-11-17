@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/adminaccess"
 	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/idpcheck"
@@ -318,6 +320,7 @@ func (h *Handler) SetRoutingRuntime(snapshot settings.Snapshot) {
 	defer cancel()
 	rows, err := h.pool.Query(ctx, `SELECT DISTINCT u.id::text,u.groups,u.protected_admin FROM users u JOIN admin_api_keys k ON k.owner_id=u.id WHERE NOT k.revoked`)
 	if err != nil {
+		slog.Error("administration policy revocation lookup failed")
 		return
 	}
 	var revoked []string
@@ -325,12 +328,24 @@ func (h *Handler) SetRoutingRuntime(snapshot settings.Snapshot) {
 		var id string
 		var groups []string
 		var protected bool
-		if rows.Scan(&id, &groups, &protected) == nil && !h.access(user{ID: id, Groups: groups, ProtectedAdmin: protected}).Admin {
+		if err := rows.Scan(&id, &groups, &protected); err != nil {
+			rows.Close()
+			slog.Error("administration policy revocation lookup failed")
+			return
+		}
+		if !h.access(user{ID: id, Groups: groups, ProtectedAdmin: protected}).Admin {
 			revoked = append(revoked, id)
 		}
 	}
+	err = rows.Err()
 	rows.Close()
-	if len(revoked) > 0 {
-		_, _ = h.pool.Exec(ctx, `UPDATE admin_api_keys SET revoked=true,policy_version=policy_version+1 WHERE owner_id=ANY($1::uuid[]) AND NOT revoked`, revoked)
+	if err != nil {
+		slog.Error("administration policy revocation lookup failed")
+		return
+	}
+	for _, owner := range revoked {
+		if err := adminaccess.RevokeOwner(ctx, h.pool, owner, "owner_no_longer_admin", audit.Actor{Type: "authorization_policy"}); err != nil {
+			slog.Error("administration policy revocation failed", "owner_id", owner)
+		}
 	}
 }

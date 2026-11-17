@@ -88,7 +88,10 @@ func (h *Handler) agentIdentity(r *http.Request) (agentIdentity, error) {
 		return identity, err
 	}
 	if !h.access(u).Admin {
-		_, _ = h.pool.Exec(r.Context(), `UPDATE admin_api_keys SET revoked=true,policy_version=policy_version+1 WHERE owner_id=$1 AND NOT revoked`, u.ID)
+		actor := audit.Actor{Type: "admin_api_key", ID: u.ID, KeyID: k.ID, RequestID: reqid.FromContext(r.Context())}
+		if err := adminaccess.RevokeOwner(r.Context(), h.pool, u.ID, "owner_no_longer_admin", actor); err != nil {
+			return identity, err
+		}
 		return identity, adminaccess.ErrDenied
 	}
 	identity = agentIdentity{Key: k, User: u}

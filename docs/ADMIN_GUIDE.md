@@ -1336,6 +1336,14 @@ key issuance/revocation/deletion, overrides and authentication/routing/policy
 revisions. Filter by exact action, actor UUID, target UUID/domain, result or
 RFC3339 timestamps; use Older/Newer events for cursor pagination. The operator
 CLI reads the same service: `olr admin history -target USER_UUID -limit 100`.
+Time bounds are inclusive; `-from T -to T` selects only events stamped at that
+instant. Actor UUID and target filters use indexed lookups with stable ID cursors.
+If a request detects that an administration-key owner has lost admin authority,
+all remaining unrevoked keys for that owner are revoked transactionally, with an
+`admin_key.revoke` event per key and reason `owner_no_longer_admin`. Storage failure
+returns 503, so an unavailable revocation store is distinguishable from invalid
+credentials. File-policy publication also records these revocations and logs
+storage failures.
 Ordinary users cannot read this API and there are no event-edit/delete endpoints.
 
 Successful mutations and their events commit in the same database transaction.
