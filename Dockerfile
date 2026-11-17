@@ -50,8 +50,13 @@ EXPOSE 8000
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/mock-llm"]
 
-# Distroless static: no shell, no package manager; runs as user 65532.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS olr
+# Include Bash and curl for diagnostics from the running router container.
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS olr
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl passwd \
+ && groupadd --gid 65532 nonroot \
+ && useradd --uid 65532 --gid nonroot --no-log-init --create-home --shell /bin/bash nonroot \
+ && rm -rf /var/lib/apt/lists/*
 ARG VERSION=dev
 ARG COMMIT=unknown
 LABEL org.opencontainers.image.source="https://github.com/arm2arm/open-llm-router" \

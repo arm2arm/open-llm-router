@@ -157,7 +157,7 @@ source. The inventory is in `deploy/release/pinned_updates.py`:
 
 | Pins | Update path |
 | --- | --- |
-| Root Dockerfile Node, Go and distroless images | Weekly Dependabot Docker PRs |
+| Root Dockerfile Node, Go, Debian and distroless images | Weekly Dependabot Docker PRs |
 | Helm PostgreSQL and Keycloak | Weekly upstream tag/release review issue, including PostgreSQL maintenance branches |
 | Compose Prometheus, Grafana and Jaeger | Weekly upstream release review issue |
 | Optional digest-only vLLM CPU fixture | Weekly vLLM release review issue; manually select the corresponding CPU build and verify its digest |

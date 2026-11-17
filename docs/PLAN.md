@@ -310,7 +310,7 @@ The backend does the OIDC login, so no token reaches the browser:
 
 | Service | Image | Purpose |
 |---|---|---|
-| `router` | built from `Dockerfile` (multi-stage: Node builds the portal, Go builds one static binary; distroless runtime) | the router + portal |
+| `router` | built from `Dockerfile` (multi-stage: Node builds the portal, Go builds one static binary; Debian slim runtime with Bash and curl) | the router + portal |
 | `postgres` | postgres:17 | state |
 | `keycloak` | quay.io/keycloak/keycloak (dev mode) | realm `olr-dev` imported from `deploy/keycloak/olr-dev-realm.json`: clients, groups `staff/students/admins`, test users |
 | `keycloak` realm `upstream-idp` | same container | simulates a federated IdP; brokered into `olr-dev` to test the AAI flow and claim restriction |

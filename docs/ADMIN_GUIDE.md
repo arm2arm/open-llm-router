@@ -121,7 +121,7 @@ bootstrap) in an owner-only file, then run one of:
 ```sh
 # Host or a container with the file mounted inside it
 olr admin recover -password-file /private/secrets/olr-recovery
-# Compose: the distroless image has no shell, so redirect the host file
+# Compose: pass the host file directly through standard input
 docker compose exec -T router olr admin recover -password-stdin < /private/secrets/olr-recovery
 # Helm/Kubernetes
 kubectl -n olr exec -i deployment/olr-open-llm-router -- \

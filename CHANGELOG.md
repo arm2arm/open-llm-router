@@ -5,6 +5,8 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- The standard router image includes Bash, curl and CA certificates for pod-local
+  diagnostics. It continues to run as UID 65532 with the existing Helm security context.
 - API keys are stored as hashes and shown only at creation. Remove the retired
   `OLR_API_KEY_ENCRYPTION_KEY` setting. A lost key needs replacement and revocation;
   administrators cannot retrieve it. Keep the separate settings encryption key
