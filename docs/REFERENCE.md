@@ -8,12 +8,20 @@ Supported provider endpoints and known gaps are in
 
 ## API keys and bootstrap administration
 
-All `/v1/*` requests require `Authorization: Bearer <key>` or `x-api-key: <key>`, or, with
+Actual `/v1/*` requests require `Authorization: Bearer <key>` or `x-api-key: <key>`, or, with
 `oidc.audience` set, an identity-provider access token as the bearer (see the runbook).
 Matching credentials in both headers are accepted; conflicting or repeated headers are rejected.
 Missing, malformed, unknown, revoked or expired keys and disabled users receive a generic 401
 in the caller's OpenAI or Anthropic error format. `/healthz` and `/readyz` remain public.
 Database authentication failures return 503. Portal sessions never authenticate `/v1/*`.
+
+Browser clients can opt in through `cors.allowed_origins` (default `[]`, disabled).
+Only approved CORS preflight bypasses API-key authentication. Origins are exact
+HTTP(S) origins; wildcard and opaque origins are rejected. `security.require_tls`
+also requires HTTPS CORS origins. `cors.extra_allowed_headers` adds explicit custom
+header names to the standard OpenAI/Anthropic set. This operator-owned policy
+requires a restart and applies only to `/v1`, including streams and error responses.
+See [browser setup and preflight diagnostics](CLIENTS.md#browser-integration-and-cors).
 
 Model access comes from the user's stored groups and the active routing revision’s `groups` (or the file when unmanaged). Group
 names match exactly. Allowed models are the union of all matching groups; `models: ["*"]`

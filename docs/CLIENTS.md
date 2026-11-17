@@ -9,16 +9,54 @@ OpenAI or Anthropic platform compatibility.
 
 ## Browser integration and CORS
 
-`/v1` does not implement cross-origin browser CORS or anonymous preflight handling.
-An `OPTIONS` request may receive 401, and adding a key in browser code does not
-solve a failed preflight. No wildcard origin is enabled by default.
+OLR supports Open WebUI **Direct Connections**, where each user's browser calls
+OLR with that user's API key. Allow the Open WebUI site's origin in router YAML:
 
-Use a server-side client/forwarder, such as Open WebUI's backend connection, that
-keeps the router key on the server. A site may instead operate a CORS-handling
-reverse proxy with an explicit origin allowlist and narrow allowed methods/headers;
-that policy belongs to the proxy, not an OLR setting. Never embed a shared router
-key in a public browser bundle. Portal cookies authenticate the same-origin portal
-API and do not authenticate `/v1` inference.
+```yaml
+cors:
+  allowed_origins: [https://ai.aip.de]
+  extra_allowed_headers: []
+```
+
+For Helm, place this under `config` in your deployment's values file and upgrade:
+
+```yaml
+config:
+  cors:
+    allowed_origins: [https://ai.aip.de]
+```
+
+In Open WebUI **Settings → Connections**, add the OpenAI-compatible URL
+`https://olr.kube.aip.de/v1` and your personal OLR API key. Refresh models, then
+start a new chat. Use HTTPS for browser-facing OLR; an HTTPS page cannot fetch an
+HTTP endpoint. Internal HTTP inference backends remain reachable through OLR.
+
+The default empty origin list disables CORS. Origins are exact HTTP(S) origins,
+including any non-default port, without a URL path. Wildcards and `null` are
+rejected. Approved `OPTIONS` preflight returns 204 without an API key; actual
+requests still require authentication and obey the user's model/group limits.
+Allowed methods are GET, HEAD, POST and OPTIONS. Authorization, Content-Type,
+Accept, X-Request-Id, X-Api-Key, Anthropic-Version and Anthropic-Beta are allowed
+headers; list any custom connection headers in `extra_allowed_headers`.
+
+Allowed browsers can read authentication errors, retry headers and streaming
+responses. Portal and admin APIs are excluded; portal cookies do not authenticate
+inference, and CORS does not enable cross-origin cookie credentials. Server-side
+Open WebUI connections and CLI clients need no CORS configuration. Never embed a
+shared router key in a public browser bundle.
+
+To check the deployed policy, run this without an API key:
+
+```sh
+curl -i -X OPTIONS https://olr.kube.aip.de/v1/chat/completions \
+  -H 'Origin: https://ai.aip.de' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: authorization,content-type'
+```
+
+Expect 204 and `Access-Control-Allow-Origin: https://ai.aip.de`. A 401 indicates
+CORS is disabled or the new configuration/version has not been deployed. A 403
+means the origin, requested method or requested headers are not allowed.
 
 ## Result for #8
 

@@ -50,6 +50,7 @@ func configuredForGroups(t *testing.T, cfg *config.Config, groups []string) (*Ha
 	h := New(cfg)
 	h.Pools.Check(t.Context())
 	s := server.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.SetCORS(cfg.CORS)
 	if groups != nil {
 		s.SetAPIMiddleware(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

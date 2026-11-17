@@ -73,6 +73,8 @@ services and HTTPS ingress.
 | `config` | Optional demo and staff/admin policies | Router YAML; `${VAR}` references expand in the router; staff allows all configured models by default |
 | `config.security.require_tls` | `false` | Opt-in HTTPS backends/SSO, secure portal cookies and verified PostgreSQL TLS |
 | `config.admin_api.enabled` | `true` | Enable scoped agent administration; set `false` to disable it |
+| `config.cors.allowed_origins` | `[]` | Exact browser origins allowed on `/v1`, e.g. `[https://ai.aip.de]` for Open WebUI Direct Connections; empty disables CORS |
+| `config.cors.extra_allowed_headers` | `[]` | Additional explicit browser request headers beyond the OpenAI/Anthropic defaults |
 | `enforceImageDigests` | `false` | Opt-in immutable images for the router and every enabled dependency |
 | `env` | `{}` | Non-secret environment variables; disable bundled Keycloak for external `OIDC_*` |
 | `replicaCount` | `1` | Enforced single router process, with `Recreate` rollouts |
