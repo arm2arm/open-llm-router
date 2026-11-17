@@ -20,7 +20,7 @@ and P3; dependencies may change that order.
 | #173 Request history | #173, #174, #229, #258 | Completed in PR #310 |
 | #185 Accessibility | #185, #230, #250, #264 | Completed in PR #311 |
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Implemented; local validation passed; PR/CI pending |
-| #195 Agent administration | #195, #245, #261 | Pending |
+| #195 Agent administration | #195, #245, #261 | Implemented; validation in progress |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Pending |
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Pending |
 | #237 Startup diagnostics | #237, #238, #241 | Pending |
@@ -452,3 +452,19 @@ and P3; dependencies may change that order.
   OIDC return destinations are restricted to portal pages; OIDC stores the return
   path with its one-time login attempt (migration 32). Browser and PostgreSQL
   regressions cover recovery, expired cookies and hostile return destinations.
+
+- **#195:** MCP tool schemas use plain object roots; preview discovery provides
+  permitted operation names and titled argument alternatives. Exact arguments
+  remain server-validated. Negotiation offers only the supported 2025-06-18 and
+  2025-11-25 revisions; it no longer claims the older batch protocol. Unit checks
+  cover every discovered root, operation discovery and old-version negotiation.
+- **#245:** Routing reads and hypothetical policy previews require users:read
+  before returning stored identities, memberships, overrides or revision actors.
+  Canonical argument bindings use HMAC with the authenticated key, which is not
+  stored in the database. Migration 33 invalidates previews only when user state
+  actually changes. Safe numeric quotas and public password flags remain in
+  before-images. PostgreSQL checks cover restricted REST/MCP reads, password
+  bindings, unchanged SSO sign-in and real group/enabled-state conflicts.
+- **#261:** Agent overrides store agent:<key UUID>; portal writes keep
+  portal:<username>. Read tools accept omitted, null and empty-object arguments.
+  Both actor forms and all argument variants have integration regressions.

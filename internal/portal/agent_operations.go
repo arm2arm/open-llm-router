@@ -2,6 +2,7 @@ package portal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -260,7 +261,7 @@ func (h *Handler) invokeAgent(w http.ResponseWriter, r *http.Request, a agentIde
 	if len(body) == 0 {
 		body = json.RawMessage(`{}`)
 	}
-	r2 := r.Clone(r.Context())
+	r2 := r.Clone(context.WithValue(r.Context(), agentContext{}, a))
 	r2.Method = "POST"
 	r2.Header = r.Header.Clone()
 	r2.Header.Set("Content-Type", "application/json")

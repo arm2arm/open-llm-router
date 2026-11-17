@@ -27,6 +27,10 @@ func (h *Handler) previewPolicies(w http.ResponseWriter, r *http.Request, _ user
 	if !h.jsonBodyLimit(w, r, &body, 256<<10) {
 		return
 	}
+	if body.UserID != "" && !agentCanReadUsers(r) {
+		fail(w, 403, "permission_error", "users:read is required to preview a stored user")
+		return
+	}
 	if body.Revision < 0 || body.Revision > 0 && len(body.Document) > 0 || body.Memberships != nil && len(*body.Memberships) > 64 {
 		fail(w, 400, "invalid_request_error", "choose a document or revision and at most 64 memberships")
 		return
@@ -74,10 +78,13 @@ func (h *Handler) previewPolicies(w http.ResponseWriter, r *http.Request, _ user
 			aliases[alias] = name
 		}
 	}
-	affected, err := h.policyImpact(r, cfg)
-	if err != nil {
-		unavailable(w)
-		return
+	affected := []policyImpact{}
+	if agentCanReadUsers(r) {
+		affected, err = h.policyImpact(r, cfg)
+		if err != nil {
+			unavailable(w)
+			return
+		}
 	}
 	if target.Groups == nil {
 		target.Groups = []string{}

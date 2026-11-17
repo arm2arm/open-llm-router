@@ -41,7 +41,25 @@ func (h *Handler) changeRequestSchema(a agentIdentity) map[string]any {
 	return map[string]any{"type": "object", "oneOf": variants}
 }
 func supportedMCPVersion(version string) bool {
-	return version == "2025-03-26" || version == "2025-06-18" || version == "2025-11-25"
+	return version == "2025-06-18" || version == "2025-11-25"
+}
+
+// Keep the root a plain object for model providers that reject root unions.
+// The operation enum and titled argument alternatives remain discoverable;
+// agentPreview validates the exact operation-specific arguments on the server.
+func (h *Handler) changeToolSchema(a agentIdentity) map[string]any {
+	names := []string{}
+	variants := []any{}
+	for _, op := range h.operations() {
+		if !op.Write || !op.allowed(a) {
+			continue
+		}
+		names = append(names, op.Name)
+		arguments := operationArgumentsSchema(op)
+		arguments["title"], arguments["description"] = op.Name, op.Description
+		variants = append(variants, arguments)
+	}
+	return objectSchema(map[string]any{"operation": map[string]any{"type": "string", "enum": names}, "arguments": map[string]any{"type": "object", "anyOf": variants}}, "operation", "arguments")
 }
 
 func (h *Handler) agentMCP(w http.ResponseWriter, r *http.Request, a agentIdentity) {
@@ -104,7 +122,7 @@ func (h *Handler) agentMCP(w http.ResponseWriter, r *http.Request, a agentIdenti
 	case "ping":
 		send(map[string]any{}, 0, "")
 	case "tools/list":
-		tools := []any{map[string]any{"name": "get_identity", "description": "Read effective key permissions and source IP", "inputSchema": objectSchema(map[string]any{}), "annotations": map[string]any{"readOnlyHint": true}}, map[string]any{"name": "preview_change", "description": "Preview a permitted change; secrets are omitted from the response", "inputSchema": h.changeRequestSchema(a), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false}}, map[string]any{"name": "apply_change", "description": "Apply an exact preview once; verify status on interrupted responses", "inputSchema": objectSchema(map[string]any{"id": field("string"), "arguments": field("object"), "idempotency_key": field("string")}, "id", "arguments", "idempotency_key"), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": true}}, map[string]any{"name": "get_change_status", "description": "Inspect your change outcome; one-time secrets cannot be recovered", "inputSchema": objectSchema(map[string]any{"id": field("string")}, "id"), "annotations": map[string]any{"readOnlyHint": true}}}
+		tools := []any{map[string]any{"name": "get_identity", "description": "Read effective key permissions and source IP", "inputSchema": objectSchema(map[string]any{}), "annotations": map[string]any{"readOnlyHint": true}}, map[string]any{"name": "preview_change", "description": "Preview a permitted change; secrets are omitted from the response", "inputSchema": h.changeToolSchema(a), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false}}, map[string]any{"name": "apply_change", "description": "Apply an exact preview once; verify status on interrupted responses", "inputSchema": objectSchema(map[string]any{"id": field("string"), "arguments": field("object"), "idempotency_key": field("string")}, "id", "arguments", "idempotency_key"), "annotations": map[string]any{"readOnlyHint": false, "destructiveHint": true}}, map[string]any{"name": "get_change_status", "description": "Inspect your change outcome; one-time secrets cannot be recovered", "inputSchema": objectSchema(map[string]any{"id": field("string")}, "id"), "annotations": map[string]any{"readOnlyHint": true}}}
 		hasWrites := false
 		for _, op := range h.operations() {
 			hasWrites = hasWrites || (op.Write && op.allowed(a))
@@ -126,6 +144,9 @@ func (h *Handler) agentMCP(w http.ResponseWriter, r *http.Request, a agentIdenti
 		if json.Unmarshal(rpc.Params, &call) != nil {
 			send(nil, -32602, "invalid tool call")
 			return
+		}
+		if len(call.Arguments) == 0 || bytes.Equal(bytes.TrimSpace(call.Arguments), []byte("null")) {
+			call.Arguments = json.RawMessage(`{}`)
 		}
 		r2 := r.Clone(r.Context())
 		r2.Header = r.Header.Clone()

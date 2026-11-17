@@ -191,7 +191,11 @@ func (h *Handler) setOverride(w http.ResponseWriter, r *http.Request, by user) {
 			fail(w, 400, "invalid_request_error", "unknown field, invalid value, or a reason over 200 bytes")
 			return
 		}
-		err = admin.SetOverride(r.Context(), id, field, body.Value, body.Reason, "portal:"+by.Username)
+		actor := "portal:" + by.Username
+		if by.AgentActor != nil {
+			actor = "agent:" + by.AgentActor.KeyID
+		}
+		err = admin.SetOverride(r.Context(), id, field, body.Value, body.Reason, actor)
 	}
 	if errors.Is(err, auth.ErrProtectedAdmin) {
 		fail(w, 403, "permission_error", auth.ErrProtectedAdmin.Error())

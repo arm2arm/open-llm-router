@@ -2,6 +2,7 @@ package portal
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -321,13 +322,26 @@ func canonicalArguments(raw json.RawMessage) ([]byte, error) {
 	}
 	return json.Marshal(value)
 }
-func argumentHash(raw json.RawMessage) ([]byte, error) {
+
+// The authenticated key is not stored in the database. A database copy of a
+// preview must not become a fast offline oracle for its temporary password.
+func argumentHash(raw json.RawMessage, key string) ([]byte, error) {
+	if key == "" {
+		return nil, errors.New("missing preview binding key")
+	}
 	canonical, err := canonicalArguments(raw)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(canonical)
-	return sum[:], nil
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte("olr admin preview arguments v1\x00"))
+	_, _ = mac.Write(canonical)
+	return mac.Sum(nil), nil
+}
+
+func agentCanReadUsers(r *http.Request) bool {
+	identity, agent := r.Context().Value(agentContext{}).(agentIdentity)
+	return !agent || identity.Key.Allows("users:read")
 }
 
 func (h *Handler) agentNarrow(w http.ResponseWriter, r *http.Request, u user) {

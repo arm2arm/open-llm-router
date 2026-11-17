@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
+	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -20,12 +21,29 @@ type agentChangeRequest struct {
 	Arguments agentArguments `json:"arguments"`
 }
 
+func safePreviewMetadata(name string, value any) bool {
+	if name == "must_change_password" || name == "has_local_password" {
+		_, ok := value.(bool)
+		return ok
+	}
+	if policy.ValidOverride(name, nil) || name == "tokens_today" || name == "tokens_this_month" {
+		switch value.(type) {
+		case nil, float64, json.Number, int, int64:
+			return true
+		}
+	}
+	return false
+}
 func sanitizeAgent(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
 		out := map[string]any{}
 		for name, item := range v {
 			lower := strings.ToLower(name)
+			if safePreviewMetadata(lower, item) {
+				out[name] = item
+				continue
+			}
 			if strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "authorization") || strings.Contains(lower, "credential") {
 				out[name] = "will change"
 			} else {
@@ -65,7 +83,7 @@ func (h *Handler) agentPreview(w http.ResponseWriter, r *http.Request, a agentId
 		return
 	}
 	raw, _ := json.Marshal(body.Arguments)
-	hash, err := argumentHash(raw)
+	hash, err := argumentHash(raw, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if err != nil {
 		fail(w, 400, "invalid_request_error", "invalid arguments")
 		return
@@ -182,7 +200,7 @@ func (h *Handler) agentApply(w http.ResponseWriter, r *http.Request, _ agentIden
 	}
 	r = r.WithContext(context.WithValue(r.Context(), agentContext{}, a))
 	raw, _ := json.Marshal(body.Arguments)
-	hash, _ := argumentHash(raw)
+	hash, _ := argumentHash(raw, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	var name, status string
 	var expected []byte
 	var state, policy, current int64
