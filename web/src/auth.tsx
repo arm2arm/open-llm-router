@@ -118,6 +118,11 @@ export function SignIn({
         <ShieldCheck aria-hidden="true" size={15} /> Secure sign-in with
         Keycloak
       </p>
+      <p className="institutional-signin-reminder">
+        Your institution may keep you signed in in this browser. On a shared
+        computer, sign out of your institutional account and close the browser
+        when finished.
+      </p>
       {!sso.available && (
         <p role="status" className="institutional-signin-status">
           Institutional login is temporarily unavailable. Use a local account
@@ -217,8 +222,16 @@ export function SignIn({
 
   return (
     <AuthFrame embedded={embedded}>
-      <h1>{directLocal ? 'Sign in with a local account' : 'Sign in'}</h1>
-      <p className="subtitle mb-6">Access your models, API keys and usage.</p>
+      <h1>
+        {directLocal
+          ? 'Sign in with a local account'
+          : 'Welcome to Open LLM Router'}
+      </h1>
+      <p className="subtitle mb-6">
+        {!directLocal && keycloakFirst && sso?.configured
+          ? 'Use your institutional account to access Open LLM Router.'
+          : 'Access your models, API keys and usage.'}
+      </p>
       {!embedded && params.get('expired') === '1' && (
         <p role="status" className="notice mb-5">
           Your session ended. Sign in again to return to your previous page.

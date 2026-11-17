@@ -30,6 +30,17 @@ for (const theme of ['light', 'dark'] as const) {
       }),
     )
     await page.goto('/portal/sign-in?next=%2Fportal%2Fkeys')
+    await expect(
+      page.getByRole('heading', { name: 'Welcome to Open LLM Router' }),
+    ).toBeVisible()
+    await expect(
+      page.getByText(
+        'Use your institutional account to access Open LLM Router.',
+      ),
+    ).toBeVisible()
+    await expect(
+      page.getByText(/Your institution may keep you signed in in this browser/),
+    ).toBeVisible()
     const primary = page.getByRole('button', {
       name: 'Continue with institutional login',
     })

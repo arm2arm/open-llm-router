@@ -22,7 +22,10 @@ test('self-service login, key, copied completion, usage, revoke and logout', asy
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/portal/connect')
   await expect(
-    page.getByRole('heading', { name: 'Sign in', exact: true }),
+    page.getByRole('heading', {
+      name: 'Welcome to Open LLM Router',
+      exact: true,
+    }),
   ).toBeVisible()
   await expect(page.getByLabel('Local username', { exact: true })).toBeHidden()
   await expect(
