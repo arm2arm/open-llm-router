@@ -140,7 +140,8 @@ with the router's changes, and the response, with omitted payloads as markers.
   are normalized; unknown provider-specific content fields are omitted.
 - Besides the conversation, a trace stores what is needed to understand a call: a
   sanitized preview of the raw request JSON (strings over 2 KiB shortened; full text is
-  in the conversation), every non-content parameter, tool names, descriptions and
+  in the conversation), non-content parameters within a 32 KiB total budget,
+  tool names, descriptions and
   schemas (8 KiB each), the router's changes to the forwarded body (upstream model
   name, priority, `stream_options.include_usage`), the names (never values) of headers
   forwarded upstream, admission and queue waits, attempts identified by pool position
@@ -186,10 +187,31 @@ and write it to `request_traces`, independently of the usage/accounting queue.
 Streaming responses still flush incrementally. Tracing neither retries nor delays
 an inference call when its storage queue is full or Postgres fails.
 
+Content collection starts only after request validation, model permissions, user
+and backend budgets, and replica admission succeed. Calls rejected locally with
+400, 403, 404 or 429 store no request or response content.
+
 Bounds per request are **1 MiB copied input**, **384 KiB stored input text**,
-**128 KiB per raw preview**, **256 KiB output**, **2,048 observed writes**, **1,000
+**32 KiB total parameters**, **128 KiB per raw preview**, **256 KiB output**, **2,048 observed writes**, **1,000
 displayed stream events** and **200 raw stream frames (64 KiB)**. At most **32
-captures** can be active or queued per process. Input over 1 MiB is omitted as a whole,
+captures** can be active or queued per process, with **4 per user** and **30 new
+captures per user per minute** in a process-local fixed window. The budget map
+holds at most 4,096 users, reclaiming inactive expired windows before admitting
+another user. Ordinary model controls take priority within the parameters budget;
+the trace counts omitted extensions and marks the capture as limited.
+
+Retained traces are bounded per user across all router replicas: at most **512
+traces** and **64 MiB of logical JSON content**. The byte limit counts PostgreSQL's
+text representation of detail and summary plus 256 bytes per row for identifiers
+and fixed overhead; physical table, index, WAL and backup space can be larger.
+Writers serialize budget admission on the user's row without blocking inference.
+Expired rows still count until cleanup deletes them. Erasure or expiry frees space.
+Existing pre-upgrade content is preserved until its scheduled expiry or erasure;
+an account already over either cap cannot add traces until it falls below both.
+Captures exceeding capacity, rate or retained-content bounds increment
+`olr_content_trace_dropped_total`, without increasing write failures.
+
+Input over 1 MiB is omitted as a whole,
 because partial JSON is never decoded; binary payloads are removed before the text
 budget applies, so a request with images keeps its text. Output keeps only its
 captured prefix and complete events. The viewer explains truncation; forwarding is

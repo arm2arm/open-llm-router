@@ -42,7 +42,21 @@ func (r *redactor) marshal(v any) ([]byte, error) {
 	if err = decodeJSON(data, &decoded); err != nil {
 		return nil, err
 	}
-	return json.Marshal(r.value(decoded, 0))
+	value := r.value(decoded, 0)
+	// Redaction can expand short credential values. Enforce the final budget
+	// after sanitization as well, including on historical trace reads.
+	switch v.(type) {
+	case Detail, *Detail:
+		root := object(value)
+		parameters, limited := boundParameters(object(root["parameters"]))
+		root["parameters"] = parameters
+		if limited {
+			root["truncated"] = true
+			object(root["summary"])["truncated"] = true
+			root["warnings"] = append(list(root["warnings"]), "Some parameters omitted: above the 32 KiB parameters limit after sanitization.")
+		}
+	}
+	return json.Marshal(value)
 }
 
 func credentialField(key string) bool {
@@ -176,7 +190,7 @@ func (s *Service) RegisterMetrics(reg prometheus.Registerer) {
 		{"writes_total", "Persisted content traces.", func() float64 { return float64(s.Written.Load()) }},
 		{"failures_total", "Failed trace writes or retention operations.", func() float64 { return float64(s.Failed.Load()) }},
 		{"deletions_total", "Traces deleted by retention or user erasure.", func() float64 { return float64(s.Deleted.Load()) }},
-		{"dropped_total", "Traces skipped for lack of capacity.", func() float64 { return float64(s.Dropped.Load()) }},
+		{"dropped_total", "Traces skipped by capacity, rate, retained-storage or changed preference limits.", func() float64 { return float64(s.Dropped.Load()) }},
 	} {
 		reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "olr_content_trace_" + c.name, Help: c.help}, c.value))
 	}

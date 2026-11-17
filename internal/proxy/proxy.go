@@ -211,7 +211,10 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		return
 	}
-	account.capture.Input(body)
+	// Retain the existing body buffer without copying content for rejected calls.
+	originalBody := body
+	var traceChanges []requesttrace.Change
+	var traceAdmission time.Duration
 	// The server bounds the body upload; a response may stream for much longer.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	meta, err := parseRequest(body)
@@ -262,12 +265,11 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			priority = access.Priority + model.Priority.Batch
 		}
 	}
-	account.capture.Route(meta.Model, name, upstreamName)
 	if upstreamName != meta.Model {
-		account.capture.Change("model", "replaced", meta.Model, upstreamName)
+		traceChanges = append(traceChanges, requesttrace.Change{Field: "model", Action: "replaced", From: meta.Model, To: upstreamName})
 	}
 	if model.Priority != nil {
-		account.capture.Change("priority", "set", nil, priority)
+		traceChanges = append(traceChanges, requesttrace.Change{Field: "priority", Action: "set", To: priority})
 	}
 	hideUsage := false
 	if r.URL.Path == "/v1/responses" {
@@ -278,7 +280,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 			return
 		}
 		if changed {
-			account.capture.Change("store", "set", nil, false)
+			traceChanges = append(traceChanges, requesttrace.Change{Field: "store", Action: "set", To: false})
 		}
 	} else if protocol == config.ProtocolOpenAI && meta.Stream && r.URL.Path != "/v1/embeddings" {
 		var asked bool
@@ -289,7 +291,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		hideUsage = !asked
 		if !asked {
-			account.capture.Change("stream_options.include_usage", "set", nil, true)
+			traceChanges = append(traceChanges, requesttrace.Change{Field: "stream_options.include_usage", Action: "set", To: true})
 		}
 	}
 	if upstreamName != meta.Model || model.Priority != nil {
@@ -322,7 +324,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		admitted := time.Now()
 		account.lease, err = h.Limits.AcquireFor(r.Context(), admission, access)
-		account.capture.Admission(time.Since(admitted))
+		traceAdmission = time.Since(admitted)
 		if err != nil {
 			var rejected *limits.Rejection
 			if h.Metrics != nil && errors.As(err, &rejected) {
@@ -384,6 +386,19 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 		exchanged := time.Now()
 		account.backendLease = budget
+		if attempt == 0 && r.URL.Path != "/v1/messages/count_tokens" {
+			// Content capture begins only after parsing, permissions, user and
+			// backend budgets, and replica admission have all succeeded.
+			account.capture = h.Traces.Begin(principal.UserID, account.record.Operation, account.began)
+			account.writer.capture = account.capture
+			account.capture.Input(originalBody)
+			account.capture.Session(r.Header.Get("X-Session-Id"))
+			account.capture.Route(meta.Model, name, upstreamName)
+			account.capture.Admission(traceAdmission)
+			for _, change := range traceChanges {
+				account.capture.Change(change.Field, change.Action, change.From, change.To)
+			}
+		}
 		if protocol == config.ProtocolOpenAI && meta.Stream {
 			account.inputEstimate = int64(len(body))
 			account.inputRejected = false

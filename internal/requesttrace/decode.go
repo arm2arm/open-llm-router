@@ -338,6 +338,12 @@ func (c *Capture) decode() Detail {
 			msgs[i].Hash = hashMessage(msgs[i])
 		}
 	}
+	var parametersLimited bool
+	d.Parameters, parametersLimited = boundParameters(d.Parameters)
+	if parametersLimited {
+		d.Truncated = true
+		d.Warnings = append(d.Warnings, "Some parameters omitted: above the 32 KiB parameters limit.")
+	}
 	d.Summary = summarize(&d)
 	return d
 }

@@ -4,6 +4,7 @@ package requesttrace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sort"
@@ -21,14 +22,22 @@ import (
 const (
 	// MaxInput bounds the bytes copied from the request. Binary payloads are
 	// removed in the worker; MaxInputText then bounds the normalized text.
-	MaxInput     = 1 << 20
-	MaxInputText = 384 << 10
-	MaxRaw       = 128 << 10
-	MaxFrames    = 200
-	MaxFrameRaw  = 64 << 10
-	MaxOutput    = 256 << 10
-	MaxChunks    = 2048
-	MaxEvents    = 1000
+	MaxInput      = 1 << 20
+	MaxInputText  = 384 << 10
+	MaxRaw        = 128 << 10
+	MaxFrames     = 200
+	MaxFrameRaw   = 64 << 10
+	MaxOutput     = 256 << 10
+	MaxChunks     = 2048
+	MaxEvents     = 1000
+	MaxParameters = 32 << 10
+	// Stored JSON content and the number of retained traces are bounded per
+	// account across replicas. Existing content expires normally after upgrade.
+	MaxStoredBytes        = 64 << 20
+	MaxStoredTraces       = 512
+	UserSlots             = 4
+	UserCapturesPerMinute = 30
+	maxUserBudgets        = 4096
 	// Slots cover active captures AND the background queue, not just queued work.
 	Slots = 32
 )
@@ -55,6 +64,9 @@ type Service struct {
 	mu               sync.Mutex
 	prefs            atomic.Pointer[map[string]Preferences]
 	slots            chan struct{}
+	budgetMu         sync.Mutex
+	budgets          map[string]captureBudget
+	now              func() time.Time
 	queue            chan *Capture
 	cancel           context.CancelFunc
 	wg               sync.WaitGroup
@@ -92,7 +104,7 @@ func New(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, options ...c
 					ctx, cancel := context.WithTimeout(run, 2*time.Second)
 					err := s.persist(ctx, c)
 					cancel()
-					<-s.slots
+					s.release(c.user)
 					s.Processed.Add(1)
 					if err != nil && run.Err() == nil {
 						s.Failed.Add(1)
@@ -215,6 +227,7 @@ type chunk struct {
 	MS  int64
 }
 type Capture struct {
+	user          string
 	epoch         uint64
 	service       *Service
 	generation    int64
@@ -252,13 +265,58 @@ func (s *Service) Begin(user, operation string, began time.Time) *Capture {
 	if !p.Enabled {
 		return nil
 	}
+	s.budgetMu.Lock()
+	defer s.budgetMu.Unlock()
+	now := time.Now()
+	if s.now != nil {
+		now = s.now()
+	}
+	if s.budgets == nil {
+		s.budgets = make(map[string]captureBudget)
+	}
+	b, exists := s.budgets[user]
+	if !exists && len(s.budgets) >= maxUserBudgets {
+		for id, old := range s.budgets {
+			if old.active == 0 && !now.Before(old.until) {
+				delete(s.budgets, id)
+			}
+		}
+		if len(s.budgets) >= maxUserBudgets {
+			s.Dropped.Add(1)
+			return nil
+		}
+	}
+	if !now.Before(b.until) {
+		b.until, b.used = now.Add(time.Minute), 0
+	}
+	if b.active >= UserSlots || b.used >= UserCapturesPerMinute {
+		s.Dropped.Add(1)
+		return nil
+	}
 	select {
 	case s.slots <- struct{}{}:
-		return &Capture{service: s, epoch: s.epoch, generation: p.Generation, operation: operation, began: began}
+		b.active++
+		b.used++
+		s.budgets[user] = b
+		return &Capture{user: user, service: s, epoch: s.epoch, generation: p.Generation, operation: operation, began: began}
 	default:
 		s.Dropped.Add(1)
 		return nil
 	}
+}
+
+type captureBudget struct {
+	until        time.Time
+	used, active int
+}
+
+func (s *Service) release(user string) {
+	<-s.slots
+	s.budgetMu.Lock()
+	b := s.budgets[user]
+	b.active--
+	s.budgets[user] = b
+	s.budgetMu.Unlock()
 }
 
 func (c *Capture) Input(p []byte) {
@@ -378,7 +436,7 @@ func (c *Capture) Finish(r usage.Record) {
 	case c.service.queue <- c:
 	default:
 		c.service.Dropped.Add(1)
-		<-c.service.slots
+		c.service.release(c.user)
 	}
 }
 
@@ -393,25 +451,47 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 	if err != nil {
 		return err
 	}
-	summary, err := s.redactor.marshal(detail.Summary)
-	if err != nil {
+	var sanitized struct {
+		Summary json.RawMessage `json:"summary"`
+	}
+	if err := decodeJSON(data, &sanitized); err != nil {
 		return err
 	}
+	summary := sanitized.Summary
 	var conversation *string
 	if key := c.conversationKey(detail); key != "" {
 		conversation = &key
 	}
-	// FOR SHARE serializes against settings changes, erasure and user deletion.
-	// Generation prevents late writes from resurrecting cleared content.
-	tag, err := s.pool.Exec(ctx, `WITH owner AS (
-		SELECT id,trace_retention_days FROM users WHERE id=$2 AND trace_enabled AND trace_generation=$5 FOR SHARE
-	) INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail,summary,conversation_key)
-	SELECT $1,id,$3,$3::timestamptz+make_interval(days=>trace_retention_days),$4::jsonb,$6::jsonb,$7 FROM owner
-	WHERE $3::timestamptz+make_interval(days=>trace_retention_days)>now()
-	ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, c.generation, summary, conversation)
-	if err == nil && tag.RowsAffected() == 1 {
-		s.Written.Add(1)
-		s.Activity.Publish(c.record.UserID, activity.Event{Type: "trace_ready", RequestID: c.record.RequestID})
+	// Lock the account before the budget query. A separate statement after the
+	// lock obtains a fresh READ COMMITTED snapshot, including a writer that
+	// completed while this one waited. Other replicas cannot overspend the cap.
+	var stored bool
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var retention int
+		err := tx.QueryRow(ctx, `SELECT trace_retention_days FROM users WHERE id=$1 AND trace_enabled AND trace_generation=$2 FOR UPDATE`, c.record.UserID, c.generation).Scan(&retention)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		// stored_bytes is generated from PostgreSQL's JSON representation. Use
+		// that same representation for this row, including its fixed overhead.
+		tag, err := tx.Exec(ctx, `INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail,summary,conversation_key)
+		SELECT $1,$2,$3,$3::timestamptz+make_interval(days=>$8),$4::jsonb,$6::jsonb,$7
+		WHERE $3::timestamptz+make_interval(days=>$8)>now()
+		AND (SELECT count(*)<$9 AND COALESCE(sum(stored_bytes),0)+octet_length($4::jsonb::text)::bigint+octet_length($6::jsonb::text)::bigint+256<=$5 FROM request_traces WHERE user_id=$2)
+		ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, MaxStoredBytes, summary, conversation, retention, MaxStoredTraces)
+		stored = err == nil && tag.RowsAffected() == 1
+		return err
+	})
+	if err == nil {
+		if stored {
+			s.Written.Add(1)
+			s.Activity.Publish(c.record.UserID, activity.Event{Type: "trace_ready", RequestID: c.record.RequestID})
+		} else {
+			s.Dropped.Add(1)
+		}
 	}
 	return err
 }
