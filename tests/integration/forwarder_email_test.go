@@ -8,6 +8,8 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/db"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func emailForwarder(t *testing.T, f *usageRouter) *forwarderSetup {
@@ -52,10 +54,17 @@ func portalEmailLogin(t *testing.T, f *portalFixture, sub, email string, verifie
 
 func TestExistingSSOEmailRequiresFreshVerification(t *testing.T) {
 	database := newDatabase(t)
-	pool := openDatabase(t, database.dsn)
-	// Simulate a version-17 database that retained email without provenance.
-	execSQL(t, pool, `ALTER TABLE users DROP COLUMN email_verified`)
-	execSQL(t, pool, `DELETE FROM schema_migrations WHERE version=18`)
+	// Build an actual version-17 database, independently of later migrations.
+	pool, err := pgxpool.New(t.Context(), database.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	execSQL(t, pool, `CREATE TABLE schema_migrations (version integer PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`)
+	for _, migration := range db.Migrations()[:17] {
+		execSQL(t, pool, migration.SQL)
+		execSQL(t, pool, `INSERT INTO schema_migrations(version,name) VALUES ($1,$2)`, migration.Version, migration.Name)
+	}
 	id := user(t, pool, "https://idp.example/realm", "legacy")
 	upgraded := openDatabase(t, database.dsn)
 	var email string

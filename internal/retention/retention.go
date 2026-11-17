@@ -21,8 +21,9 @@ const lock int64 = 0x4f4c5252455445 // "OLRRETE"
 
 // Result counts the rows deleted from each table.
 type Result struct {
-	Usage      int64 `json:"usage"`
-	UsageDaily int64 `json:"usage_daily"`
+	Usage        int64 `json:"usage"`
+	UsageDaily   int64 `json:"usage_daily"`
+	LocalDevices int64 `json:"local_auth_devices"`
 }
 
 // Cutoffs returns the oldest per-request time and the oldest day kept.
@@ -44,6 +45,7 @@ func Prune(ctx context.Context, pool *pgxpool.Pool, cfg config.Retention, locati
 	}{
 		{`DELETE FROM usage WHERE ctid IN (SELECT ctid FROM usage WHERE ts < $1 LIMIT $2)`, usageBefore, &result.Usage},
 		{`DELETE FROM usage_daily WHERE ctid IN (SELECT ctid FROM usage_daily WHERE day < $1::date LIMIT $2)`, dayBefore.Format("2006-01-02"), &result.UsageDaily},
+		{`DELETE FROM local_auth_devices WHERE ctid IN (SELECT ctid FROM local_auth_devices WHERE expires <= $1 LIMIT $2)`, now, &result.LocalDevices},
 	} {
 		for {
 			var deleted int64
@@ -94,9 +96,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool, cfg config.Retention, location
 		result, err := Prune(runCtx, pool, cfg, location, time.Now())
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			log.Error("retention job failed", "usage", result.Usage, "usage_daily", result.UsageDaily)
+			log.Error("retention job failed", "usage", result.Usage, "usage_daily", result.UsageDaily, "local_auth_devices", result.LocalDevices)
 		} else if err == nil {
-			log.Info("retention", "usage", result.Usage, "usage_daily", result.UsageDaily,
+			log.Info("retention", "usage", result.Usage, "usage_daily", result.UsageDaily, "local_auth_devices", result.LocalDevices,
 				"usage_days", cfg.UsageDays, "usage_daily_days", cfg.UsageDailyDays)
 		}
 		timer := time.NewTimer(time.Until(NextRun(cfg.RunAt, location, time.Now())))

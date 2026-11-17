@@ -23,7 +23,7 @@ import (
 
 const adminUsage = `usage:
   olr admin bootstrap [-password-file FILE]
-  olr admin recover -password-file FILE | -password-stdin
+  olr admin recover -password-file FILE | -password-stdin [-device-header-file NEW_FILE]
   olr admin password change -user USER_UUID -current-password-file FILE -password-file FILE
   olr admin user add -username NAME [-email EMAIL] [-groups staff,admins]
   olr admin user disable -id USER_UUID

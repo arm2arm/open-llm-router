@@ -17,10 +17,16 @@ When you use the LLM router at `<https://router.example.org>`, it stores:
 |---|---|---|---|
 | Account | identity-provider issuer and subject, username, email, group memberships, enabled flag, last login | while you have access | ask `<contact>`; the operator deletes the account with everything below |
 | API keys | label, first 12 characters, a one-way hash, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
+| Known local devices | one-way hash of a random `olr_device` cookie, account ID, creation and expiry; no IP address or browser fingerprint | 30 days after successful local sign-in; expired rows removed by daily retention | clear the cookie in your browser; account erasure removes registrations |
 | Sessions | a hash of the session cookie, creation and expiry | 8 hours, or until you sign out | sign out |
 | Per-request records | time, model, replica, protocol, status, input and output token counts, latency, time to first token, the key used, and the end user if a trusted application made the call for you | `<90>` days | **Usage → Delete my activity**, at any time |
 | Detailed request traces | message text, reasoning, tool definitions, calls and results, provider errors, request parameters, sanitized raw request/response previews, routing steps (pool position, waits, forwarded header names) and stream event timings; disabled by default; requires site approval and personal opt-in | 7 days by default; user chooses 1–30 days | **My requests → Delete traces** or **Usage → Delete my activity** |
 | Daily totals | per day and model: number of requests and tokens | `<400>` days | not deletable by you: needed to enforce today's and this month's quotas and for accounting; the operator deletes them with your account |
+
+The local-device cookie helps keep sign-in available during password-guessing
+attacks. It remains after sign-out and password rotation, but cannot log you in,
+authorize requests or replace your password. Clearing it returns the browser to
+the anonymous guessing budget.
 
 **Content capture:** detailed tracing is disabled by default. Site approval and individual opt-in are both required.
 Users control it on **My requests**. Text and tool arguments may contain sensitive data;

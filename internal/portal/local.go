@@ -31,10 +31,11 @@ func (h *Handler) localLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "permission_error", "request host is forbidden")
 		return
 	}
-	if !h.allowPassword(w, r, body.Username) {
+	release, ok := h.allowPassword(w, r, body.Username)
+	if !ok {
 		return
 	}
-	defer func() { <-h.passwordSlots }()
+	defer release()
 	if len(body.Username) > 256 {
 		invalidCredentials(w)
 		return
@@ -50,7 +51,7 @@ func (h *Handler) localLogin(w http.ResponseWriter, r *http.Request) {
 		unavailable(w)
 		return
 	}
-	session, lifetime, err := h.establishLocal(r, account)
+	session, device, lifetime, err := h.establishLocal(r, account)
 	if errors.Is(err, pgx.ErrNoRows) {
 		invalidCredentials(w)
 		return
@@ -60,6 +61,7 @@ func (h *Handler) localLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cookie(w, sessionCookie, session, lifetime)
+	h.cookie(w, auth.LocalDeviceCookie, device, auth.LocalDeviceLifetime)
 	// Drop an in-progress SSO challenge when choosing local authentication.
 	h.cookie(w, loginCookie, "", -1)
 	respond(w, 200, map[string]any{"must_change_password": account.MustChangePassword})
@@ -77,10 +79,11 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request, u user)
 		fail(w, 403, "permission_error", "a local session is required")
 		return
 	}
-	if !h.allowPassword(w, r, u.Username) {
+	release, ok := h.allowPassword(w, r, u.Username)
+	if !ok {
 		return
 	}
-	defer func() { <-h.passwordSlots }()
+	defer release()
 	current, next := []byte(body.Current), []byte(body.Next)
 	defer clear(current)
 	defer clear(next)

@@ -66,10 +66,11 @@ func (h *Handler) createLocalUser(w http.ResponseWriter, r *http.Request, by use
 	if !allowAdministratorAuthority(w, r, by, policy.Resolve(h.routingConfig().Groups, groups).Admin) {
 		return
 	}
-	if !h.allowPassword(w, r, "admin:"+by.ID) {
+	release, allowed := h.allowAdminPassword(w, r, by.ID)
+	if !allowed {
 		return
 	}
-	defer func() { <-h.passwordSlots }()
+	defer release()
 	password := []byte(body.Password)
 	defer clear(password)
 	id, err := (auth.Admin{Pool: h.pool}).CreateLocalUser(r.Context(), body.Username, body.Email, groups, password)
@@ -122,10 +123,11 @@ func (h *Handler) resetLocalPassword(w http.ResponseWriter, r *http.Request, by 
 	if !ok || !allowAdministratorAuthority(w, r, by, administrator) {
 		return
 	}
-	if !h.allowPassword(w, r, "admin:"+by.ID) {
+	release, allowed := h.allowAdminPassword(w, r, by.ID)
+	if !allowed {
 		return
 	}
-	defer func() { <-h.passwordSlots }()
+	defer release()
 	password := []byte(body.Password)
 	defer clear(password)
 	if localAdminError(w, (auth.Admin{Pool: h.pool}).ResetLocalPassword(r.Context(), id, password)) {

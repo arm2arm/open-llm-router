@@ -298,6 +298,53 @@ requires a replacement password, and later rotation is under **Account**. The
 reserved local administrator cannot be deleted, disabled, demoted or
 converted to an SSO identity through ordinary application/SQL operations.
 
+### Recover during a local-login throttle attack
+
+Anonymous clients can fill the local-login username (10/minute), socket-address
+(20/minute) and global (60/minute) budgets. A browser that has signed in locally
+before keeps an HttpOnly `olr_device` cookie with its own ten-attempt budget;
+anonymous attempts cannot fill that budget or its storage, or occupy both
+password-work slots. The cookie is not a login credential: the current password
+is still required. It lasts 30 days and survives sign-out/password rotation.
+
+For a new browser or a lost device, use database-authorized recovery to create a
+private header file as well as resetting the password. The file must not exist;
+the command creates it with mode 0600 and never prints its contents. Run this on
+the server/container where the database URL is available, using a private writable
+path. The feature requires migration 0019 from this release.
+
+```sh
+olr admin recover -password-file /private/secrets/olr-recovery \
+  -device-header-file /private/secrets/olr-recovery.headers
+curl --fail-with-body \
+  --header @/private/secrets/olr-recovery.headers \
+  --header 'Content-Type: application/json' \
+  --header 'Origin: https://llm.example.org' \
+  --cookie-jar /private/secrets/olr-session.jar \
+  --data-binary @/private/secrets/olr-login.json \
+  https://llm.example.org/portal/login/local
+```
+
+Replace the origin/URL with the configured portal origin. Prepare the login JSON
+in a private file with `username: admin` and the temporary `password`. The response
+still requires the normal password change: send private JSON containing
+`current_password` and `new_password` to `/portal/password` using the cookie jar,
+then sign in with the replacement password. Follow the
+[local cookie-jar workflow](ADMIN_GUIDE.md#use-local-authentication-without-keycloak).
+Delete the private header and request files when finished. This does not clear or
+weaken anonymous throttles; the attack can continue without blocking the recovery
+device's budget. Protect these files even though the header alone cannot sign in.
+If header creation fails after the password was reset, retry with the pending
+temporary password and a new output file; recovery remains idempotent.
+
+At the trusted edge, limit the exact `POST /portal/login/local` route per real
+client, for example an NGINX `limit_req_zone $binary_remote_addr` at `5r/m` with
+`burst=5 nodelay` on `location = /portal/login/local`. Configure the proxy's trusted
+real-IP handling before using that address. Preserve the portal proxy headers
+and TLS configuration from the main location. This is additional protection:
+clients sharing a NAT may share an edge budget, and a server/DB-authorized
+operator should retain a private administrative path through the ingress.
+
 ### Manage ordinary local users
 
 Use **Admin → Create local user** for a password-enabled account and assign existing
