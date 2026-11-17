@@ -165,14 +165,15 @@ untouched. See [PRIVACY.md](PRIVACY.md).
 
 ## Requests and daily totals
 
-- `GET /portal/api/requests`: `{"limit":200,"requests":[{"time":"RFC3339","model":"chat-model",
+- `GET /portal/api/requests`: `{"limit":200,"has_more":false,"requests":[{"time":"RFC3339","model":"chat-model",
   "protocol":"openai","status":"200","input_tokens":3,"output_tokens":7,"latency_ms":400,
   "ttfb_ms":50,"stream":true,"key_prefix":"olr-…","forwarded":false,
   "request_id":"32-hex-characters","operation":"chat/completions","trace_available":true,
   "trace_summary":{"input_messages":3,"output_messages":1,"tool_calls":1,"tool_results":1,
   "tools":2,"finish_reason":"tool_calls","cached_tokens":0,"reasoning_tokens":0,
   "truncated":false},"conversation":"c…"}]}`, newest first, the
-  user's last 200 records (metadata only). `key_prefix` is null once the key is removed, and
+  user's last 200 records (metadata only). `has_more` reports older records outside
+  the window; run totals cover shown calls and a boundary run has an unknown start. `key_prefix` is null once the key is removed, and
   for calls a trusted forwarder made for the user (`forwarded: true`).
 - `GET /portal/api/usage/daily`: `{"timezone":"UTC","days":[{"day":"2026-10-13","requests":0,
   "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
@@ -652,3 +653,17 @@ the change; a successful commit publishes the prepared runtime without another
 required database read. Mutation responses may omit draft impact computation;
 read the routing view again to refresh that optional preview. A delayed legacy
 endpoint save cannot overwrite a newer routing publication.
+
+`GET /portal/api/requests/events` retains the client connection beyond the normal
+10-second JSON request deadline. Its default 15-second heartbeat sends `: ping`
+and rechecks the session. Sign-out or expiry ends the stream at the next check;
+each session lookup remains bounded to 10 seconds. Other portal routes retain
+their request deadline.
+
+Request-history lookup seeks each user's newest direct and forwarded records
+separately, then merges the bounded results. A service account's calls on behalf
+of other users are excluded from its own history.
+
+User search (`GET /portal/api/admin/users?match=…`) returns at most 500 matching
+users with `limit: 500` and `has_more`. Search by username or email to find users
+outside the current result window, including in effective-access previews.

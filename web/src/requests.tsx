@@ -47,6 +47,7 @@ import {
   shortDate,
   groupRows,
   runStats,
+  runKeys,
   type Item,
   type Row,
 } from './requests/model'
@@ -107,12 +108,11 @@ export function RequestsPage() {
   const query = useQuery({
     queryKey: ['requests'],
     queryFn: async ({ signal }) => {
-      const data = await api<{ requests: Row[]; limit: number }>(
-        'requests',
-        'GET',
-        undefined,
-        signal,
-      )
+      const data = await api<{
+        requests: Row[]
+        limit: number
+        has_more: boolean
+      }>('requests', 'GET', undefined, signal)
       // Rows that arrive after the first load are highlighted once.
       const first = seen.current === null
       seen.current ??= new Set()
@@ -153,6 +153,15 @@ export function RequestsPage() {
     },
   })
   const all = useMemo(() => query.data?.requests ?? [], [query.data])
+  const partialRun = useMemo(() => {
+    const oldest = all.at(-1)
+    if (!query.data?.has_more || !oldest) return new Set<Row>()
+    const keys = runKeys(all)
+    const boundary = keys.get(oldest)
+    return new Set(
+      boundary ? all.filter((row) => keys.get(row) === boundary) : [oldest],
+    )
+  }, [all, query.data?.has_more])
   // eslint-disable-next-line react-hooks/purity -- the range is relative to each render
   const since = ranges[range] ? Date.now() - ranges[range] : 0
   const filtered = all.filter((r) => matches(r, search, filter, since))
@@ -282,6 +291,12 @@ export function RequestsPage() {
           hint={`${n(all.reduce((s, r) => s + (r.trace_summary?.reasoning_tokens ?? 0), 0))} reasoning`}
         />
       </div>
+      {query.data && all.length >= query.data.limit && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Showing the latest {query.data.limit} requests. Filters and totals
+          cover this window only.
+        </p>
+      )}
       <section className="panel trace-history" aria-label="Recent requests">
         <div className="trace-toolbar">
           <div className="trace-search">
@@ -386,6 +401,7 @@ export function RequestsPage() {
                     <GroupRow
                       key={item.key}
                       rows={item.rows}
+                      partial={item.rows.some((row) => partialRun.has(row))}
                       open={!shut}
                       active={id}
                       toggle={() =>
@@ -576,12 +592,14 @@ function RunningRow({
 
 function GroupRow({
   rows,
+  partial,
   open,
   active,
   toggle,
   inspect,
 }: {
   rows: Row[]
+  partial: boolean
   open: boolean
   active?: string
   toggle: () => void
@@ -612,18 +630,31 @@ function GroupRow({
               {s.toolCallsUnknown ? ' · some counts unknown' : ''}
             </span>
           )}
-          <span title="From the first request to the end of the last">
-            {ms(s.end - s.start)} total · {ms(s.busy)} in the model
+          <span
+            title={
+              partial
+                ? 'Duration of the shown calls; earlier calls may be outside this window'
+                : 'From the first request to the end of the last'
+            }
+          >
+            {ms(s.end - s.start)} {partial ? 'shown' : 'total'} · {ms(s.busy)}{' '}
+            in the model
           </span>
           <span>
             {n(s.input)} → {n(s.output)} tokens
           </span>
           {s.failed > 0 && <span className="trace-bad">{s.failed} failed</span>}
           <span className="trace-secondary">
-            {s.models.join(', ')} · started{' '}
+            {s.models.join(', ')} · {partial ? 'first shown' : 'started'}{' '}
             {shortDate(new Date(s.start).toISOString())}
           </span>
         </div>
+        {partial && (
+          <p className="trace-secondary">
+            Earlier calls may be outside this window. Run totals cover shown
+            calls only.
+          </p>
+        )}
         <div
           className="trace-run-bar"
           role="group"

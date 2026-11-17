@@ -58,10 +58,8 @@ func (h *Handler) calendar() (day, month time.Time) {
 
 // adminUsers lists users (optionally matching part of a username or email)
 // with key counts, this day's and month's tokens and overrides.
-func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
-	match := strings.TrimSpace(r.URL.Query().Get("match"))
-	day, month := h.calendar()
-	rows, err := h.pool.Query(r.Context(), `SELECT u.id, u.issuer, u.username, u.email, u.groups, u.enabled, u.synced_at,u.protected_admin,
+// AdminUsersQuery is shared with the seeded query-plan regression.
+const AdminUsersQuery = `SELECT u.id, u.issuer, u.username, u.email, u.groups, u.enabled, u.synced_at,u.protected_admin,
 		(SELECT count(*) FROM api_keys k WHERE k.user_id = u.id AND NOT k.revoked AND (k.expires IS NULL OR k.expires > clock_timestamp())),
 		COALESCE((SELECT sum(d.input_tokens + d.output_tokens) FROM usage_daily d WHERE d.user_id = u.id AND d.day = $2::date), 0)::bigint,
 		COALESCE((SELECT sum(d.input_tokens + d.output_tokens) FROM usage_daily d WHERE d.user_id = u.id AND d.day >= $3::date), 0)::bigint,
@@ -70,7 +68,12 @@ func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 		COALESCE((SELECT must_change_password FROM local_credentials c WHERE c.user_id=u.id),false)
 		FROM users u
 		WHERE $1 = '' OR strpos(lower(u.username), lower($1)) > 0 OR strpos(lower(u.email), lower($1)) > 0
-		ORDER BY u.username, u.issuer, u.id LIMIT 500`, match, day.Format("2006-01-02"), month.Format("2006-01-02"))
+		ORDER BY u.username, u.issuer, u.id LIMIT 501`
+
+func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
+	match := strings.TrimSpace(r.URL.Query().Get("match"))
+	day, month := h.calendar()
+	rows, err := h.pool.Query(r.Context(), AdminUsersQuery, match, day.Format("2006-01-02"), month.Format("2006-01-02"))
 	if err != nil {
 		unavailable(w)
 		return
@@ -96,7 +99,11 @@ func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"users": users, "override_fields": policy.OverrideFields})
+	hasMore := len(users) > 500
+	if hasMore {
+		users = users[:500]
+	}
+	respond(w, 200, map[string]any{"users": users, "override_fields": policy.OverrideFields, "limit": 500, "has_more": hasMore})
 }
 
 // adminUser returns one user's effective limits, overrides with their audit

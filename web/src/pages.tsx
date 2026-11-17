@@ -554,7 +554,7 @@ function UserManagement({ self }: { self: string }) {
   const users = useQuery({
     queryKey: ['admin-users', search],
     queryFn: () =>
-      api<{ users: AdminUser[] }>(
+      api<{ users: AdminUser[]; limit: number; has_more: boolean }>(
         `admin/users?match=${encodeURIComponent(search)}`,
       ),
   })
@@ -651,6 +651,12 @@ function UserManagement({ self }: { self: string }) {
           </form>
         </div>
         <Failure error={users.error} />
+        {users.data?.has_more && (
+          <p role="status" className="px-4 pb-3 text-sm text-muted-foreground">
+            Showing the first {users.data.limit} matching users. Search by name
+            or email to find others.
+          </p>
+        )}
         <div className="table-wrap">
           <table data-testid="users-table">
             <caption className="sr-only">Users</caption>

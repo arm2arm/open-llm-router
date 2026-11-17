@@ -24,7 +24,10 @@ configuration examples, onboarding checks and two-week closure record are in
 [PILOT.md](PILOT.md). Use that file for a production realm and real GPU pools; the root
 Compose stack includes development Keycloak and mock backends.
 
-Startup applies database migrations and fails before listening if the database is unavailable.
+Startup bounds database connection and ping to 10 seconds, then applies pending
+migrations under a separate five-minute deadline. Each migration logs its start,
+finish and duration; migrations commit together, and failures roll back the batch.
+The router listens only after the database is ready.
 OIDC discovery, token verification initialization and group-sync initialization run separately
 and retry after failures; local authentication and API keys remain usable. `/portal/api/auth`
 reports SSO availability. `/healthz` is liveness; `/readyz` checks database availability.
@@ -234,7 +237,9 @@ kubectl apply -k <overlay>
 ```
 
 The router migrates the database at startup and restarts until Postgres is reachable; run
-`olr migrate` as a Job first if preferred. Keep `replicas: 1` until counters are shared
+`olr migrate` as a Job before upgrades that index or rewrite large `usage` tables.
+Both `serve` and `olr migrate` allow up to five minutes for schema changes; plan
+longer changes separately and set deployment probe/job deadlines accordingly. Keep `replicas: 1` until counters are shared
 (see Known limitations). With another ingress controller or a Gateway, set the equivalent of
 buffering off and timeouts of at least `timeout_s`. `/metrics` stays behind its token; scrape it
 through the Service.

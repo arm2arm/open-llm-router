@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -182,17 +182,31 @@ export function GroupPolicies({
 }
 
 export function AccessPreview({ document }: { document: RoutingDocument }) {
+  const [match, setMatch] = useState('')
+  const [search, setSearch] = useState('')
+  const [selectedName, setSelectedName] = useState('')
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(match.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [match])
   const users = useQuery({
-    queryKey: ['policy-preview-users'],
-    queryFn: () =>
+    queryKey: ['policy-preview-users', search],
+    queryFn: ({ signal }) =>
       api<{
+        limit: number
+        has_more: boolean
         users: {
           id: string
           username: string
           groups: string[]
           protected_admin: boolean
         }[]
-      }>('admin/users'),
+      }>(
+        `admin/users?match=${encodeURIComponent(search)}`,
+        'GET',
+        undefined,
+        signal,
+      ),
   })
   const [user, setUser] = useState('')
   const [memberships, setMemberships] = useState<string[]>([])
@@ -211,6 +225,20 @@ export function AccessPreview({ document }: { document: RoutingDocument }) {
     >
       <legend>Effective access and affected users</legend>
       <label className="grid gap-1 text-sm">
+        Find a user by name or email
+        <Input
+          value={match}
+          onChange={(e) => setMatch(e.target.value)}
+          placeholder="Search users"
+        />
+      </label>
+      {users.data?.has_more && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Showing the first {users.data.limit} matching users. Narrow the search
+          to find others.
+        </p>
+      )}
+      <label className="grid gap-1 text-sm">
         Stored user overrides
         <select
           className="select"
@@ -218,6 +246,7 @@ export function AccessPreview({ document }: { document: RoutingDocument }) {
           value={user}
           onChange={(e) => {
             setUser(e.target.value)
+            setSelectedName(e.target.selectedOptions[0]?.textContent ?? '')
             setMemberships(
               users.data?.users.find((u) => u.id === e.target.value)?.groups ??
                 [],
@@ -225,6 +254,9 @@ export function AccessPreview({ document }: { document: RoutingDocument }) {
           }}
         >
           <option value="">No user overrides</option>
+          {user && !users.data?.users.some((u) => u.id === user) && (
+            <option value={user}>{selectedName}</option>
+          )}
           {users.data?.users.map((u) => (
             <option key={u.id} value={u.id}>
               {u.username}

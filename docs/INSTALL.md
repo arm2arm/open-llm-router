@@ -480,3 +480,8 @@ development stack or use the development credentials on a public server.
 Next: [administrator tasks](ADMIN_GUIDE.md), [client configuration](CLIENTS.md),
 [operations and backups](RUNBOOK.md), [metrics/traces](OBSERVABILITY.md), and
 [production pilot acceptance](PILOT.md).
+
+Database startup uses a 10-second connect/ping budget and a separate five-minute
+migration budget, with per-migration progress logs. Before upgrades on large
+usage tables, run `olr migrate` as a deployment Job and check it completes before
+starting the new router. See the [upgrade runbook](RUNBOOK.md).

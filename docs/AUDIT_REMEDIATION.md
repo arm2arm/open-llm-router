@@ -377,3 +377,37 @@ and P3; dependencies may change that order.
   cancel the service context immediately when the committing connection is
   released, and stage a real endpoint save after commit while activating managed
   policy. Unit checks cover both publication orders.
+
+## Request-history lifetime evidence
+
+- **#173:** Only the exact live-events GET route avoids the portal JSON deadline;
+  client cancellation remains intact and session lookups have their own 10-second
+  bound. A real PostgreSQL-backed test retains two streams for 20 seconds with
+  the default 15-second heartbeat, observes pings, then checks sign-out and expiry
+  produce end events at the next heartbeat. Middleware checks keep other routes
+  on the 10-second deadline.
+
+- **#174:** Request history bounds the forwarded and direct attribution branches
+  separately before merging their newest rows and joining trace metadata.
+  Migration 0030 supplies ordered forwarded and partial direct indexes. An
+  EXPLAIN ANALYZE regression seeds 200,000 direct and forwarded rows, checks bounded plans
+  for empty users, forwarder accounts and busy recipients, and verifies mixed
+  direct/forwarded ordering without leaking another recipient's calls.
+
+- **#258:** Migration 0031 adds `(user_id, day)` to daily usage. A seeded
+  PostgreSQL regression checks the actual administrator summary query against
+  45,000 rows, verifies its user-leading index plan and monthly totals, checks
+  the cascade's user predicate plan, and deletes a user to verify cleanup.
+
+- **#241 (dependency of #173):** Database connect/ping retain a 10-second
+  budget while startup migrations receive five minutes and log per-migration
+  progress. A real 12-second migration commits through the shared startup path;
+  a stalled PostgreSQL handshake still fails within the connection budget.
+  Installation and upgrade guidance state the budgets and pre-upgrade job advice.
+
+- **#229:** History and user search report `limit` and `has_more` using one
+  extra bounded row. The UI identifies the 200-request window and incomplete
+  boundary runs, including after filtering, and labels their first shown call
+  instead of claiming a complete start. User lists show the 500-result cap;
+  policy previews search by name/email and retain the selected user across
+  searches. PostgreSQL and browser regressions cover both window boundaries.

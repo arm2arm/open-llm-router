@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"github.com/arm2arm/open-llm-router/internal/audit"
@@ -36,7 +37,9 @@ func (h *Handler) session(r *http.Request) (user, error) {
 	if !ok {
 		return u, pgx.ErrNoRows
 	}
-	err := h.pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.email,u.groups,u.protected_admin,
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	err := h.pool.QueryRow(ctx, `SELECT u.id,u.username,u.email,u.groups,u.protected_admin,
 		s.auth_method,(s.scope='password_change' OR COALESCE(c.must_change_password,false)),s.created,
 		(SELECT jsonb_object_agg(o.field,o.value) FROM quota_overrides o WHERE o.user_id=u.id)
 		FROM sessions s JOIN users u ON u.id=s.user_id
