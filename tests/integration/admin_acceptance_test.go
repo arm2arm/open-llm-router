@@ -78,7 +78,7 @@ groups:
 		var value string
 		err := pool.QueryRow(t.Context(), `SELECT json_build_object(
  'credentials',(SELECT json_agg(row_to_json(c) ORDER BY user_id) FROM local_credentials c),
- 'protected',(SELECT json_agg(to_jsonb(u) - 'email_verified' ORDER BY id) FROM users u WHERE protected_admin),
+ 'protected',(SELECT json_agg(to_jsonb(u) - 'email_verified' - 'trace_preferences_set_at' ORDER BY id) FROM users u WHERE protected_admin),
  'state',(SELECT json_agg(row_to_json(s) ORDER BY domain) FROM settings_state s),
  'revisions',(SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM settings_revisions r),
  'audit',(SELECT md5(string_agg(row_to_json(a)::text,'' ORDER BY id)) FROM audit_events a))::text`).Scan(&value)
