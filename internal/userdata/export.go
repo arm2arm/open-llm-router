@@ -34,8 +34,17 @@ func Export(ctx context.Context, pool *pgxpool.Pool, id string, output io.Writer
 		return errors.New("read export account failed")
 	}
 	write := func(data string) error { _, err := io.WriteString(output, data); return err }
-	stamp, _ := json.Marshal(time.Now().UTC())
-	if err := write(`{"version":1,"exported_at":` + string(stamp) + `,"user":` + string(profile)); err != nil {
+	encoder := json.NewEncoder(output)
+	if err := write(`{"version":1,"exported_at":`); err != nil {
+		return err
+	}
+	if err := encoder.Encode(time.Now().UTC()); err != nil {
+		return err
+	}
+	if err := write(`,"user":`); err != nil {
+		return err
+	}
+	if err := encoder.Encode(profile); err != nil {
 		return err
 	}
 	sections := []struct{ name, query string }{
@@ -52,7 +61,13 @@ func Export(ctx context.Context, pool *pgxpool.Pool, id string, output io.Writer
 		{"administration_history", `SELECT id,occurred_at,action,actor_type,actor_id,actor_name,actor_host,target_type,target_id,revision,result,reason,details FROM audit_events WHERE actor_id=$1::uuid OR target_id=$1::text OR details->>'user_id'=$1::text OR details->>'owner_id'=$1::text ORDER BY id`},
 	}
 	for _, section := range sections {
-		if err := write(`,"` + section.name + `":[`); err != nil {
+		if err := write(","); err != nil {
+			return err
+		}
+		if err := encoder.Encode(section.name); err != nil {
+			return err
+		}
+		if err := write(`:[`); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT to_jsonb(record) FROM (`+section.query+`) record`, id)
@@ -89,7 +104,7 @@ func Export(ctx context.Context, pool *pgxpool.Pool, id string, output io.Writer
 					return err
 				}
 			}
-			if _, err := output.Write(row); err != nil {
+			if err := encoder.Encode(row); err != nil {
 				rows.Close()
 				return err
 			}

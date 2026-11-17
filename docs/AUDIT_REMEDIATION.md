@@ -237,6 +237,8 @@ and P3; dependencies may change that order.
   without hashes/secrets, overrides, session/device timestamps, attributed usage,
   daily totals, sanitized traces and related history. Private-file mode is 0600,
   refuses overwrite and removes failed partial exports. Actual-CLI tests verify
+  structured JSON encoding preserves quoted/backslash-containing identity fields
+  without concatenating untrusted values into JSON. They also verify
   203 forwarded calls plus a direct call in the end user's export, exclusion of
   others' calls from the service owner's export, credential exclusion and safe
   files. Snapshot regression excludes concurrently added requests. Disabled dates

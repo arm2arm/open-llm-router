@@ -28,7 +28,7 @@ func TestCLIUserExportAndDisabledAccountLifecycle(t *testing.T) {
 		}
 		return id
 	}
-	alice, bob, forwarder := add("export-alice"), add("export-bob"), add("export-forwarder")
+	alice, bob, forwarder := add("export-alice \"quoted\" \\ name"), add("export-bob"), add("export-forwarder")
 	secret, err := admin.CreateKey(t.Context(), alice, "personal fixture", time.Hour)
 	if err != nil {
 		t.Fatal(err)
