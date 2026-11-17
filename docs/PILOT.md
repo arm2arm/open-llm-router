@@ -55,11 +55,22 @@ export OLR_PILOT_ENV_FILE="$HOME/.config/olr-pilot/pilot.env"
 Edit both copies. Set `OLR_SITE_CONFIG` to the absolute config path and `OLR_IMAGE` to
 the tested `registry/image@sha256:...` digest. Set an HTTPS `OIDC_ISSUER` and
 `PORTAL_BASE_URL`, the production database URL and all secrets. Single-quote values
-containing `$`, `#` or spaces in the environment file. Use the site's required database TLS
-settings. Both config examples assume authenticated vLLM replicas; remove a replica's
+containing `$`, `#` or spaces in the environment file. The pilot enables
+`security.require_tls: true`: use a PostgreSQL URL with `sslmode=verify-full` and
+the site's trusted CA, an HTTPS issuer, HTTPS backends and HTTPS telemetry collectors.
+Startup rejects plaintext or non-verifying service links. For an intentionally private
+HTTP backend, explicitly set `security.require_tls: false` in the private site YAML
+and enforce the transport boundary with cluster routing and firewall rules; the public
+portal still requires HTTPS and secure cookies. Both config examples assume authenticated vLLM replicas; remove a replica's
 `bearer_token_env` when it intentionally has no authentication. Adapt the replica count,
 protocol list and groups to the site. The quota/capacity values supplied are starting
 examples and need site agreement and measurement.
+
+Set `oidc.required_claim: {name: affiliation, value: member@example.org}` in the site
+YAML or `OIDC_REQUIRED_CLAIM=affiliation=member@example.org` in pilot.env. An unset or
+blank environment value preserves the YAML claim; `OIDC_REQUIRED_CLAIM=none` explicitly
+removes it. To disable service access-token authentication while keeping browser SSO,
+set `OIDC_AUDIENCE=` in pilot.env. Leaving it unset defaults to `olr-api`.
 
 The environment file is passed to both Compose interpolation and the container so that
 custom backend credentials and YAML variables reach the router. Shell environment values

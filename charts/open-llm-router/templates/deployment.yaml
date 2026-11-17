@@ -9,6 +9,9 @@
 {{- if and .Values.portal.cookieSecure (not (hasPrefix "https://" .Values.portal.baseURL)) }}
 {{- fail "portal.cookieSecure=true requires an HTTPS portal.baseURL" }}
 {{- end }}
+{{- if and (hasPrefix "https://" .Values.portal.baseURL) (not .Values.portal.cookieSecure) }}
+{{- fail "portal.cookieSecure must be true when portal.baseURL uses HTTPS" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,7 +46,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or .Values.postgresql.enabled .Values.keycloak.enabled }}
+      {{- if .Values.postgresql.enabled }}
       initContainers:
         {{- if .Values.postgresql.enabled }}
         - name: wait-for-postgresql
@@ -55,28 +58,6 @@ spec:
             - {name: PGHOST, value: {{ include "olr.componentName" (dict "root" . "component" "postgresql") | quote }}}
             - {name: PGUSER, value: {{ .Values.postgresql.username | quote }}}
             - {name: PGDATABASE, value: {{ .Values.postgresql.database | quote }}}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
-          resources:
-            requests: {cpu: 10m, memory: 16Mi}
-            limits: {memory: 64Mi}
-        {{- end }}
-        {{- if .Values.keycloak.enabled }}
-        - name: wait-for-keycloak
-          image: {{ .Values.keycloak.image | quote }}
-          command: [/bin/bash, -ec]
-          args:
-            - |
-              until (
-                exec 3<>/dev/tcp/"$KEYCLOAK_HOST"/8080
-                printf 'GET /realms/olr-demo/.well-known/openid-configuration HTTP/1.0\r\nHost: %s\r\n\r\n' "$KEYCLOAK_HOST" >&3
-                read -r response <&3
-                [[ "$response" == *" 200 "* ]]
-              ); do sleep 2; done
-          env:
-            - {name: KEYCLOAK_HOST, value: {{ include "olr.componentName" (dict "root" . "component" "keycloak") | quote }}}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

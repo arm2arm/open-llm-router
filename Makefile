@@ -1,7 +1,7 @@
 # Tools run at pinned versions without becoming dependencies of the module.
 STATICCHECK := go run honnef.co/go/tools/cmd/staticcheck@v0.8.2
 GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
-COMPOSE     := docker compose
+COMPOSE     := docker compose $(if $(wildcard .env),--env-file .env)
 SDK_RUN     ?= uv run
 
 .PHONY: build lint vuln test test-clients up smoke sdk sdk-limits portal-check brokered-check sdk-real bench-real down

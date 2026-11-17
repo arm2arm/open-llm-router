@@ -62,6 +62,12 @@ datasource has uid `prometheus`, or change the uid in the script.
 anonymous viewer) and Jaeger (http://localhost:16686) receiving the router's spans over
 OTLP/HTTP; the router gets a development metrics token and `OTEL_EXPORTER_OTLP_ENDPOINT`.
 List vLLM backends to scrape in `deploy/observability/vllm-targets.json`.
+The Make target reads `.env` at the repository root, preserving the existing router's
+port, database and backend settings. Copy `.env.example` there before using a direct
+`docker compose --env-file .env -f ...` command. Set `OLR_METRICS_TOKEN` there to change
+the development token: the router and Prometheus receive the same value. Prometheus
+writes it to a private file at startup without printing it. Check `/targets` on
+Prometheus for the `olr` target's `UP` state before using the dashboard.
 `make observability-down` stops everything. To find one call, send it with a `traceparent`
 header (or read the `trace_id` from the router's log line) and open
 `http://localhost:16686/trace/<trace id>`.

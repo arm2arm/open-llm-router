@@ -17,10 +17,9 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:?Set the production realm issuer}
       OIDC_PORTAL_CLIENT_ID: ${OIDC_PORTAL_CLIENT_ID:-olr-portal}
       OIDC_PORTAL_CLIENT_SECRET: ${OIDC_PORTAL_CLIENT_SECRET:?Set the production portal client secret}
-      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-olr-api}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE-olr-api}
       OIDC_SYNC_CLIENT_ID: ${OIDC_SYNC_CLIENT_ID:-olr-sync}
       OIDC_SYNC_CLIENT_SECRET: ${OIDC_SYNC_CLIENT_SECRET:?Set the production group sync client secret}
-      OIDC_REQUIRED_CLAIM: ${OIDC_REQUIRED_CLAIM-}
       # Use public discovery and secure cookies, without the dev overrides.
       OIDC_BACKCHANNEL_URL: ""
       PORTAL_BASE_URL: ${PORTAL_BASE_URL:?Set the public HTTPS portal origin}

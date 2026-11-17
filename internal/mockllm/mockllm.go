@@ -48,9 +48,12 @@ const (
 	// ThinkingText is the text of a thinking block.
 	ThinkingText = "Considering the request."
 
-	defaultTokens = 16
-	defaultModel  = "chat-model"
-	maxBody       = 64 << 20
+	defaultTokens          = 16
+	defaultModel           = "chat-model"
+	maxBody                = 64 << 20
+	maxRequestedTokens     = 8192
+	maxEmbeddingDimensions = 4096
+	maxEmbeddingElements   = 1 << 20
 )
 
 // Fail is a way for the mock to misbehave.
@@ -82,6 +85,9 @@ func (o *Options) set(key, value string) error {
 		o.Tokens, err = strconv.Atoi(value)
 		if err == nil && o.Tokens < 0 {
 			err = errors.New("must not be negative")
+		}
+		if err == nil && o.Tokens > maxRequestedTokens {
+			err = fmt.Errorf("must not exceed %d", maxRequestedTokens)
 		}
 	case "token-delay":
 		o.TokenDelay, err = time.ParseDuration(value)

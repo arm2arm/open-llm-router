@@ -1,5 +1,7 @@
 # Copy to the private OLR_SITE_CONFIG path and adapt to the site's models/groups.
 # Variables are supplied by pilot.env; credentials stay in that environment.
+security:
+  require_tls: true
 auth:
   default_key_lifetime_days: 90
   max_key_lifetime_days: 90

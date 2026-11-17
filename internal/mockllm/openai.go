@@ -183,6 +183,10 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request, c *call) {
 	if !c.decode(w, &req, &req.Model) {
 		return
 	}
+	if req.Dimensions < 0 || req.Dimensions > maxEmbeddingDimensions {
+		http.Error(w, "dimensions must be between 1 and 4096, or omitted for the default", http.StatusBadRequest)
+		return
+	}
 	// One embedding per input: a list of strings is several inputs, anything
 	// else (a string, a list of token IDs) is one.
 	inputs := []any{req.Input}
@@ -193,6 +197,10 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request, c *call) {
 	}
 	if req.Dimensions <= 0 {
 		req.Dimensions = 8
+	}
+	if len(inputs) > maxEmbeddingElements/req.Dimensions {
+		http.Error(w, "embedding batch exceeds the mock response limit", http.StatusBadRequest)
+		return
 	}
 	data := make([]obj, len(inputs))
 	for i, input := range inputs {

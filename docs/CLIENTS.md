@@ -331,6 +331,9 @@ Without an evidence URL, the check prints **backend cancellation UNVERIFIED**. W
 `OLR_REQUIRE_CANCEL_EVIDENCE=1`, missing evidence fails. An early client close alone cannot
 prove GPU generation stopped. Mock checks use `OLR_CANCEL_STATS_URLS`, a comma-separated list
 of all replicas' `/_mock/stats` URLs, and require an abort plus zero in-flight requests.
+Demo backend request controls cap `X-Mock-Tokens` at 8192, embedding dimensions at
+4096 and total embedding components at 1048576 per request. Oversized inputs return 400.
+
 `OLR_TEST_MOCK=1` enables per-request mock headers for the extended tests; leave it unset on
 real backends. `make sdk` sets these automatically and exercises both replicas.
 

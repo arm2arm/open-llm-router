@@ -168,7 +168,7 @@ type OIDC struct {
 	SyncMaxDisable int `yaml:"sync_max_disable"`
 	// RequiredClaim, if set, must be in the ID token at portal login: a
 	// string claim equal to Value, or an array containing it. Env:
-	// OIDC_REQUIRED_CLAIM=name=value.
+	// OIDC_REQUIRED_CLAIM=name=value. Empty preserves YAML; "none" clears it.
 	RequiredClaim *RequiredClaim `yaml:"required_claim"`
 	// DefaultSignIn chooses the primary sign-in option: "keycloak" (the
 	// default) or "local". Both stay available.
@@ -329,13 +329,13 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if value, ok := lookup("OIDC_PORTAL_CLIENT_SECRET"); ok {
 		cfg.OIDCClientSecret = value
 	}
-	if value, ok := lookup("OIDC_REQUIRED_CLAIM"); ok && cfg.OIDC != nil {
-		if value == "" {
+	if value, ok := lookup("OIDC_REQUIRED_CLAIM"); ok && value != "" && cfg.OIDC != nil {
+		if value == "none" {
 			cfg.OIDC.RequiredClaim = nil
 		} else if name, want, found := strings.Cut(value, "="); found {
 			cfg.OIDC.RequiredClaim = &RequiredClaim{Name: name, Value: want}
 		} else {
-			problems = append(problems, "OIDC_REQUIRED_CLAIM: must be name=value")
+			problems = append(problems, "OIDC_REQUIRED_CLAIM: must be name=value or none")
 		}
 	}
 	if value, ok := lookup(EnvOIDCSyncSecret); ok {
@@ -676,6 +676,9 @@ func (c *Config) validate() Problems {
 	}
 	if !isBackendURL(c.Portal.BaseURL) {
 		add("PORTAL_BASE_URL: must be an http or https origin without credentials, path, query or fragment")
+	}
+	if strings.HasPrefix(c.Portal.BaseURL, "https://") && !c.Portal.CookieSecure {
+		add("PORTAL_COOKIE_SECURE: must be true when PORTAL_BASE_URL uses HTTPS")
 	}
 
 	// An empty catalog supports initial setup and backend recovery through the

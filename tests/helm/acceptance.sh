@@ -178,6 +178,41 @@ sso
 user=$(kubectl -n olr exec deployment/olr-open-llm-router -- olr admin user add -username helm-test -groups staff)
 key=$(kubectl -n olr exec deployment/olr-open-llm-router -- olr admin key create -user "$user" -label helm-test)
 models
+# A new router must start independently of the optional identity provider.
+kubectl -n olr scale deployment/olr-open-llm-router-keycloak --replicas=0
+kubectl -n olr rollout status deployment/olr-open-llm-router-keycloak --timeout=60s
+kubectl -n olr rollout restart deployment/olr-open-llm-router
+kubectl -n olr rollout status deployment/olr-open-llm-router --timeout=120s
+forward
+models
+curl --fail --silent --show-error "$base/v1/chat/completions" \
+  -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+  -d '{"model":"chat-model","messages":[]}' > "$work/offline-completion.json"
+python3 - "$base" <<'PYOFFLINE'
+import sys
+sys.path.insert(0, 'tests/clients')
+from check_portal import Browser
+browser = Browser(sys.argv[1])
+browser.request('/portal/login/local', 'POST', {
+    'username': 'admin', 'password': 'helm-only-replacement-password',
+})
+assert browser.request('/portal/api/auth/session')['auth_method'] == 'local'
+assert not browser.request('/portal/api/auth')['oidc']['available']
+PYOFFLINE
+router_uid=$(kubectl -n olr get pod -l app.kubernetes.io/name=open-llm-router,app.kubernetes.io/instance=olr -o 'jsonpath={.items[0].metadata.uid}')
+kubectl -n olr scale deployment/olr-open-llm-router-keycloak --replicas=1
+kubectl -n olr rollout status deployment/olr-open-llm-router-keycloak --timeout=300s
+if [ -n "$kc_pf" ]; then kill "$kc_pf" 2>/dev/null || true; wait "$kc_pf" 2>/dev/null || true; fi
+kubectl -n olr port-forward service/olr-open-llm-router-keycloak "$kc_port:8080" > "$work/keycloak-forward.log" 2>&1 &
+kc_pf=$!
+recovered=false
+for attempt in $(seq 1 90); do
+  if curl --fail --silent --max-time 2 "$base/portal/api/auth" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["oidc"]["available"] else 1)' 2>/dev/null; then recovered=true; break; fi
+  sleep 1
+done
+[ "$recovered" = true ]
+[ "$router_uid" = "$(kubectl -n olr get pod -l app.kubernetes.io/name=open-llm-router,app.kubernetes.io/instance=olr -o 'jsonpath={.items[0].metadata.uid}')" ]
+sso
 curl --fail --silent --show-error -N "$base/v1/chat/completions" \
   -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
   -d '{"model":"chat-model","messages":[],"stream":true}' > "$work/stream.sse"

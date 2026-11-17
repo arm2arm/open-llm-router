@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import shutil
+import shlex
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +17,47 @@ REQUIRED = (
     "OIDC_PORTAL_CLIENT_SECRET", "OIDC_SYNC_CLIENT_SECRET", "PORTAL_BASE_URL",
     "OLR_METRICS_TOKEN",
 )
+
+
+class LocalCompose(unittest.TestCase):
+    def test_documented_commands_preserve_root_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(ROOT / "deploy/compose", root / "deploy/compose")
+            shutil.copy(ROOT / "compose.yaml", root)
+            shutil.copy(ROOT / "Makefile", root)
+            values = {
+                "OLR_BOOTSTRAP_ADMIN_PASSWORD": "synthetic-test-password",
+                "OLR_PORT": "18089",
+                "OLR_DATABASE_URL": "postgres://test:synthetic@database.invalid/olr?sslmode=disable",
+                "OLR_SETTINGS_ENCRYPTION_KEY": "synthetic-encryption-key",
+                "OLR_CONFIG_FILE": "../../config.ollama.example.yaml",
+                "OLLAMA_BASE_URL": "http://model.invalid:11434",
+                "OLLAMA_MODEL": "test-model",
+                "OLR_METRICS_TOKEN": "synthetic-custom-metrics",
+            }
+            (root / ".env").write_text("".join(f"{k}={v}\n" for k, v in values.items()))
+            env = {k: v for k, v in os.environ.items()
+                   if not k.startswith(("OLR_", "OIDC_", "PORTAL_", "OLLAMA_", "COMPOSE_"))}
+            local = next(line[2:] for line in (ROOT / ".env.example").read_text().splitlines()
+                         if line.startswith("# docker compose "))
+            observability = subprocess.check_output(
+                ["make", "--no-print-directory", "-n", "observability-up"], cwd=root, env=env, text=True)
+            for command in (local, observability):
+                args = shlex.split(command)
+                args = args[:args.index("up")] + ["config", "--format", "json"]
+                config = json.loads(subprocess.check_output(args, cwd=root, env=env, text=True))
+                router = config["services"]["router"]
+                for key, value in values.items():
+                    if key not in ("OLR_PORT", "OLR_CONFIG_FILE", "OLR_METRICS_TOKEN"):
+                        self.assertEqual(router["environment"][key], value)
+                self.assertEqual(router["ports"][0]["published"], "18089")
+                if "prometheus" in config["services"]:
+                    self.assertTrue(router["volumes"][0]["source"].endswith("config.ollama.example.yaml"))
+                    prometheus = config["services"]["prometheus"]
+                    self.assertEqual(router["environment"]["OLR_METRICS_TOKEN"], values["OLR_METRICS_TOKEN"])
+                    self.assertEqual(prometheus["environment"]["OLR_METRICS_TOKEN"], values["OLR_METRICS_TOKEN"])
+                    self.assertIn('"$$OLR_METRICS_TOKEN"', prometheus["command"][0])
 
 
 class PilotCompose(unittest.TestCase):
@@ -34,7 +77,7 @@ class PilotCompose(unittest.TestCase):
         self.values.update({
             "OLR_IMAGE": "example.invalid/olr@sha256:" + "a" * 64,
             "OLR_SITE_CONFIG": str(self.config_file),
-            "OLR_DATABASE_URL": "postgres://test:synthetic@db.invalid/olr",
+            "OLR_DATABASE_URL": "postgres://test:synthetic@db.invalid/olr?sslmode=verify-full",
             "OIDC_ISSUER": "https://login.invalid/realms/pilot",
             "OIDC_PORTAL_CLIENT_SECRET": "synthetic-portal",
             "OIDC_SYNC_CLIENT_SECRET": "synthetic-sync",
@@ -96,6 +139,33 @@ class PilotCompose(unittest.TestCase):
                 result = self.render({**self.values, key: ""})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(key, result.stderr)
+
+    def test_required_claim_is_not_invented_and_audience_can_be_disabled(self):
+        for values, expected in (
+            (self.values, None),
+            ({**self.values, "OIDC_REQUIRED_CLAIM": ""}, ""),
+            ({**self.values, "OIDC_REQUIRED_CLAIM": "affiliation=member"}, "affiliation=member"),
+            ({**self.values, "OIDC_REQUIRED_CLAIM": "none"}, "none"),
+        ):
+            with self.subTest(claim=expected):
+                result = self.render(values)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                env = json.loads(result.stdout)["services"]["router"]["environment"]
+                self.assertEqual(env.get("OIDC_REQUIRED_CLAIM"), expected)
+                if expected is None:
+                    self.assertNotIn("OIDC_REQUIRED_CLAIM", env)
+        for value in ("", "custom-audience"):
+            result = self.render({**self.values, "OIDC_AUDIENCE": value})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            env = json.loads(result.stdout)["services"]["router"]["environment"]
+            self.assertEqual(env["OIDC_AUDIENCE"], value)
+
+    def test_production_template_enforces_verified_tls(self):
+        self.assertIn("security:\n  require_tls: true\n", self.config_file.read_text())
+        result = self.render(self.values)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        env = json.loads(result.stdout)["services"]["router"]["environment"]
+        self.assertIn("sslmode=verify-full", env["OLR_DATABASE_URL"])
 
 
 if __name__ == "__main__":

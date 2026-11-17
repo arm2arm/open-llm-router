@@ -143,7 +143,10 @@ func authSources(doc *yaml.Node, lookup func(string) (string, bool), enabled boo
 			source = SourceFile
 		}
 		if setting.Env != "" {
-			_, set := lookup(setting.Env)
+			value, set := lookup(setting.Env)
+			if setting.Env == "OIDC_REQUIRED_CLAIM" && value == "" {
+				set = false
+			}
 			secret := setting.Env == EnvOIDCClientSecret || setting.Env == EnvOIDCSyncSecret
 			if set && (enabled || secret) {
 				source = SourceEnvironment

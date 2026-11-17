@@ -20,6 +20,41 @@ NAME = "trial-open-llm-router"
 
 
 class HelmChart(unittest.TestCase):
+    def test_router_startup_does_not_wait_for_optional_keycloak(self):
+        for values in [{}, {"postgresql": {"enabled": False}, "externalDatabase": {"url": "postgres://user:pass@db.invalid/olr"}}]:
+            rendered = self.render(values)
+            pod = rendered["Deployment", NAME]["spec"]["template"]["spec"]
+            for container in pod.get("initContainers", []):
+                self.assertNotIn("keycloak", container["name"])
+                self.assertNotIn("KEYCLOAK_HOST", json.dumps(container))
+
+    def test_https_portal_requires_secure_cookies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = Path(directory) / "insecure.yaml"
+            values.write_text(yaml.safe_dump({"portal": {"baseURL": "https://router.invalid", "cookieSecure": False}}))
+            result = self.invoke("template", "trial", CHART, "-f", values)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("portal.cookieSecure", result.stderr)
+        self.render({"portal": {"baseURL": "https://router.invalid", "cookieSecure": True}})
+        self.render({"portal": {"baseURL": "http://localhost:8080", "cookieSecure": False}})
+
+    def test_global_values_and_umbrella_chart(self):
+        result = self.invoke("template", "trial", CHART, "--set-json", 'global={"imageRegistry":"registry.invalid"}')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            umbrella = Path(directory)
+            version = yaml.safe_load((CHART / "Chart.yaml").read_text())["version"]
+            (umbrella / "Chart.yaml").write_text(yaml.safe_dump({
+                "apiVersion": "v2", "name": "umbrella", "version": "1.0.0",
+                "dependencies": [{"name": "open-llm-router", "version": version, "repository": f"file://{CHART}"}],
+            }))
+            (umbrella / "values.yaml").write_text("global:\n  imageRegistry: registry.invalid\n")
+            built = self.invoke("dependency", "build", umbrella)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            rendered = self.invoke("template", "umbrella", umbrella)
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            self.assertIn("kind: Deployment", rendered.stdout)
+
     def test_agent_administration_default_override_and_proxy_configuration(self):
         baseline = self.render()
         config = yaml.safe_load(baseline["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
@@ -338,6 +373,23 @@ class HelmChart(unittest.TestCase):
         router = resources["NetworkPolicy", NAME + "-router"]["spec"]
         dns = router["egress"][0]
         self.assertEqual(dns["ports"], [{"port": 53, "protocol": "UDP"}, {"port": 53, "protocol": "TCP"}])
+        self.assertEqual(dns["to"], [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+        }])
+        self.assertEqual(len(router["egress"]), 4)
+        destinations = {}
+        for rule in router["egress"][1:]:
+            self.assertEqual(len(rule["to"]), 1)
+            self.assertEqual(set(rule["to"][0]), {"podSelector"})
+            labels = rule["to"][0]["podSelector"]["matchLabels"]
+            self.assertEqual(labels["app.kubernetes.io/instance"], "trial")
+            destinations[labels["app.kubernetes.io/component"]] = rule["ports"]
+        self.assertEqual(destinations, {
+            "demo": [{"port": 8000, "protocol": "TCP"}],
+            "keycloak": [{"port": 8080, "protocol": "TCP"}],
+            "postgresql": [{"port": 5432, "protocol": "TCP"}],
+        })
         for peer in router["ingress"][0]["from"]:
             self.assertIn("namespaceSelector", peer)
             self.assertIn("podSelector", peer)
@@ -345,6 +397,22 @@ class HelmChart(unittest.TestCase):
             policy = resources["NetworkPolicy", NAME + suffix]["spec"]
             self.assertEqual(policy["egress"], [])
             self.assertEqual(policy["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"], "open-llm-router")
+
+    def test_external_dependencies_have_only_explicit_router_egress(self):
+        explicit = [{"to": [{"ipBlock": {"cidr": "192.0.2.8/32"}}],
+                     "ports": [{"port": 443, "protocol": "TCP"}]}]
+        values = {"postgresql": {"enabled": False}, "keycloak": {"enabled": False},
+                  "demoBackend": {"enabled": False},
+                  "externalDatabase": {"url": "postgres://test:synthetic@db.invalid/olr"},
+                  "networkPolicy": {"egress": explicit}}
+        resources = self.render(values)
+        rules = resources["NetworkPolicy", NAME + "-router"]["spec"]["egress"]
+        self.assertEqual(len(rules), 2)
+        self.assertEqual(rules[1:], explicit)
+        self.assertEqual(rules[0]["to"], [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+        }])
 
     def test_unrestricted_router_egress_preserves_other_policy_boundaries(self):
         overlay = yaml.safe_load((CHART / "examples/unrestricted-egress.values.yaml").read_text())

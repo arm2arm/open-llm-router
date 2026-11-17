@@ -201,7 +201,7 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `OLR_BOOTSTRAP_ADMIN_PASSWORD` | alternative bootstrap password — **secret**; configure only one source; ignored once initialized |
 | `OIDC_ISSUER`, `OIDC_PORTAL_CLIENT_ID`, `OIDC_GROUPS_CLAIM`, `OIDC_USERNAME_CLAIM` | override the `oidc` keys; an issuer enables SSO; the portal is always mounted. After `olr admin settings import`, the database revision is authoritative and differing values are ignored with an error log |
 | `OIDC_PORTAL_CLIENT_SECRET`, `OIDC_SYNC_CLIENT_SECRET` | client secrets — **secret** |
-| `OIDC_AUDIENCE`, `OIDC_SYNC_CLIENT_ID`, `OIDC_REQUIRED_CLAIM=name=value` | override the `oidc` keys |
+| `OIDC_AUDIENCE`, `OIDC_SYNC_CLIENT_ID`, `OIDC_REQUIRED_CLAIM=name=value` | override the `oidc` keys; empty required claim preserves YAML, `none` removes it; empty audience disables service tokens |
 | `OIDC_BACKCHANNEL_URL` | reach the issuer at an internal URL; the issuer stays the public one |
 | `PORTAL_BASE_URL`, `PORTAL_COOKIE_SECURE` | public origin; secure cookies (default true) |
 | `OLR_METRICS_TOKEN` | bearer token for `/metrics` — **secret**; empty refuses scrapes |
@@ -1033,7 +1033,7 @@ pod selectors. Bundled PostgreSQL and mock backends accept only router traffic; 
 Keycloak additionally accepts the ingress controller. Supporting workloads have no egress.
 
 Production uses external TLS services. Set `security.require_tls: true` (already enabled
-in production Helm/Kustomize examples). Startup then rejects non-verifying PostgreSQL,
+in production Helm/Kustomize examples and the Compose pilot). Startup then rejects non-verifying PostgreSQL,
 HTTP backends, HTTP OIDC issuer/backchannel, HTTP telemetry and insecure portal cookies.
 Use `sslmode=verify-full&sslrootcert=/etc/olr/ca/ca.crt` in the database URL, a matching DNS
 hostname, and the correct CA. `require` and `verify-ca` are insufficient. Set
