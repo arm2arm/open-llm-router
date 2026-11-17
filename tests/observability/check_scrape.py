@@ -17,6 +17,8 @@ if (root / ".env").exists():
 compose += ["-f", "deploy/compose/docker-compose.yml", "-f", "deploy/compose/observability.yml"]
 subprocess.run(compose + ["up", "--detach", "--wait", "--wait-timeout", "90", "router", "prometheus"],
                cwd=root, env=env, check=True)
+subprocess.run(compose + ["exec", "-T", "prometheus", "promtool", "check", "rules", "/etc/prometheus/router-alerts.yml"], cwd=root, env=env, check=True)
+subprocess.run(compose + ["exec", "-T", "--workdir", "/etc/prometheus", "prometheus", "promtool", "test", "rules", "router-alerts.test.yml"], cwd=root, env=env, check=True)
 
 def query(expression):
     url = "http://127.0.0.1:9090/api/v1/query?" + urlencode({"query": expression})

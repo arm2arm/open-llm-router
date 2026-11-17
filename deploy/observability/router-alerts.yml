@@ -1,0 +1,73 @@
+groups:
+  - name: open-llm-router
+    rules:
+      - alert: OLRUnavailable
+        expr: up{job="olr"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Router metrics are unreachable
+      - alert: OLRDatabaseUnavailable
+        expr: olr_database_reachable == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Router database is unreachable; readiness fails
+      - alert: OLRInvalidationDisconnected
+        expr: olr_invalidation_listener_connected == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: Authentication invalidation is disconnected
+      - alert: OLRHighErrorRatio
+        expr: |
+          (sum by (job, instance) (rate(olr_requests_total{status_class=~"5xx|error"}[5m]))
+          / sum by (job, instance) (rate(olr_requests_total[5m])) > 0.05)
+          and on (job, instance) sum by (job, instance) (rate(olr_requests_total[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: More than five percent of router requests fail
+      - alert: OLRAccountingLoss
+        expr: increase(olr_usage_dropped_total[5m]) > 0 or increase(olr_usage_write_failures_total[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: Router usage records were dropped or could not be written
+      - alert: OLRGroupSyncStale
+        expr: |
+          (time() - olr_group_sync_last_success_timestamp_seconds
+          > 2 * clamp_min(olr_group_sync_interval_seconds, 60))
+          and on (job, instance) olr_group_sync_enabled == 1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Configured identity synchronization has not completed recently
+      - alert: OLRQueueWaiting
+        expr: olr_queue_waiting > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Model requests are waiting persistently for replica capacity
+      - alert: OLRReplicaUnavailable
+        expr: olr_replica_healthy == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: A configured replica remains unhealthy
+      - alert: OLRHighFirstByteLatency
+        expr: histogram_quantile(0.95, sum by (job, instance, model, le) (rate(olr_time_to_first_token_seconds_bucket[5m]))) > 120
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Model p95 time to first upstream byte exceeds two minutes
+      - alert: OLRTraceStorageFailure
+        expr: increase(olr_content_trace_failures_total[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: Optional content trace writes or retention operations failed
+      - alert: OLRTraceRetentionBacklog
+        expr: olr_content_trace_retention_backlog > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: Expired content traces remain after retention runs

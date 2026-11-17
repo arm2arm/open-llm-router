@@ -36,6 +36,9 @@ type oidcServices struct {
 }
 
 func newOIDCServices(cfg *config.Config, pool, credentials *pgxpool.Pool, authenticator *auth.Authenticator, log *slog.Logger, stats *groupsync.Stats) *oidcServices {
+	if stats == nil {
+		stats = &groupsync.Stats{}
+	}
 	s := &oidcServices{stats: stats, pool: pool, credentials: credentials, work: authenticator.WorkBudget(), log: log, fresh: authenticator.Freshness, stop: func() {}}
 	authenticator.Tokens = func(ctx context.Context, raw string) (auth.Principal, error) {
 		if !s.audience.Load() {
@@ -56,6 +59,7 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 	defer s.mu.Unlock()
 	s.stop()
 	s.stats.Enabled.Store(false)
+	s.stats.IntervalSeconds.Store(0)
 	s.stats.LastSuccess.Store(0)
 	s.audience.Store(false)
 	s.verifier.Store(nil)
