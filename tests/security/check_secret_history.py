@@ -21,8 +21,15 @@ class SecretHistory(unittest.TestCase):
             shutil.copy2(ROOT / ".gitleaks.toml", root / ".gitleaks.toml")
             example = root / "deploy/compose/pilot.env.example"
             example.parent.mkdir(parents=True)
+            def git(*args):
+                return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=root, stderr=subprocess.DEVNULL)
+            git("init", "--initial-branch=main")
+            git("config", "user.name", "Synthetic history test")
+            git("config", "user.email", "fixture@example.invalid")
             def scan():
-                return subprocess.run(["gitleaks", "dir", "--redact", "--no-banner"], cwd=root, capture_output=True, text=True)
+                git("add", ".")
+                git("-c", "commit.gpgsign=false", "commit", "-m", "Synthetic example fixture")
+                return history.scan(root, "--all")
             example.write_text("OIDC_PORTAL_CLIENT_SECRET=\nOIDC_AUDIENCE=olr-api\n")
             self.assertEqual(scan().returncode, 0, "public example assignment was classified as a secret")
             # The same file/path is still scanned for actual credential shapes.
