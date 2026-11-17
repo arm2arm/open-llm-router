@@ -26,6 +26,7 @@ func TestUnknownKidsBoundRefreshAndAllowRotation(t *testing.T) {
 	var published atomic.Pointer[ecdsa.PrivateKey]
 	published.Store(oldKey)
 	var fetches atomic.Int64
+	var oversized atomic.Bool
 	issuer := ""
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -34,6 +35,11 @@ func TestUnknownKidsBoundRefreshAndAllowRotation(t *testing.T) {
 			return
 		}
 		fetches.Add(1)
+		if oversized.Load() {
+			w.(http.Flusher).Flush()
+			_, _ = io.WriteString(w, strings.Repeat(" ", maxResponseBytes+1))
+			return
+		}
 		key, kid := published.Load(), "old"
 		if key == newKey {
 			kid = "new"
@@ -102,6 +108,14 @@ func TestUnknownKidsBoundRefreshAndAllowRotation(t *testing.T) {
 	clock.Add(int64(jwksRefreshInterval))
 	if _, err := v.Verify(t.Context(), rotated); err != nil || fetches.Load() != 2 {
 		t.Fatal("rotation did not recover at fixed interval", err, fetches.Load())
+	}
+	oversized.Store(true)
+	clock.Add(int64(jwksRefreshInterval))
+	if _, err := v.Verify(t.Context(), sign(newKey, "unknown")); err == nil {
+		t.Fatal("oversized JWKS accepted")
+	}
+	if _, err := v.Verify(t.Context(), rotated); err != nil {
+		t.Fatal("oversized refresh destroyed cached signing keys", err)
 	}
 }
 

@@ -185,6 +185,76 @@ func TestAgentTrustedProxyBoundary(t *testing.T) {
 	}
 }
 
+func TestAgentInvalidFloodDoesNotThrottleValidKeys(t *testing.T) {
+	f := startPortal(t, usageOptions{portal: func(_ *portal.Handler, cfg *config.Config, _ *pgxpool.Pool, _ *proxy.Handler) {
+		cfg.AdminAPI.Enabled = true
+		cfg.AdminAPI.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	}})
+	browser := signInLocalAdmin(t, f)
+	response, data := browser.call(t, "POST", "/portal/api/admin/agent-keys", `{"label":"flood isolation","permissions":["service:read"],"allowed_networks":["198.51.100.9"],"expires_in_days":1}`, f.cfg.Portal.BaseURL)
+	if response.StatusCode != 201 {
+		t.Fatal("issue failed")
+	}
+	var key struct{ Key string }
+	if err := json.Unmarshal(data, &key); err != nil {
+		t.Fatal(err)
+	}
+	call := func(credential, source string) int {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), "GET", f.router.URL+"/api/admin/v1/identity", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+credential)
+		req.Header.Set("X-Forwarded-For", source)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := call(key.Key, "198.51.100.9"); got != 200 {
+		t.Fatalf("valid before flood: %d", got)
+	}
+	// Use a well-formed unknown key so the test exercises database lookups too.
+	invalid := "olr-admin-" + strings.Repeat("x", 43)
+	for i := range 125 {
+		want := 401
+		if i >= 120 {
+			want = 429
+		}
+		if got := call(invalid, "203.0.113.66"); got != want {
+			t.Fatalf("invalid request %d: %d, want %d", i, got, want)
+		}
+	}
+	if got := call(key.Key, "198.51.100.9"); got != 200 {
+		t.Fatalf("valid after flood: %d", got)
+	}
+	if got := call(invalid, "203.0.113.67"); got != 401 {
+		t.Fatalf("independent forwarded client: %d", got)
+	}
+	// A source can recover with a valid key even after its own failure budget.
+	for range 120 {
+		call(invalid, "198.51.100.9")
+	}
+	if got := call(key.Key, "198.51.100.9"); got != 200 {
+		t.Fatalf("valid key from a throttled source: %d", got)
+	}
+	// Exhaust the failure-only global budget from several addresses.
+	for _, source := range []string{"203.0.113.68", "203.0.113.69", "203.0.113.70", "203.0.113.71", "203.0.113.72"} {
+		for range 125 {
+			call(invalid, source)
+		}
+	}
+	if got := call(invalid, "203.0.113.73"); got != 429 {
+		t.Fatalf("global failure budget was not enforced: %d", got)
+	}
+	if got := call(key.Key, "198.51.100.9"); got != 200 {
+		t.Fatalf("valid after global failure flood: %d", got)
+	}
+}
+
 func TestAgentRecentGrantAndOwnerRevocation(t *testing.T) {
 	f := startPortal(t, usageOptions{portal: func(_ *portal.Handler, cfg *config.Config, _ *pgxpool.Pool, _ *proxy.Handler) {
 		cfg.AdminAPI.Enabled = true

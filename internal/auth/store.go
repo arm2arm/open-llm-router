@@ -329,34 +329,62 @@ func (a Admin) EnsureIdentity(ctx context.Context, issuer, sub, username, email 
 	return a.SyncIdentity(ctx, issuer, sub, username, email, groups, emailVerified)
 }
 
-// TokenIdentity maps an API access token to its router user. Group claims are
-// as old as the token: when the stored memberships were updated after the
-// token was issued (by a portal login, group sync or a newer token), the token
-// can only narrow them, so a removed grant is never restored by an old token
-// and an added group needs a new token. A token newer than the stored state
-// updates it like a login. A token without iat counts as old.
-func (a Admin) TokenIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, issued time.Time, emailVerified bool) (string, []string, error) {
+// IdentityClaims distinguishes omitted token attributes from explicit empty values.
+// Omitted claims retain the existing identity; new identities start without grants.
+type IdentityClaims struct {
+	Username      *string
+	Email         *string
+	Groups        *[]string
+	EmailVerified *bool
+}
+
+// TokenIdentity maps an API access token to its router user. Claims older than
+// stored state can only narrow memberships. Missing attributes never erase stored
+// identity data; an explicit empty groups claim still removes all memberships.
+func (a Admin) TokenIdentity(ctx context.Context, issuer, sub string, claims IdentityClaims, issued time.Time) (string, string, []string, error) {
 	var id, oldName, oldEmail string
 	var oldGroups []string
 	var enabled, oldVerified bool
 	var synced time.Time
 	err := a.Pool.QueryRow(ctx, `SELECT id,username,email,groups,enabled,synced_at,email_verified FROM users WHERE issuer=$1 AND sub=$2`, issuer, sub).
 		Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &synced, &oldVerified)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		id, err := a.SyncIdentity(ctx, issuer, sub, username, email, groups, emailVerified)
-		return id, groups, err
-	case err != nil:
-		return "", nil, errors.New("user lookup failed")
-	case !enabled:
-		return "", nil, ErrNotFound
-	case issued.IsZero() || !issued.After(synced):
-		return id, slices.DeleteFunc(slices.Clone(groups), func(g string) bool { return !slices.Contains(oldGroups, g) }), nil
-	case oldName == username && oldEmail == email && oldVerified == emailVerified && slices.Equal(oldGroups, groups):
-		return id, groups, nil
+	newIdentity := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !newIdentity {
+		return "", "", nil, errors.New("user lookup failed")
 	}
-	id, err = a.SyncIdentity(ctx, issuer, sub, username, email, groups, emailVerified)
-	return id, groups, err
+	if !newIdentity && !enabled {
+		return "", "", nil, ErrNotFound
+	}
+	username, email, groups, verified := oldName, oldEmail, slices.Clone(oldGroups), oldVerified
+	if claims.Username != nil {
+		username = *claims.Username
+	}
+	if username == "" {
+		username = sub
+	}
+	if claims.Email != nil {
+		email = *claims.Email
+		// A different address cannot inherit the old address's verification.
+		if email != oldEmail {
+			verified = false
+		}
+	}
+	if claims.EmailVerified != nil && claims.Email != nil {
+		verified = *claims.EmailVerified
+	}
+	if claims.Groups != nil {
+		groups = slices.Clone(*claims.Groups)
+	}
+	if !newIdentity {
+		if issued.IsZero() || !issued.After(synced) {
+			return id, oldName, slices.DeleteFunc(groups, func(g string) bool { return !slices.Contains(oldGroups, g) }), nil
+		}
+		if oldName == username && oldEmail == email && oldVerified == verified && slices.Equal(oldGroups, groups) {
+			return id, username, groups, nil
+		}
+	}
+	id, err = a.SyncIdentity(ctx, issuer, sub, username, email, groups, verified)
+	return id, username, groups, err
 }
 
 // SetGroups replaces a user's groups; API-key caches observe it before this

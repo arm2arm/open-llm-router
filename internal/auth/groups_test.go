@@ -13,8 +13,9 @@ func TestGroupNames(t *testing.T) {
 	}{
 		{GroupLeaf, []string{"staff", "admins", "staff"}, []string{"admins", "staff"}},
 		{GroupLeaf, []string{"/staff", "/org/students/"}, []string{"staff", "students"}},
-		// The same leaf through two paths is ambiguous and refused.
-		{GroupLeaf, []string{"/a/staff", "/b/staff", "/admins"}, []string{"admins"}},
+		// Leaf policies have the same meaning for claims and sync.
+		{GroupLeaf, []string{"/a/staff", "/b/staff", "/admins"}, []string{"admins", "staff"}},
+		{GroupLeaf, []string{"staff", "staff", "admins"}, []string{"admins", "staff"}},
 		// A bare leaf next to one path is not ambiguous.
 		{GroupLeaf, []string{"staff", "/org/staff"}, []string{"staff"}},
 		{GroupLeaf, []string{"", "/", " "}, []string{}},

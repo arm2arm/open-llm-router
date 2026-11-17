@@ -581,6 +581,19 @@ client an *audience* mapper that adds `olr-api` to access tokens, plus the group
 dev realm has `olr-service` as an example. A user disabled in the router is refused within a
 minute (verified tokens are cached for at most a minute).
 
+Access tokens require `iss`, `sub`, the configured `aud`, `exp` and a valid
+signature. `iat` establishes whether present membership claims are newer than
+stored identity state; absent `iat` cannot restore removed grants. Configure
+`preferred_username`, `email`, `email_verified` and the configured groups claim
+for complete identity updates. Omitted attributes retain the existing user's
+stored values, including memberships and API-key access; explicit `groups: []`
+removes memberships. A new subject without groups starts with no group access.
+Use group sync or complete fresh claims to propagate removals; omitting a claim
+is not a revocation signal. A changed email needs its own verification claim.
+OIDC discovery, signing-key and token responses are limited to **1 MiB** each,
+including chunked and decompressed bodies; oversized responses fail authentication
+without buffering the complete download.
+
 **Group sync.** A confidential client `olr-sync` with *service accounts* enabled, the
 `realm-management` role `view-users`, and on Keycloak 26.8 or later the `kc-admin-api`
 client scope (its tokens must carry the admin-API audience). Set its secret in

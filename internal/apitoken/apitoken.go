@@ -107,21 +107,19 @@ func (v *Verifier) authenticate(ctx context.Context, raw string, hash [32]byte, 
 	if token.Claims(&claims) != nil {
 		return auth.Principal{}, auth.ErrInvalidKey
 	}
-	var username, email string
-	var groups []string
-	var emailVerified bool
+	var claimsIdentity auth.IdentityClaims
 	decode := func(name string, value any) bool {
 		raw, ok := claims[name]
-		return !ok || json.Unmarshal(raw, value) == nil
+		return !ok || (string(raw) != "null" && json.Unmarshal(raw, value) == nil)
 	}
-	if !decode(v.cfg.UsernameClaim, &username) || !decode("email", &email) || !decode("email_verified", &emailVerified) || !decode(v.cfg.GroupsClaim, &groups) {
+	if !decode(v.cfg.UsernameClaim, &claimsIdentity.Username) || !decode("email", &claimsIdentity.Email) || !decode("email_verified", &claimsIdentity.EmailVerified) || !decode(v.cfg.GroupsClaim, &claimsIdentity.Groups) {
 		return auth.Principal{}, auth.ErrInvalidKey
 	}
-	if username == "" {
-		username = token.Subject
+	if claimsIdentity.Groups != nil {
+		normalized := auth.GroupNames(*claimsIdentity.Groups, v.cfg.GroupNames)
+		claimsIdentity.Groups = &normalized
 	}
-	groups = auth.GroupNames(groups, v.cfg.GroupNames)
-	id, groups, err := v.admin.TokenIdentity(ctx, token.Issuer, token.Subject, username, email, groups, token.IssuedAt, emailVerified)
+	id, username, groups, err := v.admin.TokenIdentity(ctx, token.Issuer, token.Subject, claimsIdentity, token.IssuedAt)
 	if errors.Is(err, auth.ErrNotFound) {
 		return auth.Principal{}, auth.ErrInvalidKey // disabled in the router
 	}
