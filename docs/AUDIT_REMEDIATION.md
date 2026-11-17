@@ -22,7 +22,7 @@ and P3; dependencies may change that order.
 | #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Completed in PR #312 |
 | #195 Agent administration | #195, #245, #261 | Completed in PR #313 |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Implemented; local checks pass; Kubernetes and scrape acceptance in CI |
-| #183 Releases | #183, #193, #220, #221, #225, #242 | Pending |
+| #183 Releases | #183, #193, #220, #221, #225, #242 | Verification flags, repository controls and retry protection implemented; platform, licenses and version metadata remain |
 | #237 Startup diagnostics | #237, #238, #241 | Pending |
 | #223 Regression coverage | #222, #223, #243, #246 | Pending |
 | #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Pending |
@@ -497,3 +497,18 @@ and P3; dependencies may change that order.
   mutations prove unrelated clients can send traffic in both Helm and Kustomize.
   Static Helm checks constrain exact destinations and retain the explicit unrestricted
   mode as a separate positive case.
+
+## Signed release verification evidence
+
+- **#183:** Deployment wrappers and publishing use one exact certificate-identity
+  selector. Stubbed GitHub CLI commands reject mutually exclusive selector groups;
+  a real current CLI parser reaches local-artifact validation with the reduced flags.
+  Helm post-rendering still fails closed on missing signatures/attestations.
+- **#193:** Repository checks reject PR bypass allowances, require immutable v* tag
+  rules with no bypass actors, and verify independent environment approval only when
+  explicitly configured. The default solo-maintainer approval policy remains intact.
+  Stubbed response tests cover every bypass type, missing tag protections and self-review.
+- **#221:** A registry manifest HEAD check rejects existing image versions before
+  building and fails closed on authorization/rate/service errors. The compile job and
+  image/signing job lack repository write permission; only final publication has it.
+  Tokens are step-scoped and Gitsign arrives as a same-run immutable artifact.

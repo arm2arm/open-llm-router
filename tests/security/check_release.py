@@ -9,11 +9,15 @@ import sys
 import tempfile
 import unittest
 import copy
+import io
+from urllib.error import HTTPError
 
 import yaml
 import repository_controls as controls
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "deploy/release"))
+import check_image_tag
 VERIFIER = ROOT / "deploy/release/verify_images.py"
 IMAGE = "ghcr.io/arm2arm/open-llm-router@sha256:" + "a" * 64
 
@@ -118,6 +122,24 @@ class DeploymentVerification(unittest.TestCase):
 
 
 class WorkflowPolicy(unittest.TestCase):
+    def test_registry_version_check_is_before_build_and_credentials_are_scoped(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+        release = workflow["jobs"]["release"]
+        self.assertEqual(release["permissions"]["contents"], "read")
+        self.assertNotIn("GH_TOKEN", release.get("env", {}))
+        steps = release["steps"]
+        check = next(i for i, step in enumerate(steps) if step.get("run") == "python3 deploy/release/check_image_tag.py")
+        build = next(i for i, step in enumerate(steps) if step.get("id") == "build")
+        self.assertLess(check, build)
+        publish = workflow["jobs"]["publish"]
+        self.assertEqual(set(publish["needs"]), {"release", "signing-tool"})
+        self.assertNotIn("GH_TOKEN", publish.get("env", {}))
+        for job in workflow["jobs"].values():
+            if job.get("permissions", {}).get("contents") == "write":
+                self.assertNotIn("go install", json.dumps(job))
+                self.assertNotIn("curl", json.dumps(job))
+        self.assertEqual(release["environment"], "release")
+
     def test_current_gh_accepts_exact_attestation_identity_flags(self):
         self.assertIsNotNone(shutil.which("gh"), "release verification requires GitHub CLI")
         trust = json.loads((ROOT / "deploy/release/image-policy.json").read_text())["images"]["ghcr.io/arm2arm/open-llm-router"]
@@ -178,6 +200,27 @@ class RepositoryControls(unittest.TestCase):
         environment["protection_rules"][0]["prevent_self_review"] = False
         with self.assertRaises(AssertionError):
             controls.verify_approval(environment, {"independent_approval": True})
+
+
+class RegistryVersions(unittest.TestCase):
+    def test_existing_and_unknown_versions_fail_closed(self):
+        for status in (200, 404, 401, 403, 429, 500):
+            calls = []
+            def registry(request, timeout):
+                calls.append(request)
+                if len(calls) == 1:
+                    return io.BytesIO(b'{"token":"synthetic-registry-token"}')
+                if status == 200:
+                    return io.BytesIO(b"")
+                raise HTTPError(request.full_url, status, "synthetic", {}, None)
+            with self.subTest(status=status):
+                if status == 404:
+                    check_image_tag.require_unused("ghcr.io/example/router", "v1.2.3", "test", "synthetic", registry)
+                else:
+                    with self.assertRaises(ValueError):
+                        check_image_tag.require_unused("ghcr.io/example/router", "v1.2.3", "test", "synthetic", registry)
+                self.assertEqual(calls[1].get_method(), "HEAD")
+                self.assertEqual(calls[1].full_url, "https://ghcr.io/v2/example/router/manifests/v1.2.3")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,15 @@ with issuer `https://token.actions.githubusercontent.com`. Signing uses the runn
 short-lived OIDC identity. No long-lived signing key is stored. No release is created
 by merging this workflow; maintainers choose the version and dispatch it separately.
 A failed publication may leave a signed image or tag. Investigate it before retrying;
-the workflow refuses to replace existing tags. Do not move a published release tag.
+the workflow refuses to replace existing Git tags or an existing GHCR image version,
+including a version left by a failed publication. Registry lookup failures stop the
+release before building. Choose a new version after investigating a partial release.
+
+The image build/sign/attestation job has read-only repository access. A separate
+read-only job compiles the pinned Gitsign tool; the final publishing job receives
+that immutable, same-run artifact and verified release files. Only the publishing
+job can write Git tags and releases. `GH_TOKEN` is supplied only to steps using the
+GitHub or registry API. No release workflow is dispatched by these policy tests.
 
 Gitsign tags use X.509 Sigstore signatures. Verify the tag's identity explicitly;
 GitHub's verified badge and ordinary `git verify-tag` do not establish this policy:
@@ -62,6 +70,10 @@ and source refs other than main are rejected. Any missing policy, mutable image,
 unavailable verification service, invalid signature or missing attestation aborts
 deployment. A registry mirror or supporting workload needs its own explicitly reviewed
 trust entry and the same evidence, usually from an internally rebuilt/signed image.
+GitHub CLI verification uses the exact `--cert-identity` and OIDC issuer from the
+policy, plus repository, source-ref and hosted-runner constraints. It deliberately
+does not combine that selector with `--signer-workflow` or `--signer-repo`, which
+current GitHub CLI versions treat as mutually exclusive.
 Do not broaden the signer identity to a wildcard to accommodate unsigned upstreams.
 
 Use these wrappers for every install, upgrade and rollback to another digest. Direct
@@ -79,6 +91,23 @@ stale approvals are dismissed after changes. Administrators are subject to the
 remaining protections. Force pushes and deletion are disabled. Required checks cover
 Go/race/integration, browser/image, Helm, live network policy, deployment
 verification/secret scanning, dependency review, and both CodeQL languages.
+
+The `immutable-releases` tag ruleset in `.github/release-tags.json` covers `v*` tags
+and forbids updates and deletion, with no bypass actors. Writers can create new tags
+and dispatch the release workflow; only images matching the exact signing policy are
+trusted by the deployment wrappers. Repository administrators can change rulesets,
+and registry administrators can alter GHCR packages; the workflow's registry check
+does not claim to make GHCR tags immutable against those administrators. Always
+deploy the digest recorded in `image.txt`.
+
+Independent release approval is optional. The release build/sign job uses the
+`release` environment; the default `.github/release-approval.json` keeps the approved
+solo-maintainer mode. To require independent approval, configure required reviewers
+and prevent self-review on that environment, then set `independent_approval: true` in
+the policy. `tests/security/repository_controls.py` verifies the selected mode, tag
+protections and all PR bypass allowances. Technical checks remain mandatory in both
+modes. Its `--apply` option applies main and tag protections, leaving environment
+reviewers for the repository administrator to select.
 
 Repository secret scanning, push protection, Dependabot security updates and mandatory
 Action SHA pinning are enabled. CodeQL scans Go and JavaScript/TypeScript on PRs, main
