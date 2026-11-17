@@ -48,7 +48,7 @@ func TestResponsesTraceStreamingAndFinalOnly(t *testing.T) {
 			c.Write([]byte(wire[i:min(i+7, len(wire))]))
 		}
 		d := c.decode()
-		if d.Summary.ToolCalls != 1 || len(d.Output) != 1 || d.Output[0].Blocks[0].Arguments != "{}" || d.Output[0].Blocks[0].ID != "call_1" || d.Result.ID != "resp_1" || d.Result.Usage["output_tokens"] != 7 {
+		if (d.Summary.ToolCalls == nil || *d.Summary.ToolCalls != 1) || len(d.Output) != 1 || d.Output[0].Blocks[0].Arguments != "{}" || d.Output[0].Blocks[0].ID != "call_1" || d.Result.ID != "resp_1" || d.Result.Usage["output_tokens"] != 7 {
 			t.Fatalf("final-only=%v %+v", finalOnly, d)
 		}
 	}

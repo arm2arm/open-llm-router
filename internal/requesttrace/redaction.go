@@ -170,6 +170,15 @@ func (s *Service) SanitizeDetail(data []byte) ([]byte, error) {
 		}
 		detail.Frames[i].Data = cleanRaw(streamPreview(value), 4<<10)
 	}
+	if detail.Version < 4 && detail.Truncated {
+		// Older versions cannot distinguish an input-only limit from a cut
+		// output. Avoid presenting a zero tool count as a complete result.
+		detail.OutputTruncated = true
+	}
+	if detail.OutputTruncated {
+		detail.Result.FinishReasons = []string{}
+		detail.Summary = summarize(&detail)
+	}
 	detail.Version = DetailVersion
 	var r *redactor
 	if s != nil {

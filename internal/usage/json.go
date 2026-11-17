@@ -20,6 +20,9 @@ const Responses = "openai-responses"
 type JSON struct {
 	Protocol string
 	Totals   Totals
+	// UsageObserver receives a bounded provider usage object before its buffer
+	// is reused. It must copy synchronously and must not block or decode content.
+	UsageObserver func([]byte)
 	// UsageDepth is 1 for a response object and 2 for a Responses SSE
 	// event's nested response object. Content is never buffered.
 	UsageDepth int
@@ -137,6 +140,9 @@ func (j *JSON) scan(p []byte, found func(int, []byte)) {
 			if j.capture && j.depth == usageDepth {
 				if len(j.value) <= maxUsage {
 					j.Totals.readUsage(j.value, j.Protocol, true, true)
+					if j.UsageObserver != nil {
+						j.UsageObserver(j.value)
+					}
 					if found != nil {
 						found(i, j.value)
 					}

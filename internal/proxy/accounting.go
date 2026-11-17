@@ -109,8 +109,14 @@ func (a *accounting) observe(contentType string, hideUsage bool, emit func([]byt
 	if contentType == "text/event-stream" {
 		a.record.IsStream = true
 		a.stream = usage.NewStream(a.format, hideUsage, emit)
+		if a.capture != nil {
+			a.stream.UsageObserver = a.capture.Usage
+		}
 	} else if contentType == "application/json" {
 		a.json = &usage.JSON{Protocol: a.format}
+		if a.capture != nil {
+			a.json.UsageObserver = a.capture.Usage
+		}
 	}
 }
 

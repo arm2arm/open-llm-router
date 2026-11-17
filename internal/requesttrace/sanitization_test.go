@@ -155,7 +155,7 @@ func TestHistoricalTracesUseCurrentSanitizationOnRead(t *testing.T) {
 			t.Fatal("historical trace exposed old content", secret)
 		}
 	}
-	if !strings.Contains(string(raw), `"seed":1234567890123456789`) || !strings.Contains(string(raw), `"v":3`) {
+	if !strings.Contains(string(raw), `"seed":1234567890123456789`) || !strings.Contains(string(raw), `"v":4`) {
 		t.Fatal("historical normalization lost precision or version", string(raw))
 	}
 }

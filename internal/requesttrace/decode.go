@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// DetailVersion 3 omits unsafe fragment text from stream events and frames.
-const DetailVersion = 3
+// DetailVersion 4 marks unknown output facts separately from bounded input.
+const DetailVersion = 4
 
 type Block struct {
 	Type      string `json:"type"`
@@ -73,32 +73,34 @@ type Result struct {
 	Usage             map[string]float64 `json:"usage"`
 }
 type Summary struct {
-	InputMessages   int    `json:"input_messages"`
-	OutputMessages  int    `json:"output_messages"`
-	ToolCalls       int    `json:"tool_calls"`
-	ToolResults     int    `json:"tool_results"`
-	Tools           int    `json:"tools"`
-	FinishReason    string `json:"finish_reason,omitempty"`
-	CachedTokens    int64  `json:"cached_tokens"`
-	ReasoningTokens int64  `json:"reasoning_tokens"`
-	Truncated       bool   `json:"truncated"`
+	InputMessages     int    `json:"input_messages"`
+	OutputMessages    int    `json:"output_messages"`
+	ToolCalls         *int   `json:"tool_calls"`
+	ObservedToolCalls int    `json:"observed_tool_calls"`
+	ToolResults       int    `json:"tool_results"`
+	Tools             int    `json:"tools"`
+	FinishReason      string `json:"finish_reason,omitempty"`
+	CachedTokens      int64  `json:"cached_tokens"`
+	ReasoningTokens   int64  `json:"reasoning_tokens"`
+	Truncated         bool   `json:"truncated"`
 }
 type Detail struct {
-	Version    int             `json:"v"`
-	Operation  string          `json:"operation"`
-	Input      []Message       `json:"input"`
-	Output     []Message       `json:"output"`
-	Events     []Event         `json:"events"`
-	Parameters map[string]any  `json:"parameters"`
-	Tools      []Tool          `json:"tools"`
-	Request    json.RawMessage `json:"request,omitempty"`
-	Response   json.RawMessage `json:"response,omitempty"`
-	Frames     []Frame         `json:"frames"`
-	Routing    Routing         `json:"routing"`
-	Result     Result          `json:"result"`
-	Summary    Summary         `json:"summary"`
-	Truncated  bool            `json:"truncated"`
-	Warnings   []string        `json:"warnings"`
+	Version         int             `json:"v"`
+	Operation       string          `json:"operation"`
+	Input           []Message       `json:"input"`
+	Output          []Message       `json:"output"`
+	Events          []Event         `json:"events"`
+	Parameters      map[string]any  `json:"parameters"`
+	Tools           []Tool          `json:"tools"`
+	Request         json.RawMessage `json:"request,omitempty"`
+	Response        json.RawMessage `json:"response,omitempty"`
+	Frames          []Frame         `json:"frames"`
+	Routing         Routing         `json:"routing"`
+	Result          Result          `json:"result"`
+	Summary         Summary         `json:"summary"`
+	Truncated       bool            `json:"truncated"`
+	OutputTruncated bool            `json:"output_truncated"`
+	Warnings        []string        `json:"warnings"`
 }
 
 func object(v any) map[string]any { m, _ := v.(map[string]any); return m }
@@ -227,6 +229,7 @@ var contentKeys = map[string]bool{"messages": true, "system": true, "instruction
 
 func (c *Capture) decode() Detail {
 	d := Detail{Version: DetailVersion, Operation: c.operation, Input: []Message{}, Output: []Message{}, Events: []Event{}, Parameters: map[string]any{}, Tools: []Tool{}, Frames: []Frame{}, Routing: c.routing, Result: Result{FinishReasons: []string{}, Usage: map[string]float64{}}, Warnings: []string{}, Truncated: c.truncated}
+	d.OutputTruncated = c.outputStopped
 	if d.Routing.Changes == nil {
 		d.Routing.Changes = []Change{}
 	}
@@ -326,6 +329,16 @@ func (c *Capture) decode() Detail {
 		}
 	} else if len(c.output) > 0 {
 		d.Warnings = append(d.Warnings, "Unsupported response content type; body omitted.")
+	}
+	for _, raw := range c.providerUsage {
+		var metadata map[string]any
+		if decodeJSON(raw, &metadata) == nil {
+			numbers(metadata, "", d.Result.Usage)
+		}
+	}
+	if d.OutputTruncated {
+		d.Result.FinishReasons = []string{}
+		d.Warnings = append(d.Warnings, "Output capture stopped: the complete tool-call count and finish reason are unknown. Provider usage is observed separately when available.")
 	}
 	if c.record.Status == "aborted" {
 		d.Warnings = append(d.Warnings, "Response interrupted. Only received content and complete stream events are shown.")
@@ -437,9 +450,12 @@ func summarize(d *Detail) Summary {
 	for _, m := range d.Output {
 		for _, b := range m.Blocks {
 			if b.Type == "tool_call" {
-				s.ToolCalls++
+				s.ObservedToolCalls++
 			}
 		}
+	}
+	if !d.OutputTruncated {
+		s.ToolCalls = &s.ObservedToolCalls
 	}
 	for _, m := range d.Input {
 		for _, b := range m.Blocks {
