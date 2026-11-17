@@ -190,6 +190,9 @@ type Portal struct {
 }
 
 // Model is one model name served to clients and the replicas behind it.
+// MaxModelTimeoutS bounds conversion to durations and accidental multi-year waits.
+const MaxModelTimeoutS = 86400
+
 type Model struct {
 	Protocols     []string `yaml:"protocols" json:"protocols"`
 	UpstreamModel string   `yaml:"upstream_model" json:"upstream_model"`
@@ -674,12 +677,16 @@ func (c *Config) validate() Problems {
 		}
 		if m.TimeoutS <= 0 {
 			add("%s.timeout_s: must be greater than 0", at)
+		} else if m.TimeoutS > MaxModelTimeoutS {
+			add("%s.timeout_s: must not exceed %d seconds", at, MaxModelTimeoutS)
 		}
 		if m.IdleTimeoutS <= 0 {
 			add("%s.idle_timeout_s: must be greater than 0", at)
+		} else if m.IdleTimeoutS > MaxModelTimeoutS {
+			add("%s.idle_timeout_s: must not exceed %d seconds", at, MaxModelTimeoutS)
 		}
-		if m.QueueTimeoutS < 0 || m.QueueTimeoutS > m.TimeoutS {
-			add("%s.queue_timeout_s: must be between 0 and timeout_s", at)
+		if m.QueueTimeoutS < 0 || m.QueueTimeoutS > m.TimeoutS || m.QueueTimeoutS > MaxModelTimeoutS {
+			add("%s.queue_timeout_s: must be between 0 and timeout_s (maximum %d seconds)", at, MaxModelTimeoutS)
 		}
 		if len(m.Pool) == 0 {
 			add("%s.pool: at least one replica is required", at)

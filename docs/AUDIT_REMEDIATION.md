@@ -358,3 +358,8 @@ and P3; dependencies may change that order.
   audit event per revoked key in the same transaction. A PostgreSQL regression
   restores both legacy shapes, verifies live credentials and resolved deployment
   authority, then checks real demotion, protected recovery and revocation history.
+
+- **#255:** Header, idle and queue timeouts are bounded at 86400 seconds before
+  duration conversion, with field-specific errors naming the maximum. File and
+  managed tests reject both the first out-of-range value and the reported overflow
+  value. A real routed request with all three maximum values completes normally.
