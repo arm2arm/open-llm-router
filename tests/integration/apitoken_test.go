@@ -192,14 +192,61 @@ func TestAccessTokenFreshnessAndGroupClaims(t *testing.T) {
 	}
 }
 
+func TestAccessTokenMissingClaimsPreserveStoredIdentity(t *testing.T) {
+	f := startTokenRouter(t)
+	admin := auth.Admin{Pool: f.pool}
+	id, err := admin.SyncIdentity(t.Context(), f.provider.issuer, "service-1", "known-user", "known@example.org", []string{"staff"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := admin.CreateKey(t.Context(), id, "existing key", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slim := f.token(t, func(c map[string]any) {
+		delete(c, "preferred_username")
+		delete(c, "email")
+		delete(c, "email_verified")
+		delete(c, "groups")
+		c["iat"] = time.Now().Add(2 * time.Second).Unix()
+	})
+	if status, body := f.models(t, slim); status != 200 || !strings.Contains(body, "chat-model") {
+		t.Fatal("slim token lost stored memberships", status, body)
+	}
+	var username, email string
+	var groups []string
+	var verified bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT username,email,groups,email_verified FROM users WHERE id=$1`, id).Scan(&username, &email, &groups, &verified); err != nil {
+		t.Fatal(err)
+	}
+	if username != "known-user" || email != "known@example.org" || !verified || !slices.Equal(groups, []string{"staff"}) {
+		t.Fatal("omitted claims erased stored attributes")
+	}
+	if status, body := f.models(t, key); status != 200 || !strings.Contains(body, "chat-model") {
+		t.Fatal("slim token revoked existing API key access", status, body)
+	}
+	// Explicit empty claims still update the identity and revoke old grants.
+	empty := f.token(t, func(c map[string]any) {
+		c["groups"] = []string{}
+		c["email"] = "replacement@example.org"
+		c["iat"] = time.Now().Add(3 * time.Second).Unix()
+	})
+	if status, body := f.models(t, empty); status != 200 || strings.Contains(body, "chat-model") {
+		t.Fatal("explicit empty memberships retained access", status, body)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT email_verified FROM users WHERE id=$1`, id).Scan(&verified); err != nil || verified {
+		t.Fatal("replacement email inherited verification", err)
+	}
+}
+
 // Group sync uses Keycloak paths with the same naming rule as tokens and
-// logins: leaf names by default, refusing a leaf reached by two paths.
+// logins: same-named leaves share one policy, paths remain distinct.
 func TestGroupSyncNamesNestedGroupsConsistently(t *testing.T) {
 	for _, tc := range []struct {
 		format string
 		want   []string
 	}{
-		{"leaf", []string{"admins", "students"}},
+		{"leaf", []string{"admins", "staff", "students"}},
 		{"path", []string{"/a/staff", "/admins", "/b/staff", "/org/students"}},
 	} {
 		t.Run(tc.format, func(t *testing.T) {

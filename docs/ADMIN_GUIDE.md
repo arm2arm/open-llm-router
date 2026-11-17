@@ -1143,11 +1143,12 @@ group names with one rule, set by `oidc.group_names` (or the Admin page):
 | `leaf` (default) | `staff`, `/staff`, `/org/staff` | `staff` | Mapper **Full group path off** |
 | `path` | `staff`, `/staff` / `/org/staff` | `/staff` / `/org/staff` | Mapper **Full group path on**; policies named by path |
 
-Group sync reads each membership's Keycloak path. In `leaf` format a leaf name
-reached through two different paths (`/a/staff` and `/b/staff`) is ambiguous
-and **refused**, so no policy is granted through the wrong group; switch such
-realms to `path`. Upgrading from releases that used full-path claims as-is: set
-`group_names: path` to keep those group names.
+Group sync reads each membership's Keycloak path. In `leaf` format, groups with
+the same last segment (`/a/staff` and `/b/staff`) share the `staff` policy. This
+matches bare-name claims from the mapper; ambiguous leaves are never refused on
+only one authentication path. Leaf format cannot distinguish same-named groups.
+Use `path` with **Full group path on** when those groups must grant different
+access, and configure policies with their complete paths.
 
 What the next request observes after an admin change:
 

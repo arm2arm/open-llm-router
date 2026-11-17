@@ -19,10 +19,10 @@ const (
 )
 
 // GroupNames normalizes group claims or Keycloak group paths to the format.
-// In leaf format, a leaf name reached by two different paths (for example
-// "/a/staff" and "/b/staff") is ambiguous and dropped, so a policy can never
-// be granted through the wrong group; use path format for such realms. The
-// result is sorted and duplicate-free.
+// Leaf format deliberately treats same-named groups as one policy, whether
+// claims contain bare names or full paths. It cannot distinguish "/a/staff"
+// from "/b/staff"; use path format when those must have different access.
+// The result is sorted and duplicate-free.
 func GroupNames(values []string, format string) []string {
 	names := []string{}
 	if format == GroupPath {
@@ -37,7 +37,6 @@ func GroupNames(values []string, format string) []string {
 			names = append(names, strings.TrimSuffix(value, "/"))
 		}
 	} else {
-		paths := map[string]map[string]bool{} // leaf -> distinct full paths
 		for _, value := range values {
 			value = strings.TrimSuffix(strings.TrimSpace(value), "/")
 			leaf := value[strings.LastIndex(value, "/")+1:]
@@ -45,14 +44,7 @@ func GroupNames(values []string, format string) []string {
 				continue
 			}
 			names = append(names, leaf)
-			if strings.HasPrefix(value, "/") {
-				if paths[leaf] == nil {
-					paths[leaf] = map[string]bool{}
-				}
-				paths[leaf][value] = true
-			}
 		}
-		names = slices.DeleteFunc(names, func(name string) bool { return len(paths[name]) > 1 })
 	}
 	slices.Sort(names)
 	return slices.Compact(names)

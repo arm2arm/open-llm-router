@@ -122,20 +122,36 @@ func (h *Handler) agentAuth(next func(http.ResponseWriter, *http.Request, agentI
 			fail(w, 403, "permission_error", "request origin is forbidden")
 			return
 		}
-		globalRelease, globalOK := h.agentLimits.acquire("global", 600, 8)
-		if !globalOK {
-			agentThrottle(w)
-			return
-		}
-		defer globalRelease()
-		release, ok := h.agentLimits.acquire("ip:"+clientAddress(r), 120, 16)
-		if !ok {
-			agentThrottle(w)
-			return
-		}
-		defer release()
-		identity, err := h.agentIdentity(r)
+		ip, err := adminaccess.ClientIP(r, h.cfg.AdminAPI.TrustedProxyCIDRs)
 		if err != nil {
+			fail(w, 403, "client_ip_unavailable", errAgentSource.Error())
+			return
+		}
+		// Only concurrent lookup work is shared with unknown credentials. Never
+		// let anonymous traffic consume valid keys' minute-long admission budgets.
+		select {
+		case h.agentAuthSlots <- struct{}{}:
+		default:
+			w.Header().Set("Retry-After", "1")
+			fail(w, 503, "api_error", "administration authentication busy")
+			return
+		}
+		identity, err := h.agentIdentity(r)
+		<-h.agentAuthSlots
+		if err != nil {
+			// Separate storage also prevents a flood of source addresses from
+			// filling the authenticated limiter's bounded bucket map.
+			for _, budget := range []struct {
+				id    string
+				limit int
+			}{{"ip:" + ip.String(), 120}, {"global", 600}} {
+				release, ok := h.agentFailures.acquire(budget.id, budget.limit, 8)
+				if !ok {
+					agentThrottle(w)
+					return
+				}
+				release()
+			}
 			if errors.Is(err, errAgentIP) {
 				h.agentAudit(r, identity, "agent.access", audit.Refused, "")
 				fail(w, 403, "ip_not_allowed", err.Error())
@@ -148,6 +164,12 @@ func (h *Handler) agentAuth(next func(http.ResponseWriter, *http.Request, agentI
 			}
 			return
 		}
+		globalRelease, globalOK := h.agentLimits.acquire("global", 600, 8)
+		if !globalOK {
+			agentThrottle(w)
+			return
+		}
+		defer globalRelease()
 		releaseKey, ok := h.agentLimits.acquire("key:"+identity.Key.ID, positive(h.cfg.AdminAPI.RequestsPerMinute, 60), positive(h.cfg.AdminAPI.MaxConcurrent, 4))
 		if !ok {
 			agentThrottle(w)

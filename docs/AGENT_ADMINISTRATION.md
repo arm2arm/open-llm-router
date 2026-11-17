@@ -254,9 +254,17 @@ owner, key ID, source IP, request/transport/change IDs. Secrets and request bodi
 are excluded from persisted audit events and preview arguments; secret fields in
 preview summaries are redacted. Authentication documents are conservatively hidden.
 
-Limits are separate from inference quotas. Authentication has a bounded per-peer
-budget (120/minute), a global 600/minute and eight-operation admission ceiling,
-and valid keys have configurable per-minute and concurrent-operation caps.
+Limits are separate from inference quotas. Failed authentication has its own
+120/minute per-client and 600/minute global budgets. Client addresses are resolved
+using `admin_api.trusted_proxy_cidrs`; untrusted forwarded headers are ignored.
+Valid keys bypass these failure budgets, including when their own client address
+has exhausted one. They share a separate 600/minute, eight-operation ceiling and
+have configurable per-key minute and concurrency caps. Authentication lookups
+have a separate eight-concurrent-work ceiling, released before operations run;
+overload returns 503 with a one-second retry hint. This bounds database work but
+does not guarantee availability under a concurrent flood: apply per-client
+limits at the trusted ingress as well. Anonymous failures cannot use up a valid
+key's minute-long budget or fill its limiter's bucket storage.
 Administration remains a single-router feature; distributed enforcement is outside
 this release, matching the existing deployment model.
 

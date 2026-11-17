@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -81,6 +82,7 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 		}
 		rt = backchannel{public, internal, rt}
 	}
+	rt = responseLimit{next: rt}
 	client := &http.Client{Transport: rt, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, client), cfg.Issuer)
 	if err != nil {
@@ -109,6 +111,51 @@ func NewWith(ctx context.Context, cfg *config.OIDC, options Options) (*Client, e
 func (c *Client) Context(ctx context.Context) context.Context { return oidc.ClientContext(ctx, c.HTTP) }
 
 func (c *Client) Close() { c.transport.CloseIdleConnections() }
+
+// Discovery, JWKS and token responses are metadata, not unbounded downloads.
+// Bound reads even when Content-Length is absent, incorrect or compressed.
+const maxResponseBytes = 1 << 20
+
+var errResponseTooLarge = errors.New("identity provider response exceeds 1 MiB")
+
+type responseLimit struct{ next http.RoundTripper }
+
+func (t responseLimit) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ContentLength > maxResponseBytes {
+		resp.Body.Close()
+		return nil, errResponseTooLarge
+	}
+	resp.Body = &limitedBody{ReadCloser: resp.Body, remaining: maxResponseBytes}
+	return resp, nil
+}
+
+type limitedBody struct {
+	io.ReadCloser
+	remaining int
+}
+
+func (b *limitedBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if b.remaining == 0 {
+		var extra [1]byte
+		if n, err := b.ReadCloser.Read(extra[:]); n == 0 {
+			return 0, err
+		}
+		return 0, errResponseTooLarge
+	}
+	if len(p) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.remaining -= n
+	return n, err
+}
 
 type backchannel struct {
 	public, internal *url.URL
