@@ -38,12 +38,16 @@ open(sys.argv[2],'w').write(yaml.safe_dump_all(items))
 PY
   kubectl apply -f "$work/policy.yaml"
   if [ "$format" = helm ]; then
+    router_policy=olr-open-llm-router-router
+    db_policy=olr-open-llm-router-postgresql
     controller_namespace=traefik
     controller_labels=app.kubernetes.io/name=traefik
     router='app.kubernetes.io/name=open-llm-router,app.kubernetes.io/instance=olr'
     db='app.kubernetes.io/name=open-llm-router-postgresql,app.kubernetes.io/instance=olr,app.kubernetes.io/component=postgresql'
     backend='app.kubernetes.io/name=open-llm-router-demo,app.kubernetes.io/instance=olr,app.kubernetes.io/component=demo'
   else
+    router_policy=router
+    db_policy=demo-dependencies
     controller_namespace=ingress-nginx
     controller_labels=app.kubernetes.io/component=controller
     router='app.kubernetes.io/component=router'
@@ -58,8 +62,20 @@ import json,sys
 p=sys.argv[1];d=json.load(open(p));d['spec']['containers'].append({'name':'http','image':'busybox:1.37.0','command':['httpd','-f','-p','8080']});json.dump(d,open(p,'w'))
 PYROUTER
   kubectl apply -f "$work/router.json"
-  kubectl -n olr run unrelated --image="$probe_image" --command -- sleep 600
+  kubectl -n olr run unrelated --image="$probe_image" --labels=olr-policy-probe=true --command -- sleep 600
+  # Kustomize denies namespace-wide egress. This client must be able to send
+  # packets so a failed connection actually tests the destination's ingress.
+  kubectl apply -f - <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: probe-egress, namespace: olr}
+spec:
+  podSelector: {matchLabels: {olr-policy-probe: "true"}}
+  policyTypes: [Egress]
+  egress: [{}]
+YAML
   kubectl -n "$controller_namespace" run controller --image="$probe_image" --labels="$controller_labels" --command -- sleep 600
+  kubectl -n "$controller_namespace" run outside --image=busybox:1.37.0 --command -- httpd -f -p 9000
   if [ "$format" = helm ]; then
     kubectl -n olr run keycloak --image=busybox:1.37.0 \
       --labels=app.kubernetes.io/name=open-llm-router-keycloak,app.kubernetes.io/instance=olr,app.kubernetes.io/component=keycloak \
@@ -70,9 +86,11 @@ PYROUTER
   fi
   kubectl -n olr wait --for=condition=Ready pod --all --timeout=180s
   kubectl -n "$controller_namespace" wait --for=condition=Ready pod/controller --timeout=180s
+  kubectl -n "$controller_namespace" wait --for=condition=Ready pod/outside --timeout=180s
   db_ip=$(kubectl -n olr get pod db -o jsonpath='{.status.podIP}')
   router_ip=$(kubectl -n olr get pod router -o jsonpath='{.status.podIP}')
   backend_ip=$(kubectl -n olr get pod backend -o jsonpath='{.status.podIP}')
+  outside_ip=$(kubectl -n "$controller_namespace" get pod outside -o jsonpath='{.status.podIP}')
   # Wait for postgres and asynchronous policy programming before negative checks.
   for attempt in $(seq 1 30); do
     if kubectl -n olr exec router -- pg_isready -h "$db_ip" -t 2; then break; fi
@@ -95,8 +113,29 @@ PYROUTER
   if kubectl -n olr exec unrelated -- pg_isready -h "$db_ip" -t 2; then echo 'unrelated pod reached database'; exit 1; fi
   if kubectl -n olr exec unrelated -- timeout 3 bash -c "exec 3<>/dev/tcp/$backend_ip/8000"; then echo 'unrelated pod reached backend'; exit 1; fi
   if kubectl -n "$controller_namespace" exec controller -- timeout 3 bash -c "exec 3<>/dev/tcp/$backend_ip/8000"; then echo 'ingress controller reached private backend'; exit 1; fi
+  # A reachable listener outside all allowed destinations detects accidental
+  # router egress: [{}]. Positive controls below prove the probe can connect.
+  denied() { ! kubectl -n olr exec "$1" -- timeout 3 bash -c "exec 3<>/dev/tcp/$2/$3"; }
+  denied router "$outside_ip" 9000 || { echo 'restrictive router egress allowed outside traffic'; exit 1; }
+  kubectl -n olr patch netpol "$router_policy" --type=json -p '[{"op":"add","path":"/spec/egress/-","value":{}}]'
+  sleep 5
+  if denied router "$outside_ip" 9000; then echo 'egress mutation was not detected'; exit 1; fi
+  kubectl apply -f "$work/policy.yaml"
+  sleep 5
+  denied router "$outside_ip" 9000 || { echo 'restrictive egress was not restored'; exit 1; }
+  # Open target ingress deliberately: each negative assertion must now fail.
+  # This also proves the unrelated client is not blocked by its own egress.
+  for target in "$router_policy:$router_ip:8080" "$db_policy:$db_ip:5432"; do
+    IFS=: read -r policy address port <<< "$target"
+    kubectl -n olr patch netpol "$policy" --type=merge -p '{"spec":{"ingress":[{}]}}'
+    sleep 5
+    if denied unrelated "$address" "$port"; then echo "$format: ingress mutation was not detected for $policy"; exit 1; fi
+    kubectl apply -f "$work/policy.yaml"
+    sleep 5
+    denied unrelated "$address" "$port" || { echo 'restrictive ingress was not restored'; exit 1; }
+  done
   kubectl -n olr delete pods --all --grace-period=0 --force --wait=true
-  kubectl -n "$controller_namespace" delete pod controller --grace-period=0 --force --wait=true
+  kubectl -n "$controller_namespace" delete pod controller outside --grace-period=0 --force --wait=true
   kubectl -n olr delete networkpolicy --all
   echo "$format: router database/backend and DNS allowed; unrelated access denied"
 done

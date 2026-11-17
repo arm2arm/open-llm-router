@@ -195,6 +195,13 @@ router and mock backend have read-only root filesystems; Keycloak needs a writab
 installation for its development startup. Probes distinguish liveness and
 readiness. The router gets 60 seconds to drain streams, flush accounting and telemetry, and close resources during shutdown.
 
+Router startup waits for its database and migrations. It does not wait for
+bundled or external Keycloak: readiness, API-key inference, local administrator
+sign-in and the agent API remain available during an identity-provider outage.
+SSO discovery retries in the background and becomes available without restarting
+the router when Keycloak recovers. Helm `--wait` still waits for every enabled
+chart component, including Keycloak's own Deployment readiness.
+
 ## Validate the chart
 
 `tests/helm/check_chart.py` uses Helm and PyYAML 6.0.3 to check the complete stack,

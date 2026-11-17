@@ -295,6 +295,11 @@ This single Helm command deploys and waits for all components. The router waits
 for PostgreSQL and applies its database migrations automatically. The first
 Keycloak startup can take several minutes. Generated credentials are reused on
 subsequent installs/upgrades against the same namespace and release name.
+The router's pod does not wait for Keycloak. Once PostgreSQL and migrations are
+ready, API-key inference, local sign-in and the agent API work during an IdP
+outage. SSO discovery retries in the background and recovers without a router
+restart. Helm `--wait` waits for all enabled components, so the Helm command can
+still wait for Keycloak even while the router is already Ready.
 
 ### 3. Open the portal and try both login methods
 

@@ -9,7 +9,7 @@ scrape_configs:
     static_configs:
       - targets: [router:8080]
     authorization:
-      credentials_file: /etc/prometheus/olr-metrics-token
+      credentials_file: /tmp/olr-metrics-token
 
   # vLLM's own /metrics, shown next to the router's on the dashboard. List
   # backends in vllm-targets.json: [{"targets": ["vllm-a:8000"], "labels": {"model": "chat-model"}}]

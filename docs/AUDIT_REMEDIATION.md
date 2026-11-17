@@ -19,9 +19,9 @@ and P3; dependencies may change that order.
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Completed in PR #309 |
 | #173 Request history | #173, #174, #229, #258 | Completed in PR #310 |
 | #185 Accessibility | #185, #230, #250, #264 | Completed in PR #311 |
-| #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Implemented; local validation passed; PR/CI pending |
-| #195 Agent administration | #195, #245, #261 | Implemented; validation in progress |
-| #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Pending |
+| #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Completed in PR #312 |
+| #195 Agent administration | #195, #245, #261 | Completed in PR #313 |
+| #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Implemented; local checks pass; Kubernetes and scrape acceptance in CI |
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Pending |
 | #237 Startup diagnostics | #237, #238, #241 | Pending |
 | #223 Regression coverage | #222, #223, #243, #246 | Pending |
@@ -468,3 +468,32 @@ and P3; dependencies may change that order.
 - **#261:** Agent overrides store agent:<key UUID>; portal writes keep
   portal:<username>. Read tools accept omitted, null and empty-object arguments.
   Both actor forms and all argument variants have integration regressions.
+
+## Deployment reliability evidence
+
+- **#167:** Blank or absent required-claim environment values preserve the site YAML;
+  `none` explicitly clears it and retains correct configuration-source attribution.
+  Compose omits an unset claim and permits an explicitly empty service-token audience.
+  Config and rendered Compose regressions cover these cases.
+- **#188:** Helm rendering and router configuration reject HTTPS portals with insecure
+  session cookies, naming the invalid cookie setting; HTTP demo values remain valid.
+- **#191:** Demo request controls cap generated tokens at 8192, embedding dimensions at
+  4096 and total embedding components at 1048576 before allocation. Tests cover normal,
+  oversized and overflow-sized inputs; trusted programmatic fixtures remain available.
+- **#192:** The production Compose pilot enables require_tls, documents verify-full
+  PostgreSQL and HTTPS services, and makes the private-network HTTP opt-out explicit.
+- **#217:** The router no longer waits for optional Keycloak in an init container.
+  Disposable Helm acceptance stops Keycloak, restarts the router, checks API/local
+  access, then restores SSO without restarting the router. Helm --wait still waits
+  for every enabled workload.
+- **#218:** The strict values schema accepts Helm's global object. Tests render the
+  chart directly and as a minimal umbrella dependency.
+- **#219:** Documented local commands and Make observability targets read root .env.
+  Prometheus writes the configured router token to a private startup file. Rendered
+  environment checks cover credentials, ports and backends; real CI scrapes require
+  UP and a dashboard usage metric with a custom token.
+- **#240:** Restrictive policy fixtures test denied router egress, then add an open
+  egress mutation and require the negative assertion to fail. Router/database ingress
+  mutations prove unrelated clients can send traffic in both Helm and Kustomize.
+  Static Helm checks constrain exact destinations and retain the explicit unrestricted
+  mode as a separate positive case.

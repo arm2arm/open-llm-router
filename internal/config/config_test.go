@@ -46,6 +46,37 @@ func lookupIn(env map[string]string) func(string) (string, bool) {
 	}
 }
 
+func TestRequiredClaimEnvironmentPreservesYAMLUnlessExplicitlyOverridden(t *testing.T) {
+	data := strings.Replace(valid, "  portal_client_id: olr-portal", "  portal_client_id: olr-portal\n  required_claim: {name: affiliation, value: member}", 1)
+	for _, tc := range []struct {
+		name, value, want, source string
+		set                       bool
+	}{
+		{"unset", "", "affiliation=member", SourceFile, false},
+		{"blank", "", "affiliation=member", SourceFile, true},
+		{"override", "entitlement=staff", "entitlement=staff", SourceEnvironment, true},
+		{"explicit removal", "none", "", SourceEnvironment, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"OIDC_ISSUER": validEnv["OIDC_ISSUER"]}
+			if tc.set {
+				env["OIDC_REQUIRED_CLAIM"] = tc.value
+			}
+			cfg, err := Parse([]byte(data), lookupIn(env))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if claim := cfg.OIDC.RequiredClaim; claim != nil {
+				got = claim.Name + "=" + claim.Value
+			}
+			if got != tc.want || cfg.AuthSources["required_claim"] != tc.source {
+				t.Fatalf("claim=%q source=%q; want %q %q", got, cfg.AuthSources["required_claim"], tc.want, tc.source)
+			}
+		})
+	}
+}
+
 // change returns valid with the first occurrence of old replaced by new.
 func change(t *testing.T, old, new string) string {
 	t.Helper()
@@ -128,6 +159,24 @@ func TestPortalEnvironment(t *testing.T) {
 	cfg, err = Parse([]byte(data), lookupIn(nil))
 	if err != nil || !cfg.Portal.CookieSecure {
 		t.Fatal("cookies must be secure by default", err)
+	}
+}
+
+func TestHTTPSPortalRequiresSecureCookies(t *testing.T) {
+	for _, tc := range []struct {
+		origin string
+		secure bool
+		valid  bool
+	}{
+		{"https://portal.example", false, false}, {"https://portal.example", true, true}, {"http://localhost:8080", false, true},
+	} {
+		_, err := Parse([]byte("models: {}\ngroups: {}\n"), lookupIn(map[string]string{"PORTAL_BASE_URL": tc.origin, "PORTAL_COOKIE_SECURE": strconv.FormatBool(tc.secure)}))
+		if (err == nil) != tc.valid {
+			t.Fatalf("portal origin %s secure=%t validation=%v", tc.origin, tc.secure, err)
+		}
+		if !tc.valid && !strings.Contains(err.Error(), "PORTAL_COOKIE_SECURE") {
+			t.Fatal("insecure HTTPS error did not name its setting")
+		}
 	}
 }
 
