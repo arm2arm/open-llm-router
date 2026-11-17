@@ -32,6 +32,11 @@ Backend checks run asynchronously: the portal, model catalog and management API 
 available with no models or no healthy replicas. Inference returns 503 for an unavailable
 model and recovers after health checks succeed. View backend health in Admin or metrics.
 A first `SIGTERM` gives streams 30 s (`-shutdown-grace`) to finish.
+The router then flushes accounting for up to 5 s, content traces for up to 2 s and
+OTLP spans for up to 5 s, in that order. A stalled collector cannot delay the accounting
+flush. Compose, Helm and Kustomize allow 60 s before forced termination: more than the
+42 s default drain/flush budget, with room for cleanup. If you raise `-shutdown-grace`,
+raise the deployment termination budget by the same amount.
 
 ### Behind a TLS reverse proxy
 
@@ -565,6 +570,12 @@ be undone:
 docker compose exec -T router olr admin user list -match alice
 docker compose exec -T router olr admin user delete -id <uuid>
 ```
+
+If this account owned a trusted-forwarder key, calls it made **for other users** remain
+in those users' history and usage totals. Their deleted key and service-owner references
+become null. Deleting an end user still removes all calls attributed to them, including
+forwarded calls. A call finishing after key deletion retains its usage without the key;
+a call finishing after end-user erasure does not recreate erased records.
 
 A user who signs in again afterwards gets a new, empty account. To block access instead, use
 `olr admin user disable -id <uuid>`. Request log lines and exported spans are outside the

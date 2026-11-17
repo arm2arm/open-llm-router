@@ -193,7 +193,7 @@ All workloads run without service-account tokens, as non-root users, with
 RuntimeDefault seccomp, dropped capabilities and no privilege escalation. The
 router and mock backend have read-only root filesystems; Keycloak needs a writable
 installation for its development startup. Probes distinguish liveness and
-readiness. The router gets 35 seconds to drain streams during shutdown.
+readiness. The router gets 60 seconds to drain streams, flush accounting and telemetry, and close resources during shutdown.
 
 ## Validate the chart
 

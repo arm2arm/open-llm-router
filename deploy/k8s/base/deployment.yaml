@@ -14,8 +14,8 @@ spec:
     metadata:
       labels: {app.kubernetes.io/component: router}
     spec:
-      # A little longer than the router's own shutdown grace of 30 s.
-      terminationGracePeriodSeconds: 35
+      # Allow 30 s for HTTP draining, 12 s for flushes and time for cleanup.
+      terminationGracePeriodSeconds: 60
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

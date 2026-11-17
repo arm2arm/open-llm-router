@@ -55,6 +55,34 @@ func accountingRouter(t *testing.T, cfg *config.Config, recorder usage.Recorder)
 	return h, router
 }
 
+func TestPreDispatchRejectionsDoNotUseAccountingQueue(t *testing.T) {
+	backend := httptest.NewServer(mockllm.New(mockllm.Options{}))
+	defer backend.Close()
+	cfg := testConfig(backend.URL)
+	cfg.Groups = map[string]config.Group{"staff": {Models: []string{}}}
+	records := make(recordChannel, 1)
+	_, router := accountingRouter(t, cfg, records)
+	for _, tc := range []struct {
+		body string
+		code int
+	}{
+		{`{`, 400},
+		{`{"model":"unavailable"}`, 404},
+		{`{"model":"chat-model"}`, 403},
+	} {
+		for range 100 {
+			resp, _ := send(t, router.URL, "/v1/chat/completions", tc.body, nil)
+			if resp.StatusCode != tc.code {
+				t.Fatal(resp.StatusCode, tc)
+			}
+		}
+	}
+	router.Close()
+	if len(records) != 0 {
+		t.Fatal("rejections consumed accounting capacity")
+	}
+}
+
 func TestAccountingBothProtocolsAndFiltering(t *testing.T) {
 	mock := mockllm.New(mockllm.Options{Tokens: 7})
 	backend := httptest.NewServer(mock)
@@ -263,8 +291,8 @@ func TestAccountingFailoverRecordsOnce(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatal(resp.StatusCode)
 	}
-	router.Close()
 	r := records.next(t)
+	router.Close()
 	if r.Status != "200" || r.Replica != good.URL || r.OutputTokens != 7 || len(records) != 0 {
 		t.Fatal("failover recorded more than one call or the wrong replica", r)
 	}
@@ -306,13 +334,13 @@ func TestAccountingUsageOptionsReachGoStructBackend(t *testing.T) {
 	} {
 		before := calls.Load()
 		resp, out := send(t, router.URL, "/v1/chat/completions", `{"model":"alias","messages":[],"stream":true`+tc.options+`}`, nil)
-		record := records.next(t)
 		if !tc.valid {
-			if resp.StatusCode != 400 || calls.Load() != before || record.InputTokens != 0 {
-				t.Fatal("ambiguous options reached backend", resp.StatusCode, record)
+			if resp.StatusCode != 400 || calls.Load() != before || len(records) != 0 {
+				t.Fatal("ambiguous options reached backend or accounting", resp.StatusCode)
 			}
 			continue
 		}
+		record := records.next(t)
 		if resp.StatusCode != 200 || record.InputTokens != 1200 || bytes.Contains(out, []byte(`"usage"`)) != tc.asked {
 			t.Fatal("usage options/accounting", resp.StatusCode, record, string(out))
 		}

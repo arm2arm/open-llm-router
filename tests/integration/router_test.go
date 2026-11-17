@@ -128,7 +128,7 @@ func startRouter(t *testing.T, binary, config, dsn string, logOutput ...io.Write
 				if err != nil {
 					t.Error("router exit:", err)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(15 * time.Second): // one-second HTTP grace plus twelve seconds of bounded flushes
 				_ = cmd.Process.Kill()
 				<-done
 				t.Error("router did not shut down")

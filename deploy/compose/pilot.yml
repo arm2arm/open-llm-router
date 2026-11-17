@@ -43,7 +43,7 @@ services:
       - /tmp:size=16m,mode=1777
     pids_limit: 256
     restart: unless-stopped
-    stop_grace_period: 35s
+    stop_grace_period: 60s
     logging:
       driver: json-file
       options:

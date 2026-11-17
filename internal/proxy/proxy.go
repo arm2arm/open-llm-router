@@ -460,6 +460,7 @@ func (h *Handler) attempt(w http.ResponseWriter, r *http.Request, body []byte, m
 	req.GetBody = nil
 	account.capture.Headers(req.Header)
 	headerTimer := time.AfterFunc(time.Duration(model.TimeoutS)*time.Second, func() { cancel(errHeaderTimeout) })
+	account.dispatched = true
 	resp, err := h.transport.RoundTrip(req)
 	headerTimer.Stop()
 	if err != nil {
