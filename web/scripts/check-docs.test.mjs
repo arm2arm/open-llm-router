@@ -13,7 +13,7 @@ test('GitHub slugs include duplicates, Unicode, code and Setext headings', () =>
   )
   assert.deepEqual(
     [...parsed.anchors],
-    ['hello-world', 'hello-world-1', 'über-die-api', 'setext'],
+    ['hello-world', 'hello-world-1', 'über-die-api', 'setext', 'inline-html'],
   )
 })
 
