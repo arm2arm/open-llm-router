@@ -70,13 +70,14 @@ type querier interface {
 }
 
 // VerifyDestinations checks every replica of a configuration against the
-// outbound policy that proxy traffic also uses.
+// outbound policy that proxy traffic also uses. DNS availability is reported
+// by health probes, so an outage cannot prevent restoring a safe revision.
 func VerifyDestinations(policy *backendpolicy.Policy) func(context.Context, *config.Config) []string {
 	return func(ctx context.Context, cfg *config.Config) []string {
 		var problems []string
 		for _, name := range slices.Sorted(maps.Keys(cfg.Models)) {
 			for i, r := range cfg.Models[name].Pool {
-				if err := policy.CheckBackend(ctx, r.URL, r.PrivateNetwork); err != nil {
+				if err := policy.CheckConfiguredBackend(ctx, r.URL, r.PrivateNetwork); err != nil {
 					problems = append(problems, fmt.Sprintf("models.%s.pool[%d]: %s", name, i, err))
 				}
 			}

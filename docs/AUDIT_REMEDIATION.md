@@ -322,3 +322,14 @@ and P3; dependencies may change that order.
   unlimited usage, restoration with a full bucket, snapshot-only transitions,
   unlimited calls completing late, and finite calls completing both during and
   after the unlimited interval. Existing finite-bucket debt/refill checks remain.
+
+## Routing recovery DNS evidence
+
+- **#181:** Configuration validation distinguishes an unresolved hostname from
+  a forbidden destination. Unresolved origins can be restored without bypassing
+  per-connection address checks; live discovery and probes still report failure.
+  Unit checks preserve metadata, loopback, private-network and malformed-origin
+  refusals. The PostgreSQL regression restores an unresolved replica through
+  the portal, bound agent operation and actual CLI, applies it and checks its
+  unhealthy runtime state. A formerly file-trusted origin that becomes forbidden
+  remains blocked on activation, rollback and Apply.
