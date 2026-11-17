@@ -18,8 +18,8 @@ and P3; dependencies may change that order.
 | #164 Quotas and admission | #164, #176, #184, #189, #203, #249 | Strict request bounds: PR #305; calendar retry guidance: PR #306; explicit override values: PR #307; Batch inheritance, reservation feedback and TPM transitions: PR #308 |
 | #181 Managed routing | #181, #207, #208, #210, #211, #254, #255, #257 | Completed in PR #309 |
 | #173 Request history | #173, #174, #229, #258 | Completed in PR #310 |
-| #185 Accessibility | #185, #230, #250, #264 | All four findings implemented; CI validation pending |
-| #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Implemented; regression checks in progress |
+| #185 Accessibility | #185, #230, #250, #264 | Completed in PR #311 |
+| #226 Portal key and form UX | #201, #226, #227, #228, #262, #263 | Implemented; local validation passed; PR/CI pending |
 | #195 Agent administration | #195, #245, #261 | Pending |
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Pending |
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Pending |
