@@ -49,7 +49,8 @@ Terminate TLS in a reverse proxy and keep the router's port internal. The proxy 
 - read/send timeouts **at least** the largest model `timeout_s` (default 900 s);
 - request body limit **4 MiB**, the router's own limit;
 - HTTP/1.1 to the router, keep-alive on; `/metrics` not exposed publicly, or only with its token;
-- per-client connection and request-rate limits, with a bounded upload timeout;
+- per-client connection and request-rate limits on `/v1`, `/portal` and
+  `/api/admin/v1`, with a bounded upload timeout;
   the router does not trust `X-Forwarded-For`.
 
 ```nginx
@@ -110,8 +111,16 @@ budget. A full budget fails immediately with **503** and `Retry-After: 1`; cache
 principals remain usable. Credential SQL uses a separate **four-connection** pool, so
 invalid credentials cannot occupy the portal/accounting/readiness pool. Allow those
 four connections per router in the database's connection budget, plus its dedicated
-invalidation connection and the primary pool configured by `pool_max_conns` in
-`OLR_DATABASE_URL`. These fixed authentication limits require no configuration.
+invalidation listener and the primary pool configured by `pool_max_conns` in
+`OLR_DATABASE_URL`. Authentication writes open a temporary unpooled connection for
+the transaction and invalidation acknowledgements; budget for simultaneous portal,
+agent and operator mutations too. Portal/accounting/readiness, trace workers,
+group-sync locks and settings operations otherwise share the primary pool.
+Include backup/restore clients, migration/startup activity, operator SQL/CLI and
+other applications using this PostgreSQL server. Reserve at least
+`router_processes * (pool_max_conns + 4 + 1) + simultaneous_auth_writes + maintenance_headroom`
+connections, then include the other applications' own pools. This is a capacity
+budget, not an extra connection limit enforced by the router. These fixed authentication limits require no configuration.
 
 Failed API keys and tokens occupy separate bounded caches of **4,096 SHA-256 digests**
 for **five seconds**. Unknown, expired, revoked, disabled and otherwise invalid
@@ -172,6 +181,8 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `retention.usage_days` / `usage_daily_days` / `run_at` | 90 / 400 / `03:00` | how long records and daily totals are kept; when the nightly job runs |
 | `oidc.issuer`, `portal_client_id` | — / `olr-portal` | identity provider; leave `oidc` out for local portal authentication and API keys |
 | `oidc.groups_claim`, `username_claim` | `groups`, `preferred_username` | claim names |
+| `oidc.default_sign_in` | `keycloak` | sign-in option selected by default: `keycloak` or `local` |
+| `oidc.group_names` | `leaf` | normalize Keycloak groups as `leaf` or full `path`; use the same mode for sign-in, API tokens and sync |
 | `oidc.audience` | — | enables access tokens on `/v1/*` with this `aud` |
 | `oidc.sync_client_id`, `sync_interval_s` | `olr-sync`, 900 | group sync (runs when its secret is set) |
 | `oidc.sync_max_disable` | 10 | maximum users a sync run may disable; 1–10000 |
@@ -408,6 +419,42 @@ A user disabled in Keycloak is disabled here by the group sync. Users can revoke
 (`-value unlimited` lifts a limit), `override clear` and `override list`, or the **Admin** page.
 Changes apply at the user's next request, for API keys and OIDC access tokens alike.
 
+### Respond to a leaked inference or administration key
+
+Do not paste a full key into a shell command, SQL transcript, issue or chat.
+Using a trusted operator database connection, identify its owner by the stored
+prefix: the first 12 characters for an inference key, or the first 18 for an
+`olr-admin-` administration key. Enter only that prefix at the `psql` prompt:
+
+```sh
+python3 deploy/postgres/run_libpq.py psql
+```
+
+```sql
+\prompt 'Key prefix only: ' olr_key_prefix
+SELECT k.id AS key_id, k.user_id AS owner_id, k.prefix, u.issuer, u.sub, k.revoked, k.expires
+FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.prefix=:'olr_key_prefix';
+SELECT k.id AS key_id, k.owner_id, k.prefix, u.issuer, u.sub, k.revoked, k.expires
+FROM admin_api_keys k JOIN users u ON u.id=k.owner_id WHERE k.prefix=:'olr_key_prefix';
+```
+
+A prefix is not guaranteed unique: inspect every candidate with the account owner
+and issuance history, and revoke all plausible compromised candidates if needed.
+For inference keys use `olr admin key revoke -id KEY_UUID`; list the owner's other
+keys with `olr admin key list -user OWNER_UUID`. For administration keys, the owner
+can revoke the key in Admin's agent-key controls or through the scoped revoke
+operation; revocation includes descendants. If the owner cannot be trusted,
+disable the ordinary account with `olr admin user disable -id OWNER_UUID`, which
+also removes its administration access. The protected administrator cannot be
+disabled; use operator recovery to revoke its keys/sessions and rotate its
+password. Avoid direct SQL mutations that bypass invalidation and history.
+
+Record revocations and affected UUIDs in the restricted incident record outside
+the router database, inspect usage/history for unauthorized activity, and rotate
+other exposed credentials. Re-enabling an ordinary account does not revive revoked
+administration keys, but unrevoked inference keys can work again; revoke them
+before re-enabling. Check all replicas and retain the record for later restores.
+
 ### Rotate secrets
 
 | Secret | How |
@@ -453,7 +500,7 @@ exposed: the old ciphertext remains in immutable rows and backups and can still
 be decrypted with the leaked key. Expire backups under the site's retention
 policy. Do not delete or rewrite history triggers to rotate a key.
 
-### Back up Postgres
+### Backups and restore
 
 The database holds users, API-key/password hashes, sessions, overrides and usage.
 API keys cannot be recovered. Upgrading for OLR-SEC-04 drops historical ciphertext;
@@ -461,12 +508,45 @@ retire legacy API-key encryption secrets and expire old backups per site policy.
 Protect dumps as secrets and back it up daily:
 
 ```sh
-pg_dump --format=custom --file=olr-$(date +%F).dump "$OLR_DATABASE_URL"
-pg_restore --clean --if-exists --dbname="$OLR_DATABASE_URL" olr-YYYY-MM-DD.dump   # restore, router stopped
+umask 077
+# The wrapper reads OLR_DATABASE_URL, removes pgx-only pool_* options and
+# preserves TLS parameters and passes the password through PGPASSWORD.
+python3 deploy/postgres/run_libpq.py pg_dump --format=custom --file="olr-$(date +%F).dump"
+# Stop all router processes and isolate the target before restoring:
+python3 deploy/postgres/run_libpq.py pg_restore --clean --if-exists olr-YYYY-MM-DD.dump
 ```
 
-Keep backups no longer than the usage retention, or erasures (below) come back with a restore;
-after restoring an old backup, repeat the erasures done since.
+`pg_restore` needs database mode; the wrapper supplies its sanitized connection
+URL through an injected `--dbname` option. Do not pass a second database option.
+Use the same wrapper for upgrade backups. Set `OLR_DATABASE_URL` to the isolated
+restore target before running it; the URL may include `pool_max_conns` and other
+pgx pool options. The wrapper strips those while keeping libpq TLS settings and
+the database password out of command arguments.
+
+Restoring an older backup **undoes subsequent key revocations, user disablements,
+erasures, override reductions and administration-key revocations**, along with
+later audit events and settings activations. A compromised key may work again.
+Keep backup retention within the site's erasure/usage policy and maintain a
+restricted external record of security actions independent of these backups.
+
+Schedule `olr admin history -from START_RFC3339 -to END_RFC3339 -limit 200` exports
+to encrypted, access-controlled storage outside this database. Fix the time window,
+follow each returned `next_before` with `-before` until it is null, and retain every
+page. Alert if exports fail. Record emergency revocations and disablements in the
+incident system too, so a failure before the next export does not lose the action.
+
+Before reopening traffic after restore:
+
+1. Keep routers stopped and validate the restored schema, image compatibility,
+   protected-admin UUID, local login and active settings in an isolated instance.
+2. Compare the restore timestamp to the external history/incident record. Reapply
+   all later revocations (including administration keys), disablements, erasures,
+   override reductions and required policy changes through supported admin tools.
+3. Rotate compromised credentials, including any restored local password or
+   backend/SSO secret exposed during the incident; invalidate restored sessions
+   and keys. If the restored protected password is unknown, run operator recovery.
+4. Verify denied credentials remain denied, check database readiness and backend
+   inference separately, then reopen traffic and resume history exports.
 
 Managed settings (revisions, activations, encrypted secrets and the audit history)
 are in the same database. A restore returns them to the backup's active revision;
@@ -493,8 +573,11 @@ whole setup locally.
 
 The router logs one JSON line per request to stdout: request ID, user ID, 12-character key
 prefix, model, replica, status, tokens and timing, never content. Keep these logs no longer
-than `retention.usage_days`, e.g. `docker` log rotation with `max-size`/`max-file`, or the
-retention of the log system they are shipped to.
+than the site's declared retention (normally no longer than `retention.usage_days`).
+Docker `max-size`/`max-file` rotate by size and do **not** bound the age of low-volume
+logs. Use age-based deletion in the shipping system (for example Loki's retention
+compactor or an Elasticsearch ILM delete phase), or a managed host log policy with
+an explicit maximum age. Include exported files and backups in that policy.
 
 ## Limits and their errors
 
@@ -531,11 +614,13 @@ Users see their own limits and use in the portal and at `/v1/me/usage`.
 
 ## Known limitations
 
-- One router instance: concurrency, RPM and TPM counters, the queue and session affinity are in
-  memory. More than one replica needs shared counters (Redis or Postgres), see PLAN §4.
-- Endpoint/model parameters for existing logical models can be activated live through
-  Admin. YAML/environment, logical model names, aliases and group policies require
-  recreation. Endpoint activation does not synchronize multiple router processes.
+- Use one router process. Concurrency, RPM/TPM counters, daily/monthly token-quota
+  admission and reservations, queues and session affinity are process-local.
+  With N processes the effective per-user allowance can reach N times the configured
+  quota/limit. Persisted usage reporting does not make admission distributed.
+- Managed endpoints, logical models/aliases, group policies and authentication
+  settings can activate live on one router. File/environment-only changes require
+  recreation. Runtime activation does not coordinate multiple router processes.
 - Quotas use backend-reported token counts when available. A stream that ends without output usage is counted
   by its content events, a lower bound. Without `strict_quota`, calls already admitted can
   overshoot a quota.
@@ -1148,6 +1233,10 @@ and dumps are never CI artifacts.
    and accounting against the backup. Sign in locally, run readiness and a streamed
    request with an ordinary user's key, then inspect usage and policy limits.
    A password/key created after the backup cannot be expected to survive restore.
+   Before exposing it, reapply later revocations, disablements, erasures, override
+   reductions and administration-key revocations from the external history/incident
+   record described in [Backups and restore](#backups-and-restore). Rotate any
+   compromised restored credentials and invalidate restored sessions/keys.
 4. If the restored protected password is unknown, run `olr admin recover` with a
    private file or redirected stdin. It keeps the UUID, revokes existing keys and
    sessions, and requires a new password. Replace temporary recovery material,

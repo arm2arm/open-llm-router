@@ -132,7 +132,7 @@ web:
 	cd web && npm ci && npm run build
 
 web-check:
-	cd web && npm ci && npm run lint && npm run typecheck && npm run build && npm audit
+	cd web && npm ci && npm run lint && npm run typecheck && npm run docs:check && npm run build && npm audit
 
 # Disposable clean install without any IdP; keeps the existing dev stack up.
 .PHONY: acceptance-local

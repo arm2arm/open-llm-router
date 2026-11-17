@@ -24,8 +24,8 @@ and P3; dependencies may change that order.
 | #167 Deployment reliability | #167, #188, #191, #192, #217, #218, #219, #240 | Completed in PR #314 |
 | #183 Releases | #183, #193, #220, #221, #225, #242 | Completed in PR #315 |
 | #237 Startup diagnostics | #237, #238, #241 | Completed in PR #316 |
-| #223 Regression coverage | #222, #223, #243, #246 | Implemented; focused checks pass; CI pending |
-| #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Pending |
+| #223 Regression coverage | #222, #223, #243, #246 | Completed in PR #317 |
+| #232 Documentation | #196, #209, #224, #231, #232, #234, #235, #236 | Implemented; documentation/Helm/backup checks pass; CI pending |
 
 ## Authentication evidence
 
@@ -551,3 +551,11 @@ immutable release-tag rules, optional approval mode, secret scanning and Action 
   pinned-dependency watcher supplements Dependabot. The security mutation job
   checks all 21 reported guarantee groups through 44 independent removals,
   including each of the 16 audit actions, with passing restored baselines.
+
+- **#232:** Operator, client and API guidance now agrees on protected inference,
+  CORS, readiness, egress, hashing-only keys, opt-in tracing, process-local quotas,
+  connection budgets, incident mapping and restore rollback of security actions.
+  Private vulnerability reporting is enabled, with SECURITY/CONTRIBUTING/upgrade
+  notes and issue guidance. GitHub-slug Markdown link checks and stale key-help
+  regressions run in web-check; Helm gives an explicit obsolete-setting error.
+  The documented pgx-URL backup wrapper passes real PostgreSQL dump/restore tests.
