@@ -29,16 +29,25 @@ type requestRecord struct {
 	Forwarded    bool            `json:"forwarded"`  // made by a trusted forwarder for this user
 }
 
+// RequestHistoryQuery bounds both disjoint attribution scans before joining trace metadata.
+// It is shared with the query-plan regression to keep that check on the real query.
+const RequestHistoryQuery = `SELECT a.ts, a.model, a.protocol, a.status, a.input_tokens, a.output_tokens,
+		a.latency_ms, a.ttfb_ms, a.is_stream, k.prefix, a.forwarded_for IS NOT NULL, a.request_id, a.operation,
+		t.request_id IS NOT NULL, t.summary, t.conversation_key
+  FROM (
+   SELECT * FROM (
+    (SELECT * FROM usage WHERE forwarded_for=$1 ORDER BY ts DESC LIMIT $2)
+    UNION ALL
+    (SELECT * FROM usage WHERE user_id=$1 AND forwarded_for IS NULL ORDER BY ts DESC LIMIT $2)
+   ) attributed ORDER BY ts DESC LIMIT $2
+  ) a LEFT JOIN api_keys k ON k.id = a.key_id
+  LEFT JOIN request_traces t ON t.request_id=a.request_id AND t.user_id=$1 AND t.expires_at>now()
+  ORDER BY a.ts DESC`
+
 // requests lists the newest per-request records attributed to the user:
 // metadata only, as stored.
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request, u user) {
-	rows, err := h.pool.Query(r.Context(), `SELECT a.ts, a.model, a.protocol, a.status, a.input_tokens, a.output_tokens,
-		a.latency_ms, a.ttfb_ms, a.is_stream, k.prefix, a.forwarded_for IS NOT NULL, a.request_id, a.operation,
-		t.request_id IS NOT NULL, t.summary, t.conversation_key
-		FROM usage a LEFT JOIN api_keys k ON k.id = a.key_id
-		LEFT JOIN request_traces t ON t.request_id=a.request_id AND t.user_id=$1 AND t.expires_at>now()
-		WHERE a.forwarded_for = $1 OR (a.user_id = $1 AND a.forwarded_for IS NULL)
-		ORDER BY a.ts DESC LIMIT $2`, u.ID, requestLimit)
+	rows, err := h.pool.Query(r.Context(), RequestHistoryQuery, u.ID, requestLimit)
 	if err != nil {
 		unavailable(w)
 		return

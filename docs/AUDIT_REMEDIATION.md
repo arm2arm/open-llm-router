@@ -386,3 +386,10 @@ and P3; dependencies may change that order.
   the default 15-second heartbeat, observes pings, then checks sign-out and expiry
   produce end events at the next heartbeat. Middleware checks keep other routes
   on the 10-second deadline.
+
+- **#174:** Request history bounds the forwarded and direct attribution branches
+  separately before merging their newest rows and joining trace metadata.
+  Migration 0030 supplies ordered forwarded and partial direct indexes. An
+  EXPLAIN ANALYZE regression seeds 200,000 direct and forwarded rows, checks bounded plans
+  for empty users, forwarder accounts and busy recipients, and verifies mixed
+  direct/forwarded ordering without leaking another recipient's calls.

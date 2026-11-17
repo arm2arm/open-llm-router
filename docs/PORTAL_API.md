@@ -658,3 +658,7 @@ endpoint save cannot overwrite a newer routing publication.
 and rechecks the session. Sign-out or expiry ends the stream at the next check;
 each session lookup remains bounded to 10 seconds. Other portal routes retain
 their request deadline.
+
+Request-history lookup seeks each user's newest direct and forwarded records
+separately, then merges the bounded results. A service account's calls on behalf
+of other users are excluded from its own history.
