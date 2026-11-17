@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -111,7 +112,22 @@ func (h *Handler) agentPreview(w http.ResponseWriter, r *http.Request, a agentId
 		}
 	}
 	summary = map[string]any{"before": before, "after": summary, "description": op.Description}
-	summaryRaw, _ := json.Marshal(summary)
+	// Detailed before/after values are useful to the authorized caller now,
+	// but are unnecessary for apply (bound by hash/version) or status lookup.
+	// Persist field names only: no identities, key labels or free-text reasons.
+	parameterNames := make([]string, 0, len(body.Arguments.Parameters))
+	for name := range body.Arguments.Parameters {
+		parameterNames = append(parameterNames, name)
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(body.Arguments.Body, &fields)
+	fieldNames := make([]string, 0, len(fields))
+	for name := range fields {
+		fieldNames = append(fieldNames, name)
+	}
+	sort.Strings(parameterNames)
+	sort.Strings(fieldNames)
+	summaryRaw, _ := json.Marshal(map[string]any{"operation": op.Name, "description": op.Description, "parameter_names": parameterNames, "field_names": fieldNames, "content": "Detailed before/after values are returned only when preparing the preview; they are not stored."})
 	var id string
 	var expires time.Time
 	errPreviewStale := errors.New("administration state changed while preparing preview")
