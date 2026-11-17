@@ -141,6 +141,38 @@ func List(ctx context.Context, pool *pgxpool.Pool, owner string) ([]Key, error) 
 	}
 	return keys, nil
 }
+
+// RevokeOwner records every policy-driven revocation in the same transaction.
+// Errors propagate so a request cannot report only an authentication refusal
+// when storage failed to enforce the permanent revocation.
+func RevokeOwner(ctx context.Context, pool *pgxpool.Pool, owner, reason string, actor audit.Actor) error {
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `UPDATE admin_api_keys SET revoked=true,policy_version=policy_version+1 WHERE owner_id=$1 AND NOT revoked RETURNING id::text`, owner)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := audit.Record(ctx, tx, audit.Event{Action: "admin_key.revoke", Actor: actor, TargetType: "admin_key", TargetID: id, Result: audit.Succeeded, Reason: reason, Details: map[string]any{"owner_id": owner}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
 func Issue(ctx context.Context, pool *pgxpool.Pool, owner string, c Create, parent *Key, maxActive int, actor audit.Actor) (Key, string, error) {
 	var entropy [32]byte
 	if _, err := rand.Read(entropy[:]); err != nil {

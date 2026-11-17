@@ -32,13 +32,16 @@ func historyCommand(args []string, out, errout io.Writer) error {
 	if fs.NArg() != 0 {
 		return errors.New("unexpected history arguments; use named filters")
 	}
-	for value, target := range map[string]**time.Time{*from: &filter.From, *to: &filter.To} {
-		if value != "" {
-			parsed, err := time.Parse(time.RFC3339, value)
+	for _, bound := range []struct {
+		value  string
+		target **time.Time
+	}{{*from, &filter.From}, {*to, &filter.To}} {
+		if bound.value != "" {
+			parsed, err := time.Parse(time.RFC3339, bound.value)
 			if err != nil {
 				return audit.ErrFilter
 			}
-			*target = &parsed
+			*bound.target = &parsed
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
