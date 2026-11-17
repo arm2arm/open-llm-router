@@ -351,3 +351,10 @@ and P3; dependencies may change that order.
   large document and reject an oversized import/draft consistently. File and
   managed OIDC sync intervals both require 60..86400 seconds; accepted boundary
   files produce authentication documents without validation problems.
+
+- **#254:** Migration 0029 treats missing/null legacy group policies as deployment
+  fallback, preserving administrator credentials on rollback. Explicit managed
+  removals still revoke non-protected administrators and now record one reasoned
+  audit event per revoked key in the same transaction. A PostgreSQL regression
+  restores both legacy shapes, verifies live credentials and resolved deployment
+  authority, then checks real demotion, protected recovery and revocation history.
