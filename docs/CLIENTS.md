@@ -482,23 +482,49 @@ Quirks found with vLLM:
 
 The supported and tested baseline for this integration is **Open WebUI 0.13.3**.
 Earlier clients may preserve usage extensions, but are not verified here.
-In **Admin → Settings → Connections**, edit the OLR OpenAI connection and add
-this JSON to its **Headers** field (merge it with any existing custom headers):
+In the Open WebUI **Admin Panel → Settings → Connections**, find the OLR
+connection under **OpenAI API** and click its **⚙ Configure** button. In the
+**Edit Connection** dialog, expand **Advanced**, then add this JSON to the
+**Headers** field (merge it with any existing custom headers):
 
 ```json
 {"X-OLR-Usage-Timing":"true"}
 ```
 
+Save the connection and the Connections settings page. **Headers** is inside
+the collapsed **Advanced** section, not on the connection list. Open WebUI
+0.13.3 hides this field in personal **Settings → Connections → Direct
+Connections**, even for an administrator. Use the connection managed in the
+**Admin Panel** for this setup; local and institutional admin accounts use the
+same editor.
+
 In **Workspace → Models**, edit the model/preset and enable **Capabilities →
 Usage**. This asks Chat Completions streams for `stream_options.include_usage:true`.
 Keep the usage/Info control visible in chat. Generate a **new response** and hover
-or tap **ⓘ**. Existing messages are not recalculated. The tooltip includes numeric
-fields such as:
+or tap **ⓘ**. Existing messages are not recalculated. The tooltip shows the
+provider's input/output token counts alongside the OLR timing fields. For example:
 
 ```text
+input_tokens: 100
+output_tokens: 193
+total_tokens: 293
 olr_observed_output_tokens_per_second: 48.25
 olr_observed_elapsed_seconds: 4
 ```
+
+| Tooltip field | Meaning |
+| --- | --- |
+| `input_tokens` / `prompt_tokens` | Input tokens reported by the provider |
+| `output_tokens` / `completion_tokens` | Output tokens reported by the provider |
+| `total_tokens` | Input and output tokens combined |
+| `olr_observed_output_tokens_per_second` | Output throughput in tokens per second (TPS) |
+| `olr_observed_elapsed_seconds` | Elapsed request time in seconds up to the usage snapshot |
+
+The setup works with both **Chat Completions** and **Responses** connections.
+Open WebUI 0.13.3 preserves the timing fields when converting Responses usage
+for the chat tooltip. If token counts appear without timing, check the header
+on the connection serving that model. If no usage appears, check the model's
+**Usage** capability and whether the backend returns token counts.
 
 This is **router-observed request throughput**, calculated as the provider's
 authoritative output-token count divided by elapsed time from OLR's inference
@@ -542,6 +568,10 @@ In **Admin → Settings → Connections**, add or edit an OpenAI connection:
 - **API Type:** **Responses**.
 - **Model:** a permitted OLR logical model or alias whose replicas all serve
   native `/v1/responses` under the `openai` protocol.
+
+For input/output token counts, TPS and elapsed time in the answer's **ⓘ**
+tooltip, follow [Open WebUI response throughput](#open-webui-response-throughput),
+including the connection's **Advanced → Headers** setting.
 
 Open WebUI sends complete history in its default stateless mode. Keep
 `ENABLE_RESPONSES_API_STATEFUL=false`; OLR sets `store:false` if omitted and
