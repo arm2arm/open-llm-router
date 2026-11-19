@@ -272,6 +272,7 @@ func (a Admin) DeleteUser(ctx context.Context, userID string) (err error) {
 
 // UserInfo is what operators need to find a user; it holds no credentials.
 type UserInfo struct {
+	Profile
 	ID             string     `json:"id"`
 	Issuer         string     `json:"issuer"`
 	Subject        string     `json:"sub"`
@@ -297,8 +298,8 @@ type UserFilter struct {
 }
 
 func (a Admin) ListUsersFiltered(ctx context.Context, filter UserFilter) ([]UserInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin, disabled_at FROM users
-		WHERE ($1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0)
+	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin, disabled_at,full_name,given_name,family_name,institution FROM users
+		WHERE ($1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0 OR strpos(lower(full_name), lower($1)) > 0 OR strpos(lower(institution), lower($1)) > 0)
 		AND (NOT $2 OR NOT enabled) AND ($3::timestamptz IS NULL OR (NOT enabled AND disabled_at<$3))
 		ORDER BY username, issuer, sub`, filter.Match, filter.Disabled, filter.DisabledBefore)
 	if err != nil {
@@ -308,7 +309,7 @@ func (a Admin) ListUsersFiltered(ctx context.Context, filter UserFilter) ([]User
 	users := []UserInfo{}
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin, &u.DisabledAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin, &u.DisabledAt, &u.FullName, &u.GivenName, &u.FamilyName, &u.Institution); err != nil {
 			return nil, errors.New("read user failed")
 		}
 		users = append(users, u)
@@ -412,7 +413,13 @@ func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) (e
 
 // SyncIdentity refreshes claims without re-enabling disabled accounts or linking
 // by email. API key caches observe new memberships before this returns.
-func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool) (id string, err error) {
+func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool) (string, error) {
+	return a.SyncIdentityProfile(ctx, issuer, sub, username, email, groups, emailVerified, ProfileClaims{})
+}
+
+// SyncIdentityProfile also refreshes optional display claims from a verified
+// institutional login. Other synchronization paths preserve those attributes.
+func (a Admin) SyncIdentityProfile(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool, claims ProfileClaims) (id string, err error) {
 	if a.Actor.Type == "" {
 		a.Actor = audit.Actor{Type: "identity_provider"}
 	}
@@ -431,7 +438,9 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 		var oldName, oldEmail string
 		var oldGroups []string
 		var enabled, verified bool
-		err := tx.QueryRow(ctx, `SELECT id::text,username,email,groups,enabled,email_verified FROM users WHERE issuer=$1 AND sub=$2 FOR UPDATE`, issuer, sub).Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &verified)
+		var oldProfile Profile
+		err := tx.QueryRow(ctx, `SELECT id::text,username,email,groups,enabled,email_verified,full_name,given_name,family_name,institution FROM users WHERE issuer=$1 AND sub=$2 FOR UPDATE`, issuer, sub).Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &verified, &oldProfile.FullName, &oldProfile.GivenName, &oldProfile.FamilyName, &oldProfile.Institution)
+		profile := claims.apply(oldProfile)
 		if err == nil {
 			if !enabled {
 				return ErrNotFound
@@ -440,12 +449,12 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 			incoming := slices.Clone(groups)
 			slices.Sort(oldGroups)
 			slices.Sort(incoming)
-			if oldName == username && oldEmail == email && verified == emailVerified && slices.Equal(slices.Compact(oldGroups), slices.Compact(incoming)) {
+			if oldName == username && oldEmail == email && verified == emailVerified && oldProfile == profile && slices.Equal(slices.Compact(oldGroups), slices.Compact(incoming)) {
 				return errAuthUnchanged
 			}
-			_, err = tx.Exec(ctx, `UPDATE users SET username=$2,email=$3,groups=$4,synced_at=clock_timestamp(),email_verified=$5 WHERE id=$1`, id, username, email, groups, emailVerified)
+			_, err = tx.Exec(ctx, `UPDATE users SET username=$2,email=$3,groups=$4,synced_at=clock_timestamp(),email_verified=$5,full_name=$6,given_name=$7,family_name=$8,institution=$9 WHERE id=$1`, id, username, email, groups, emailVerified, profile.FullName, profile.GivenName, profile.FamilyName, profile.Institution)
 		} else if errors.Is(err, pgx.ErrNoRows) {
-			err = tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6) RETURNING id::text`, issuer, sub, username, email, groups, emailVerified).Scan(&id)
+			err = tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified,full_name,given_name,family_name,institution) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6,$7,$8,$9,$10) RETURNING id::text`, issuer, sub, username, email, groups, emailVerified, profile.FullName, profile.GivenName, profile.FamilyName, profile.Institution).Scan(&id)
 		}
 		a.event.TargetID = id
 		return err

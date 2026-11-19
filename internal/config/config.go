@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // IANA zones also work in the static runtime image.
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/arm2arm/open-llm-router/internal/adminaccess"
 	"github.com/jackc/pgx/v5"
@@ -150,12 +152,13 @@ type Limits struct {
 
 // OIDC describes the identity provider used for portal login.
 type OIDC struct {
-	RequireTLS     bool   `yaml:"-"`
-	Issuer         string `yaml:"issuer"`
-	PortalClientID string `yaml:"portal_client_id"`
-	GroupsClaim    string `yaml:"groups_claim"`   // default "groups"
-	UsernameClaim  string `yaml:"username_claim"` // default "preferred_username"
-	BackchannelURL string `yaml:"-"`
+	RequireTLS       bool   `yaml:"-"`
+	Issuer           string `yaml:"issuer"`
+	PortalClientID   string `yaml:"portal_client_id"`
+	GroupsClaim      string `yaml:"groups_claim"`      // default "groups"
+	UsernameClaim    string `yaml:"username_claim"`    // default "preferred_username"
+	InstitutionClaim string `yaml:"institution_claim"` // empty: common institution claims
+	BackchannelURL   string `yaml:"-"`
 	// Audience enables identity-provider access tokens on /v1/*: a token
 	// must name it in aud. Empty: API keys only.
 	Audience string `yaml:"audience"`
@@ -321,7 +324,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		cfg.OIDC.Issuer = issuer
 	}
 	if cfg.OIDC != nil {
-		for name, target := range map[string]*string{"OIDC_AUDIENCE": &cfg.OIDC.Audience, "OIDC_SYNC_CLIENT_ID": &cfg.OIDC.SyncClientID, "OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
+		for name, target := range map[string]*string{"OIDC_AUDIENCE": &cfg.OIDC.Audience, "OIDC_SYNC_CLIENT_ID": &cfg.OIDC.SyncClientID, "OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_INSTITUTION_CLAIM": &cfg.OIDC.InstitutionClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
 			if value, ok := lookup(name); ok {
 				*target = value
 			}
@@ -671,6 +674,9 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.DefaultSignIn != "" && c.OIDC.DefaultSignIn != "keycloak" && c.OIDC.DefaultSignIn != "local" {
 			add("oidc.default_sign_in: must be keycloak or local")
+		}
+		if len(c.OIDC.InstitutionClaim) > 256 || !utf8.ValidString(c.OIDC.InstitutionClaim) || strings.ContainsFunc(c.OIDC.InstitutionClaim, unicode.IsControl) {
+			add("oidc.institution_claim: use at most 256 bytes without control characters")
 		}
 		if c.OIDC.GroupNames != "" && c.OIDC.GroupNames != "leaf" && c.OIDC.GroupNames != "path" {
 			add("oidc.group_names: must be leaf or path")
