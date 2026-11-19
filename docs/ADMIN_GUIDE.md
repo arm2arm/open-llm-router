@@ -1261,6 +1261,37 @@ principals observe the change on their next request.
 
 ### Group names and authorization freshness
 
+**Admin → Users & groups → Groups** lists configured policies together with groups
+OLR has received for known users. A received group without an OLR policy is marked
+**No policy**. Choose **Configure policy** to use its exact name, select model grants
+and set limits, then save. A new policy starts with no model or administrator access.
+The group is available in backend access settings after the policy is saved.
+
+This is not a directory of every group in the Keycloak realm: OLR learns memberships
+when a user signs in, supplies a current API token, or is refreshed by configured group
+sync. **Refresh memberships** reloads OLR's stored users and groups; it does not trigger
+a Keycloak sync. Local-user membership pickers offer configured policies only.
+
+If Pierre belongs to `ErUM` in Keycloak but OLR does not show it:
+
+1. In the **same realm as OLR's issuer**, open **Clients → olr-kube-client → Client
+   scopes → the dedicated client scope → Mappers**. Add or edit a **Group Membership**
+   mapper with **Token Claim Name** `groups`, **Add to ID token** on, and **Full group
+   path** off for OLR's default leaf-name format. If using a shared client scope, it
+   must be assigned as a default scope to the OLR client. Enable the access-token
+   option too if using identity-provider API tokens.
+2. Use **Client scopes → Evaluate**, select Pierre, and inspect the **generated ID
+   token**. Confirm it contains `"groups":["ErUM"]` (possibly alongside other groups).
+   Realm/client roles such as `default-roles-…`, `offline_access` or `uma_authorization`
+   are not group memberships. If that claim contains only roles, fix the mapper.
+3. In OLR's **Admin → Keycloak**, confirm **Groups claim** is `groups`. After changing
+   Keycloak membership or mappers, Pierre signs out of OLR and signs in again; then
+   refresh the OLR user list. Group sync, when configured and working, can refresh
+   an already-known user's memberships without a new portal login.
+4. Check Pierre's row for the membership and create the `ErUM` access policy.
+   Names are case-sensitive: `ErUM` and `erum` are different policies. With full-path
+   format enabled, use the exact path (for example `/ErUM`) instead.
+
 Portal login, API access tokens and group sync turn group claims into router
 group names with one rule, set by `oidc.group_names` (or the Admin page):
 

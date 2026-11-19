@@ -263,22 +263,27 @@ type groupTotals struct {
 	TokensToday int64  `json:"tokens_today"`
 	TokensMonth int64  `json:"tokens_this_month"`
 	Admin       bool   `json:"admin"`
+	Configured  bool   `json:"configured"`
 }
 
-// adminGroups totals usage by configured group. A user in several groups
-// counts in each of them.
+// adminGroups includes received memberships even before an operator creates a
+// policy for them. Discovery does not create a policy or grant model access.
+// A user in several groups counts in each of them.
 func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 	day, month := h.calendar()
-	names := slices.Sorted(maps.Keys(h.routingConfig().Groups))
-	rows, err := h.pool.Query(r.Context(), `SELECT g.name,
+	cfg := h.routingConfig()
+	names := slices.Sorted(maps.Keys(cfg.Groups))
+	rows, err := h.pool.Query(r.Context(), `WITH group_names AS (
+		SELECT unnest($1::text[]) AS name UNION SELECT unnest(groups) FROM users WHERE $4
+		) SELECT g.name,
 		(SELECT count(*) FROM users u WHERE g.name = ANY(u.groups) AND u.enabled),
 		COALESCE(sum(d.requests) FILTER (WHERE d.day = $2::date), 0)::bigint,
 		COALESCE(sum(d.input_tokens + d.output_tokens) FILTER (WHERE d.day = $2::date), 0)::bigint,
 		COALESCE(sum(d.input_tokens + d.output_tokens), 0)::bigint
-		FROM unnest($1::text[]) AS g(name)
+		FROM group_names g
 		LEFT JOIN users u ON g.name = ANY(u.groups)
 		LEFT JOIN usage_daily d ON d.user_id = u.id AND d.day >= $3::date
-		GROUP BY g.name ORDER BY g.name`, names, day.Format("2006-01-02"), month.Format("2006-01-02"))
+		GROUP BY g.name ORDER BY g.name`, names, day.Format("2006-01-02"), month.Format("2006-01-02"), agentCanReadUsers(r))
 	if err != nil {
 		unavailable(w)
 		return
@@ -291,7 +296,8 @@ func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 			unavailable(w)
 			return
 		}
-		g.Admin = h.routingConfig().Groups[g.Group].Admin
+		policy, configured := cfg.Groups[g.Group]
+		g.Admin, g.Configured = policy.Admin, configured
 		groups = append(groups, g)
 	}
 	if rows.Err() != nil {
