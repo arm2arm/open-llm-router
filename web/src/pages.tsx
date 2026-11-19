@@ -1,3 +1,4 @@
+import { ProfileFields, userDisplayName } from '@/profile'
 import { Fragment, useId, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -299,7 +300,7 @@ function UserDetail({
     <div className="user-detail p-6 grid grid-cols-1 gap-4 border-t whitespace-normal">
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
-          <div className="font-semibold">{data.user.username}</div>
+          <div className="font-semibold">{userDisplayName(data.user)}</div>
           <div className="text-xs text-muted-foreground">
             {data.user.email || 'no email'} ·{' '}
             {data.user.groups.join(', ') || 'no groups'} ·{' '}
@@ -323,6 +324,7 @@ function UserDetail({
           </Button>
         )}
       </div>
+      <ProfileFields user={data.user} />
       <Failure error={enable.error ?? clear.error} />
       <p className="subtitle">
         Identity source: {data.user.issuer === 'local' ? 'Local' : 'Keycloak'} ·{' '}
@@ -663,7 +665,7 @@ function UserManagement({ self }: { self: string }) {
             </label>
             <Input
               id="user-search"
-              placeholder="Name or email"
+              placeholder="Name, email or institution"
               value={match}
               onChange={(e) => setMatch(e.target.value)}
             />
@@ -677,7 +679,7 @@ function UserManagement({ self }: { self: string }) {
         {users.data?.has_more && (
           <p role="status" className="px-4 pb-3 text-sm text-muted-foreground">
             Showing the first {users.data.limit} matching users. Search by name
-            or email to find others.
+            or institution to find others.
           </p>
         )}
         <div className="table-wrap">
@@ -701,7 +703,17 @@ function UserManagement({ self }: { self: string }) {
                 <Fragment key={u.id}>
                   <tr>
                     <td>
-                      <div className="font-medium">{u.username}</div>
+                      <div className="font-medium">{userDisplayName(u)}</div>
+                      {userDisplayName(u) !== u.username && (
+                        <div className="text-xs text-muted-foreground">
+                          {u.username}
+                        </div>
+                      )}
+                      {u.institution && (
+                        <div className="text-xs text-muted-foreground">
+                          {u.institution}
+                        </div>
+                      )}
                       <div className="text-xs text-muted-foreground">
                         {u.email}
                         {!u.enabled && ' · disabled'}

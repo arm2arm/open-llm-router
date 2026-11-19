@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ProfileCard } from '@/profile'
 import { safeNext } from '@/lib/session-state'
 import {
   redirect,
@@ -426,6 +427,10 @@ export function AccountPage({ me, session }: { me: Me; session: Session }) {
           </p>
         </div>
       </div>
+      <ProfileCard
+        user={me.user}
+        institutional={session.auth_method === 'oidc'}
+      />
       {session.auth_method === 'local' ? (
         <PasswordForm />
       ) : (
