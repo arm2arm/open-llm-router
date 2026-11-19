@@ -15,7 +15,7 @@ When you use the LLM router at `<https://router.example.org>`, it stores:
 
 | Data | Content | Kept for | How you delete it |
 |---|---|---|---|
-| Account | identity-provider issuer and subject, username, email, group memberships, enabled flag, last identity update and when access was disabled | until operator erasure, including after access is disabled or employment/membership ends; there is no automatic disabled-account expiry | ask `<contact>`; the operator deletes the account and its owned records; administration history remains as described below |
+| Account | identity-provider issuer and subject, username, email, optional full/first/last name and institution supplied at institutional sign-in, group memberships, enabled flag, last identity update and when access was disabled | until operator erasure, including after access is disabled or employment/membership ends; there is no automatic disabled-account expiry | ask `<contact>`; the operator deletes the account and its owned records; administration history remains as described below |
 | API keys | label, first 12 characters, a one-way hash, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
 | Known local devices | one-way hash of a random `olr_device` cookie, account ID, creation and expiry; no IP address or browser fingerprint | 30 days after successful local sign-in; expired rows removed by daily retention | clear the cookie in your browser; account erasure removes registrations |
 | Sessions | a hash of the session cookie, creation and expiry | 8 hours, or until you sign out | sign out |

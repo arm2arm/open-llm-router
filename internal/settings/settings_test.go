@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -99,6 +100,7 @@ func TestDocumentProblems(t *testing.T) {
 		"sync_max_disable":     func(a *Authentication) { a.SyncMaxDisable = 10001 },
 		"required_claim":       func(a *Authentication) { a.RequiredClaim = &RequiredClaim{Name: "affiliation"} },
 		"audience":             func(a *Authentication) { a.Audience = "line\nbreak" },
+		"institution_claim":    func(a *Authentication) { a.InstitutionClaim = strings.Repeat("x", 257) },
 		"portal_client_secret": func(a *Authentication) { a.PortalClientSecret = SecretRef{Env: "OLR_DATABASE_URL"} },
 		"sync_client_secret":   func(a *Authentication) { a.SyncClientSecret = SecretRef{Env: config.EnvOIDCSyncSecret, Stored: "x"} },
 	} {
@@ -265,5 +267,26 @@ func TestAcceptedFileSyncIntervalsImportWithoutValidationProblems(t *testing.T) 
 		if err == nil || !strings.Contains(err.Error(), "oidc.sync_interval_s: must be between 60 and 86400") {
 			t.Fatalf("bad interval %d accepted: %v", n, err)
 		}
+	}
+}
+
+func TestInstitutionClaimManagedRoundTrip(t *testing.T) {
+	base := parse(t, `oidc:
+  issuer: https://idp.example/realms/a
+  portal_client_id: olr-portal
+  institution_claim: home_institution
+`, nil)
+	original := authenticationFromFile(base)
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := decodeAuthentication(data)
+	if err != nil || doc.InstitutionClaim != "home_institution" || doc.values()["institution_claim"] != "home_institution" {
+		t.Fatal("institution mapping lost during import/decode", err)
+	}
+	applied, err := doc.apply(base, applyInput{})
+	if err != nil || applied.OIDC.InstitutionClaim != "home_institution" {
+		t.Fatal("institution mapping lost on activation", err)
 	}
 }

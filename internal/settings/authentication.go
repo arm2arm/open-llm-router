@@ -26,6 +26,7 @@ type Authentication struct {
 	GroupsClaim        string         `json:"groups_claim"`
 	GroupNames         string         `json:"group_names"` // leaf (default) or path
 	UsernameClaim      string         `json:"username_claim"`
+	InstitutionClaim   string         `json:"institution_claim"`
 	RequiredClaim      *RequiredClaim `json:"required_claim"`
 	SyncClientID       string         `json:"sync_client_id"`
 	SyncClientSecret   SecretRef      `json:"sync_client_secret"`
@@ -130,6 +131,9 @@ func (a Authentication) problems() []string {
 			add("%s: use at most 2048 bytes of text without control characters", text[0])
 		}
 	}
+	if !plainText(a.InstitutionClaim, 256) {
+		add("institution_claim: use at most 256 bytes of text without control characters")
+	}
 	if a.RequiredClaim != nil && (a.RequiredClaim.Name == "" || a.RequiredClaim.Value == "" ||
 		!plainText(a.RequiredClaim.Name, 256) || !plainText(a.RequiredClaim.Value, 2048)) {
 		add("required_claim: set both name and value, or use null")
@@ -195,6 +199,7 @@ func authenticationFromFile(file *config.Config) Authentication {
 	doc := Authentication{DefaultSignIn: "keycloak", GroupNames: "leaf", GroupsClaim: "groups", UsernameClaim: "preferred_username", SyncClientID: "olr-sync", SyncIntervalS: 900, SyncMaxDisable: 10}
 	if o := file.OIDC; o != nil {
 		doc.Enabled = true
+		doc.InstitutionClaim = o.InstitutionClaim
 		if o.DefaultSignIn != "" {
 			doc.DefaultSignIn = o.DefaultSignIn
 		}
@@ -228,7 +233,7 @@ func (a Authentication) values() map[string]string {
 	return map[string]string{
 		"enabled": fmt.Sprint(a.Enabled), "default_sign_in": a.DefaultSignIn, "issuer": a.Issuer, "backchannel_url": a.BackchannelURL,
 		"portal_client_id": a.PortalClientID, "audience": a.Audience, "groups_claim": a.GroupsClaim, "group_names": a.GroupNames,
-		"username_claim": a.UsernameClaim, "required_claim": claim, "sync_client_id": a.SyncClientID,
+		"username_claim": a.UsernameClaim, "institution_claim": a.InstitutionClaim, "required_claim": claim, "sync_client_id": a.SyncClientID,
 		"sync_interval_s": fmt.Sprint(a.SyncIntervalS), "sync_max_disable": fmt.Sprint(a.SyncMaxDisable),
 	}
 }
@@ -265,7 +270,7 @@ func (a *Authentication) apply(base *config.Config, in applyInput) (*config.Conf
 	portal, sync := in.secrets["portal_client_secret"], in.secrets["sync_client_secret"]
 	if a.Enabled {
 		oidc = &config.OIDC{Issuer: a.Issuer, BackchannelURL: a.BackchannelURL, PortalClientID: a.PortalClientID, DefaultSignIn: a.DefaultSignIn,
-			Audience: a.Audience, GroupsClaim: a.GroupsClaim, GroupNames: a.GroupNames, UsernameClaim: a.UsernameClaim,
+			Audience: a.Audience, GroupsClaim: a.GroupsClaim, GroupNames: a.GroupNames, UsernameClaim: a.UsernameClaim, InstitutionClaim: a.InstitutionClaim,
 			SyncClientID: a.SyncClientID, SyncIntervalS: a.SyncIntervalS, SyncMaxDisable: a.SyncMaxDisable}
 		if a.RequiredClaim != nil {
 			oidc.RequiredClaim = &config.RequiredClaim{Name: a.RequiredClaim.Name, Value: a.RequiredClaim.Value}

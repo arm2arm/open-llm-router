@@ -14,6 +14,7 @@ import (
 )
 
 type user struct {
+	auth.Profile
 	AgentActor *audit.Actor `json:"-"`
 
 	ID                     string            `json:"id"`
@@ -40,14 +41,14 @@ func (h *Handler) session(r *http.Request) (user, error) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	err := h.pool.QueryRow(ctx, `SELECT u.id,u.username,u.email,u.groups,u.protected_admin,
-		s.auth_method,(s.scope='password_change' OR COALESCE(c.must_change_password,false)),s.created,
+		s.auth_method,(s.scope='password_change' OR COALESCE(c.must_change_password,false)),s.created,u.full_name,u.given_name,u.family_name,u.institution,
 		(SELECT jsonb_object_agg(o.field,o.value) FROM quota_overrides o WHERE o.user_id=u.id)
 		FROM sessions s JOIN users u ON u.id=s.user_id
 		LEFT JOIN local_credentials c ON c.user_id=u.id
 		WHERE s.id_hash=$1 AND s.expires>clock_timestamp() AND u.enabled AND
 		((s.auth_method='oidc' AND u.issuer<>'local' AND u.issuer=$2) OR
 		(s.auth_method='local' AND u.issuer='local' AND c.revision=s.credential_revision))`, hash[:], h.current().issuer()).
-		Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.ProtectedAdmin, &u.AuthMethod, &u.PasswordChangeRequired, &u.SessionCreated, &u.Overrides)
+		Scan(&u.ID, &u.Username, &u.Email, &u.Groups, &u.ProtectedAdmin, &u.AuthMethod, &u.PasswordChangeRequired, &u.SessionCreated, &u.FullName, &u.GivenName, &u.FamilyName, &u.Institution, &u.Overrides)
 	return u, err
 }
 

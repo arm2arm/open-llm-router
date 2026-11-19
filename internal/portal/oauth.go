@@ -207,7 +207,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		username = id.Subject
 	}
 	groups = auth.GroupNames(groups, settings.GroupNames)
-	userID, err := (&auth.Admin{Pool: h.pool}).SyncIdentity(r.Context(), id.Issuer, id.Subject, username, email, groups, emailVerified)
+	userID, err := (&auth.Admin{Pool: h.pool}).SyncIdentityProfile(r.Context(), id.Issuer, id.Subject, username, email, groups, emailVerified, auth.ReadProfileClaims(claims, settings.InstitutionClaim))
 	if errors.Is(err, auth.ErrNotFound) {
 		fail(w, 403, "permission_error", "user is disabled")
 		return
