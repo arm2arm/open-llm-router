@@ -208,7 +208,9 @@ login refuses an HTTP public origin with secure cookies. Local HTTP development 
 explicitly disable secure cookies. Local session APIs work without Keycloak; browser
 forms are tracked in #74. See [the admin guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak).
 `OIDC_GROUPS_CLAIM` and `OIDC_USERNAME_CLAIM`
-override the default `groups` and `preferred_username` claims. All five OIDC settings can
+override the default `groups` and `preferred_username` claims. `OIDC_INSTITUTION_CLAIM`
+selects an optional institution display claim; empty uses common institution claims
+([mapping guide](ADMIN_GUIDE.md#show-institutional-names-and-affiliation)). These OIDC settings can
 override the YAML or enable OIDC with no YAML section. Use the public issuer directly when
 reachable, or configure an internal backchannel without changing the expected issuer.
 No provider-specific endpoints are hardcoded.

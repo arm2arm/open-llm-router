@@ -26,6 +26,7 @@ const settingLabels: Record<string, string> = {
   groups_claim: 'Groups claim',
   group_names: 'Group names',
   username_claim: 'Username claim',
+  institution_claim: 'Institution claim',
   required_claim: 'Required claim',
   sync_client_id: 'Sync client ID',
   sync_client_secret: 'Sync client secret',
@@ -213,6 +214,7 @@ function DraftEditor({
       groups_claim: text('groups_claim'),
       group_names: text('group_names') === 'path' ? 'path' : 'leaf',
       username_claim: text('username_claim'),
+      institution_claim: text('institution_claim'),
       required_claim:
         text('required_claim.name') || text('required_claim.value')
           ? {
@@ -369,6 +371,10 @@ function DraftEditor({
           </span>
         </label>
         {field('username_claim')}
+        {field(
+          'institution_claim',
+          'Optional. Empty: use institution, organization or schacHomeOrganization from the ID token. Names use the standard profile claims.',
+        )}
         <label className="grid gap-2 text-sm">
           Required claim name
           <Input

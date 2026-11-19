@@ -97,9 +97,14 @@ operator recovery while anonymous attempts remain throttled.
 
 `GET /portal/api/me`:
 
+`user.full_name`, `given_name`, `family_name` and `institution` are display-only
+strings, empty when not supplied. They are refreshed from verified ID-token
+claims at institutional sign-in and also appear in administrator user list/detail
+responses. See [profile claim mapping](ADMIN_GUIDE.md#show-institutional-names-and-affiliation).
+
 ```json
 {
-  "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"],"protected_admin":false},
+  "user": {"id":"uuid","username":"staff","email":"staff@example.test","full_name":"Example Person","given_name":"Example","family_name":"Person","institution":"Example Institute","groups":["staff"],"protected_admin":false},
   "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"tpm":null,
              "max_concurrent":4,"max_concurrent_batch":8,"strict_quota":false}
 }
@@ -273,7 +278,7 @@ The browser gates workspace/Admin on completing a required first password change
 labels the identity source and offers local rotation under **Account**. API
 authorization remains enforced on the server regardless of browser navigation.
 
-- `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
+- `GET /portal/api/admin/users?match=text`: up to 500 users whose username, full name, email or institution contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
   month, overrides by field, `issuer`, `protected_admin`, `has_local_password` and
   `must_change_password`.
