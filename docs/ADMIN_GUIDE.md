@@ -289,6 +289,54 @@ schema changes and intentional database destruction are outside this
 guarantee, as for the protected administrator. Search these events in
 **Admin → History** or through `olr admin history`.
 
+### Show institutional names and affiliation
+
+**Account** shows full name, first name, last name, username, email and institution.
+**Admin → Users** shows the display name alongside the username and institution;
+search accepts names, email or institution. User details show the individual fields.
+
+OLR reads `name`, `given_name` and `family_name` from the **verified ID token** at
+institutional sign-in. It already requests the `openid profile email` scopes.
+When `name` is absent but name parts are supplied, it combines the first and last
+name for display. These fields never change the username, account identity,
+group membership or access permissions.
+
+In Keycloak, ensure the user's **First name** and **Last name** are filled and the
+client's **profile** client scope includes the standard name mappers with **Add to
+ID token** enabled. Use **Clients → your OLR client → Client scopes → Evaluate**
+to check the generated ID token for a test user. If names originate in another
+identity provider, its broker/LDAP mapper must first make them available in Keycloak.
+See the [Keycloak protocol-mapper documentation](https://www.keycloak.org/docs/latest/server_admin/index.html#_protocol-mappers)
+and the [OIDC profile claims](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims).
+
+Institution is optional. By default OLR tries `institution`, `organization`, then
+`schacHomeOrganization`, accepting a string or a short list of strings. A federation
+home-organization domain is displayed as supplied; OLR does not infer an institution
+from an email address. Structured organization objects are not used as display text.
+To supply a friendly institution name:
+
+1. Make an institution user attribute available in Keycloak (from federation/LDAP,
+   or under **Realm settings → User profile** and the user's attributes).
+2. Open **Clients → your OLR client → Client scopes → the dedicated client scope →
+   Mappers → Add mapper → By configuration → User Attribute**.
+3. Set **User Attribute** to the source attribute, **Token Claim Name** to
+   `institution`, **Claim JSON Type** to `String`, and **Add to ID token** to **On**.
+4. Save, evaluate the generated ID token, then sign out of OLR and sign in again.
+
+If the existing token uses a different top-level claim, set **Admin → Keycloak →
+Institution claim** to that name and activate the settings. Before managed settings
+are imported, the equivalent YAML is `oidc.institution_claim: home_institution`, or
+`OIDC_INSTITUTION_CLAIM=home_institution` in the environment. For Helm, use
+`env.OIDC_INSTITUTION_CLAIM: home_institution`. An empty setting uses the automatic
+claim order above. Managed authentication revisions remain authoritative after import.
+
+Profile values refresh at the next successful institutional login. Existing users
+therefore need to sign out and sign in once after upgrading. Missing/null/malformed
+optional claims preserve stored values; an explicit empty string clears a value.
+Local users and API/group synchronization preserve the existing profile. Missing
+fields show **Not provided** and never prevent login. Values are bounded to 1024
+UTF-8 bytes per field and included in user data exports and account erasure.
+
 ### Configure and test Keycloak in Admin
 
 **Admin → Keycloak** shows the configuration authority (file or database

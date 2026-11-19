@@ -1,3 +1,4 @@
+import { userDisplayName } from '@/profile'
 import { useEffect, useState, type FormEvent } from 'react'
 import { SessionRecovery } from '@/session-recovery'
 import { AboutPage } from '@/about'
@@ -332,15 +333,17 @@ function Workspace({
         </nav>
         <div className="account">
           <div className="flex items-center gap-2 mb-3">
-            <span className="rounded-full bg-accent p-2 text-accent-foreground">
+            <span className="shrink-0 rounded-full bg-accent p-2 text-accent-foreground">
               <ShieldCheck size={17} />
             </span>
-            <div>
-              <div className="font-semibold">
-                {me.data?.user.username ?? 'Your account'}
+            <div className="min-w-0">
+              <div className="font-semibold break-words">
+                {me.data ? userDisplayName(me.data.user) : 'Your account'}
               </div>
-              <div className="text-muted-foreground text-xs mt-1">
-                {me.data?.user.groups.join(', ') || 'Personal workspace'}
+              <div className="text-muted-foreground text-xs mt-1 break-words">
+                {me.data?.user.institution ||
+                  me.data?.user.groups.join(', ') ||
+                  'Personal workspace'}
               </div>
             </div>
           </div>
