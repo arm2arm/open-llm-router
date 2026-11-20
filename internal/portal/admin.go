@@ -298,7 +298,7 @@ func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"groups": groups})
+	respond(w, 200, map[string]any{"groups": groups, "sync_enabled": h.groupSyncEnabled()})
 }
 
 type modelReplicas struct {

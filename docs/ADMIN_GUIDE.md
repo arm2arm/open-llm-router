@@ -981,6 +981,15 @@ adapters remain planned work.
 Use **Users & groups → Manage group policies** to create groups and set per-user
 defaults. Detailed route drafts, activation, and rollback remain in Advanced routing.
 
+Use **Sync now** beside **Manage group policies**, or beside the effective sync
+interval in **Admin → Keycloak**, to refresh known Keycloak users' memberships and
+enabled state immediately. It uses the running settings and shows checked, updated,
+disabled, failed and remaining counts. Overlapping runs are skipped; incomplete
+scans can be retried and resume from the existing job's cursor. The button requires
+a configured sync client and secret; **Run checks → Sync permissions** tests that
+client's access. SSO administrators can sync without a local sign-in. This refreshes
+existing users; it does not import all realm users or create OLR group policies.
+
 Choose **Add backend**, enter an IP address or service name
 such as **10.0.0.12:8000** or **llm.cluster:8000**. Bare hosts use HTTP; explicit
 HTTPS URLs and pasted /v1 bases are accepted. Detection runs beside the host

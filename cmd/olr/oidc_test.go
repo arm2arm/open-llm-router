@@ -2,11 +2,31 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/arm2arm/open-llm-router/internal/groupsync"
 )
+
+func TestManualGroupSyncUnavailableAndSwitching(t *testing.T) {
+	s := &oidcServices{stats: &groupsync.Stats{}}
+	if _, err := s.SyncGroups(t.Context()); !errors.Is(err, groupsync.ErrDisabled) {
+		t.Fatal("unconfigured job was not refused", err)
+	}
+	s.stats.Enabled.Store(true)
+	if _, err := s.SyncGroups(t.Context()); !errors.Is(err, groupsync.ErrUnavailable) {
+		t.Fatal("initializing job was not reported", err)
+	}
+	s.mu.Lock()
+	result, err := s.SyncGroups(t.Context())
+	s.mu.Unlock()
+	if err != nil || !result.Skipped {
+		t.Fatal("manual sync waited behind a settings switch", result, err)
+	}
+}
 
 type retryLog struct {
 	record slog.Record

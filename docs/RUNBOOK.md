@@ -800,6 +800,12 @@ Users are not re-enabled automatically: use `olr admin user list` and the portal
 or `PUT /portal/api/admin/users/{id}/enabled`. Each run logs `msg="group sync"` with counts, or
 `group sync failed`.
 
+For an immediate run, choose **Admin → Users & groups → Sync now** (also available
+beside the effective sync interval in **Admin → Keycloak**). It uses the existing
+job and running configuration, reports progress counts, and refreshes the user and
+group views. It does not import realm users or create OLR group policies. The button
+is disabled when no sync client and secret are configured.
+
 A working admin user-list route is required before checking individuals. A
 realm-wide 404, bad service-account authorization or transport outage changes no
 accounts. Remote state is staged before writes; if more than
