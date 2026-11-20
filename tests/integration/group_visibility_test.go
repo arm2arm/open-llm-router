@@ -51,7 +51,7 @@ func TestPortalReceivedGroupsVisibleWithoutGrantingAccess(t *testing.T) {
 			names = append(names, g.Group)
 		}
 		if !slices.IsSorted(names) || len(out) != len(names) {
-			t.Fatal("group list is not sorted and unique")
+			t.Fatalf("group list is not sorted and unique: %q", names)
 		}
 		return out
 	}

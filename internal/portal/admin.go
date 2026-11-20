@@ -273,6 +273,7 @@ func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 	day, month := h.calendar()
 	cfg := h.routingConfig()
 	names := slices.Sorted(maps.Keys(cfg.Groups))
+	// Match Go's string ordering regardless of the database locale.
 	rows, err := h.pool.Query(r.Context(), `WITH group_names AS (
 		SELECT unnest($1::text[]) AS name UNION SELECT unnest(groups) FROM users WHERE $4
 		) SELECT g.name,
@@ -283,7 +284,7 @@ func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 		FROM group_names g
 		LEFT JOIN users u ON g.name = ANY(u.groups)
 		LEFT JOIN usage_daily d ON d.user_id = u.id AND d.day >= $3::date
-		GROUP BY g.name ORDER BY g.name`, names, day.Format("2006-01-02"), month.Format("2006-01-02"), agentCanReadUsers(r))
+		GROUP BY g.name ORDER BY g.name COLLATE "C"`, names, day.Format("2006-01-02"), month.Format("2006-01-02"), agentCanReadUsers(r))
 	if err != nil {
 		unavailable(w)
 		return
