@@ -249,6 +249,7 @@ export type AdminUserDetail = {
 }
 export type GroupTotals = {
   group: string
+  configured?: boolean
   members: number
   requests_today: number
   tokens_today: number

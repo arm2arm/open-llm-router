@@ -354,9 +354,13 @@ authorization remains enforced on the server regardless of browser navigation.
   Existing disable limits, issuer scope and account/cache invalidation apply.
   This refreshes existing users' memberships and enabled state; it does not import
   all realm users or create group policies.
-- `GET /portal/api/admin/groups`: `sync_enabled` reports whether this router has
-  group sync configured. Per configured group, lists enabled members, requests and
-  tokens today and tokens this month. A user in several groups counts in each.
+- `GET /portal/api/admin/groups`: configured groups and groups received for known users,
+  with enabled members, requests and tokens today and tokens this month. `configured`
+  distinguishes a group with an active access policy from a received membership with
+  no policy. Discovery grants no access. A user in several groups counts in each.
+  `sync_enabled` reports whether this router has group sync configured.
+  The administration `get_usage` tool retains configured groups only unless its key
+  also has `users:read`; `list_groups` requires `users:read`.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
   `max_inflight` and weight.
 
