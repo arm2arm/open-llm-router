@@ -380,6 +380,7 @@ export type AuthenticationView = {
     problem?: string
     sso_configured: boolean
     sso_available: boolean
+    group_sync_enabled?: boolean
   }
   other_issuers: {
     issuer: string

@@ -15,6 +15,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { BackendWorkspace } from '@/backends'
 import { BackendPresets } from '@/backend-presets'
 import { GroupManager } from '@/group-manager'
+import { GroupSyncButton } from '@/group-sync'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EndpointSettingsPanel } from '@/endpoints'
@@ -586,7 +587,8 @@ function UserManagement({ self }: { self: string }) {
   })
   const groups = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: () => api<{ groups: GroupTotals[] }>('admin/groups'),
+    queryFn: () =>
+      api<{ groups: GroupTotals[]; sync_enabled: boolean }>('admin/groups'),
   })
   const policyGroups = groups.data?.groups.filter((g) => g.configured !== false)
   return (
@@ -614,7 +616,7 @@ function UserManagement({ self }: { self: string }) {
       <section className="panel" aria-label="Group totals">
         <div className="panel-head">
           <h2 className="panel-title">Groups</h2>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex min-w-0 max-w-full flex-wrap items-start gap-2">
             <Button
               variant="outline"
               disabled={groups.isFetching || users.isFetching}
@@ -627,6 +629,7 @@ function UserManagement({ self }: { self: string }) {
               Refresh memberships
             </Button>
             <GroupManager />
+            <GroupSyncButton enabled={groups.data?.sync_enabled ?? false} />
           </div>
         </div>
         <div className="px-6 pb-4 grid gap-3 text-sm text-muted-foreground">
