@@ -1,0 +1,35 @@
+name: Prune pull request caches
+
+# Actions caches written by a pull request are only reusable by that pull
+# request. Delete them when it closes instead of waiting for 7-day eviction.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete caches for the merge ref and the head branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          refs=("refs/pull/${PR_NUMBER}/merge")
+          if [ "$HEAD_REPO" = "$GH_REPO" ] && [ "$HEAD_REF" != "$DEFAULT_BRANCH" ]; then
+            refs+=("refs/heads/${HEAD_REF}")
+          fi
+          for ref in "${refs[@]}"; do
+            gh cache list --ref "$ref" --limit 500 --json id --jq '.[].id' |
+              while read -r id; do
+                gh cache delete "$id" && echo "deleted cache $id ($ref)" || echo "skip $id"
+              done
+          done
