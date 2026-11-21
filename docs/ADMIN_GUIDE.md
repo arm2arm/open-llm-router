@@ -18,6 +18,13 @@ other users' content. Publish the updated [privacy notice](PRIVACY.md), protect 
 and backups as content-bearing storage, and see [the tracing guide](REQUEST_TRACING.md)
 for capture bounds and operational behavior. Server logs, metrics and OTLP stay content-free.
 
+When logging is enabled but new details are missing, check the account's
+**Stored details** budget in **My requests**. Filling the 64 MiB or 512-trace limit
+skips new captures while accounting continues. The panel shows storage usage,
+warns near the limit and offers confirmed deletion to free space. See
+[missing-detail troubleshooting](REQUEST_TRACING.md#logging-is-enabled-but-details-are-missing)
+for retention, shared API keys and account attribution.
+
 ## What an administrator can configure today
 
 | Task | Current interface | When it applies |
