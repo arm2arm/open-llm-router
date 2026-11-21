@@ -123,6 +123,10 @@ async function mock(page: Page) {
     setConflict: () => {
       conflict = true
     },
+    changeDefaults: () => {
+      defaults.version++
+      defaults.overrides.max_traces = defaults.effective.max_traces = 200
+    },
   }
 }
 
@@ -248,3 +252,29 @@ for (const theme of ['light', 'dark'] as const)
       }
     }
   })
+
+test('background refetch preserves an unfinished quota edit', async ({
+  page,
+}) => {
+  await page.clock.install()
+  const { changeDefaults } = await mock(page)
+  await page.goto('/portal/admin/logging')
+  const form = page.getByRole('form', { name: 'Default log quotas' })
+  await form.getByLabel('Maximum stored traces', { exact: true }).fill('42')
+  changeDefaults()
+  await page.clock.fastForward(16000)
+  await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')))
+  await expect(form.getByRole('status')).toContainText(
+    'Your draft is preserved',
+  )
+  await expect(
+    form.getByLabel('Maximum stored traces', { exact: true }),
+  ).toHaveValue('42')
+  await expect(
+    form.getByRole('button', { name: 'Save defaults' }),
+  ).toBeDisabled()
+  await form.getByRole('button', { name: 'Reload saved quotas' }).click()
+  await expect(
+    form.getByLabel('Maximum stored traces', { exact: true }),
+  ).toHaveValue('200')
+})

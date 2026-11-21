@@ -57,13 +57,14 @@ export function TraceQuotas({ user }: { user?: string }) {
         )}
         {query.data?.effective && (
           <QuotaForm
-            key={query.data.version}
+            key={path}
             view={query.data}
             user={user}
             path={path}
-            onReload={() => {
+            onReload={async () => {
               setSaved(false)
-              void query.refetch()
+              const result = await query.refetch()
+              return result.isError ? undefined : result.data
             }}
             onSaved={async (view) => {
               setSaved(true)
@@ -88,7 +89,7 @@ export function TraceQuotas({ user }: { user?: string }) {
 }
 
 function QuotaForm({
-  view,
+  view: latest,
   user,
   path,
   onSaved,
@@ -98,9 +99,12 @@ function QuotaForm({
   user?: string
   path: string
   onSaved: (view: QuotaView) => Promise<void>
-  onReload: () => void
+  onReload: () => Promise<QuotaView | undefined>
 }) {
   const id = useId()
+  // Keep the version and draft loaded by this editor across background fetches.
+  // Only a successful save or an explicit reload replaces them.
+  const [view, setView] = useState(latest)
   const storageInput = useRef<HTMLInputElement>(null)
   const countInput = useRef<HTMLInputElement>(null)
   const [storage, setStorage] = useState(
@@ -118,8 +122,30 @@ function QuotaForm({
       max_bytes: number | null
       max_traces: number | null
     }) => api<QuotaView>(path, 'PUT', { version: view.version, ...values }),
-    onSuccess: onSaved,
+    onSuccess: async (next) => {
+      reset(next)
+      await onSaved(next)
+    },
   })
+  function reset(next: QuotaView) {
+    setView(next)
+    setStorage(
+      next.overrides.max_bytes === null
+        ? ''
+        : String(next.overrides.max_bytes / mib),
+    )
+    setCount(
+      next.overrides.max_traces === null
+        ? ''
+        : String(next.overrides.max_traces),
+    )
+    setError('')
+    setInvalid(null)
+  }
+  const changed =
+    latest.version !== view.version ||
+    latest.defaults.max_bytes !== view.defaults.max_bytes ||
+    latest.defaults.max_traces !== view.defaults.max_traces
   function submit(event: FormEvent) {
     event.preventDefault()
     setError('')
@@ -157,26 +183,26 @@ function QuotaForm({
     >
       <p className="text-sm text-muted-foreground">
         Effective limit:{' '}
-        <strong>{number(view.effective.max_bytes / mib)} MiB</strong> and{' '}
-        <strong>{number(view.effective.max_traces)} traces</strong> per account.
-        Capture stops when either limit is reached.
+        <strong>{number(latest.effective.max_bytes / mib)} MiB</strong> and{' '}
+        <strong>{number(latest.effective.max_traces)} traces</strong> per
+        account. Capture stops when either limit is reached.
       </p>
-      {view.storage && (
+      {latest.storage && (
         <div
           className="rounded-md bg-muted p-3 text-sm"
           role="group"
           aria-label="Current log storage"
         >
-          Stored: {number(view.storage.bytes / mib)} MiB ·{' '}
-          {number(view.storage.traces)} traces.
-          {(view.storage.bytes >= view.effective.max_bytes ||
-            view.storage.traces >= view.effective.max_traces) && (
+          Stored: {number(latest.storage.bytes / mib)} MiB ·{' '}
+          {number(latest.storage.traces)} traces.
+          {(latest.storage.bytes >= latest.effective.max_bytes ||
+            latest.storage.traces >= latest.effective.max_traces) && (
             <p>Quota reached. Increase the limit to resume new captures.</p>
           )}
-          {view.storage.next_expiry && (
+          {latest.storage.next_expiry && (
             <p>
-              Next expiry: {new Date(view.storage.next_expiry).toLocaleString()}
-              .
+              Next expiry:{' '}
+              {new Date(latest.storage.next_expiry).toLocaleString()}.
             </p>
           )}
         </div>
@@ -238,11 +264,18 @@ function QuotaForm({
           {save.error.message}
         </p>
       )}
+      {changed && (
+        <p role="status">
+          Saved quotas changed while you were editing. Your draft is preserved.
+          Reload saved quotas to use the latest values.
+        </p>
+      )}
       <div className="flex flex-wrap gap-3">
         <Button
           type="submit"
           disabled={
             save.isPending ||
+            changed ||
             (save.error instanceof ApiError && save.error.status === 409)
           }
         >
@@ -265,8 +298,20 @@ function QuotaForm({
         >
           Use {user ? 'global' : 'deployment'} defaults
         </Button>
-        {save.error instanceof ApiError && save.error.status === 409 && (
-          <Button type="button" variant="outline" onClick={onReload}>
+        {(changed ||
+          (save.error instanceof ApiError && save.error.status === 409)) && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={async () => {
+              const next = await onReload()
+              if (next) {
+                reset(next)
+                save.reset()
+                storageInput.current?.focus()
+              }
+            }}
+          >
             Reload saved quotas
           </Button>
         )}
