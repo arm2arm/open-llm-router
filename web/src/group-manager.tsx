@@ -21,7 +21,7 @@ import { GroupPolicies } from '@/policies'
 import { useBackendWorkspace } from '@/backend-workspace'
 import type { RoutingDocument } from '@/lib/api'
 
-export function GroupManager() {
+export function GroupManager({ groupName }: { groupName?: string }) {
   const { query, document, save, saving } = useBackendWorkspace()
   const [editor, setEditor] = useState<{
     document: RoutingDocument
@@ -41,17 +41,36 @@ export function GroupManager() {
     <div>
       <Button
         variant="outline"
-        disabled={!document || !!query.data?.settings.draft}
+        aria-label={groupName ? `Configure policy for ${groupName}` : undefined}
+        disabled={
+          !document ||
+          !!query.data?.settings.draft ||
+          (groupName !== undefined &&
+            new TextEncoder().encode(groupName).length > 128)
+        }
         onClick={() => {
+          const next = structuredClone(document!)
+          const added =
+            groupName !== undefined && !Object.hasOwn(next.groups, groupName)
+          if (added)
+            next.groups = {
+              ...next.groups,
+              [groupName]: {
+                models: [],
+                strict_quota: false,
+                admin: false,
+                priority: 0,
+              },
+            }
           setEditor({
-            document: structuredClone(document!),
+            document: next,
             version: query.data!.settings.version,
           })
-          setDirty(false)
+          setDirty(added)
           setError('')
         }}
       >
-        Manage group policies
+        {groupName ? 'Configure policy' : 'Manage group policies'}
       </Button>
       {notice && (
         <p role="status" className="subtitle">
@@ -66,10 +85,15 @@ export function GroupManager() {
       >
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Manage group policies</DialogTitle>
+            <DialogTitle>
+              {groupName
+                ? `Configure ${groupName} policy`
+                : 'Manage group policies'}
+            </DialogTitle>
             <DialogDescription>
-              Create staff or student groups and set their per-user permissions
-              and limits. Backend group restrictions and shared backend presets
+              Use the exact group name received from Keycloak and choose its
+              models and per-user limits. New policies start with no model or
+              administrator access. Backend restrictions and shared presets
               apply in addition. Reassign a backend before removing a group it
               uses.
             </DialogDescription>

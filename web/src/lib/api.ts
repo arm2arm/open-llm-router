@@ -249,6 +249,7 @@ export type AdminUserDetail = {
 }
 export type GroupTotals = {
   group: string
+  configured?: boolean
   members: number
   requests_today: number
   tokens_today: number
@@ -379,6 +380,7 @@ export type AuthenticationView = {
     problem?: string
     sso_configured: boolean
     sso_available: boolean
+    group_sync_enabled?: boolean
   }
   other_issuers: {
     issuer: string

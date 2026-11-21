@@ -86,10 +86,11 @@ type authenticationView struct {
 	// Runtime is what this router process is running, which can differ from
 	// the active revision until it restarts.
 	Runtime struct {
-		Revision      int64  `json:"revision"`
-		Problem       string `json:"problem,omitempty"`
-		SSOConfigured bool   `json:"sso_configured"`
-		SSOAvailable  bool   `json:"sso_available"`
+		Revision         int64  `json:"revision"`
+		Problem          string `json:"problem,omitempty"`
+		SSOConfigured    bool   `json:"sso_configured"`
+		SSOAvailable     bool   `json:"sso_available"`
+		GroupSyncEnabled bool   `json:"group_sync_enabled"`
 	} `json:"runtime"`
 	// OtherIssuers are SSO accounts of previously used issuers. They keep
 	// their keys, are never merged with current accounts, and group sync no
@@ -115,6 +116,7 @@ func (h *Handler) authenticationView(r *http.Request, u user) (authenticationVie
 	}
 	state := h.current()
 	out.Runtime.SSOConfigured, out.Runtime.SSOAvailable = state.oidc != nil, state.available.Load()
+	out.Runtime.GroupSyncEnabled = h.groupSyncEnabled()
 	out.CanChange = recentLocal(u)
 	if agent, ok := r.Context().Value(agentContext{}).(agentIdentity); ok {
 		out.CanChange = agent.Key.Allows("authentication:write") && agent.Key.Allows("authentication:read")
