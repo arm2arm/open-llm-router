@@ -12,6 +12,8 @@ benchmark. [Capture workflow](images/README.md).*
 ## Use the trace viewer
 
 1. Set **Capture enabled/disabled** and **Keep traces for**, then **Save settings**.
+   The switch marks changes as **not saved** until saving succeeds. These settings
+   apply to the signed-in account shown in the logging panel.
 2. Make a call using an OpenAI or Anthropic client. With **Live** on (the default),
    the request appears at the top of the table as soon as the router accepts it, with
    a ticking elapsed time, whether it is still waiting for the model or receiving,
@@ -121,6 +123,35 @@ fragments. Event times are relative to request start.
 
 **Raw** shows exactly what was sent: the client's body, the body forwarded upstream
 with the router's changes, and the response, with omitted payloads as markers.
+
+## Logging is enabled but details are missing
+
+Check **My requests → Detailed logging → Stored details**. Each account has a
+limit of **512 traces** and **64 MiB** of logical content. Long prompts, agent
+histories and tool results can fill the byte limit before the count limit. The
+panel warns at 90% of either budget and shows the next scheduled expiry. New
+details that do not fit are skipped; request metadata and token accounting
+continue normally. Changing the logging switch does not free storage.
+
+To resume capturing sooner, use **Free trace storage…** and confirm deletion of
+your stored details, or shorten retention and save. Deletion preserves request
+metadata, token totals and the saved capture setting. Shorter retention applies
+to existing traces; cleanup runs every 15 seconds. Otherwise, wait for the shown
+expiry. Existing content is not deleted automatically merely to admit new traces.
+
+Also check:
+
+- **Save settings** must succeed before capture is enabled. Only new requests can
+  have details; older requests cannot be reconstructed.
+- The client must use the intended account's API key or OIDC identity. A shared
+  Open WebUI connection normally attributes calls to the key owner unless
+  [trusted end-user forwarding](RUNBOOK.md#open-webui-and-other-trusted-forwarders) is configured.
+  Local and institutional accounts are separate even when their usernames match.
+- With live updates paused, use **Refresh**. It refreshes both history and storage
+  usage. A completed trace can take a moment to appear.
+- Locally rejected requests and captures skipped by rate or concurrency limits
+  have metadata only. Operators can check `olr_content_trace_dropped_total` and
+  `olr_content_trace_failures_total`; these metrics contain no captured content.
 
 ## Privacy and retention
 

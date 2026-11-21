@@ -50,6 +50,17 @@ type Preferences struct {
 	RetentionDays int        `json:"retention_days"`
 	UpdatedAt     *time.Time `json:"updated_at"`
 	Generation    int64      `json:"-"`
+	Storage       *Storage   `json:"storage,omitempty"`
+}
+
+// Storage reports the same per-account budget enforced by persist. Expired rows
+// count until pruning removes them, just as they do during capture admission.
+type Storage struct {
+	Traces     int64      `json:"traces"`
+	Bytes      int64      `json:"bytes"`
+	MaxTraces  int64      `json:"max_traces"`
+	MaxBytes   int64      `json:"max_bytes"`
+	NextExpiry *time.Time `json:"next_expiry"`
 }
 
 func defaults() Preferences { return Preferences{Enabled: false, RetentionDays: 7} }
@@ -192,8 +203,17 @@ func (s *Service) refresh(ctx context.Context) error {
 
 func (s *Service) Preferences(ctx context.Context, user string) (Preferences, error) {
 	var p Preferences
-	err := s.pool.QueryRow(ctx, `SELECT trace_enabled, trace_retention_days, trace_generation, trace_preferences_set_at FROM users WHERE id=$1`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation, &p.UpdatedAt)
+	storage := Storage{MaxTraces: MaxStoredTraces, MaxBytes: MaxStoredBytes}
+	err := s.pool.QueryRow(ctx, `SELECT u.trace_enabled,u.trace_retention_days,u.trace_generation,u.trace_preferences_set_at,
+		t.traces,t.bytes,t.next_expiry
+		FROM users u CROSS JOIN LATERAL (
+			SELECT count(*) AS traces,COALESCE(sum(stored_bytes),0)::bigint AS bytes,min(expires_at) AS next_expiry
+			FROM request_traces WHERE user_id=u.id
+		) t WHERE u.id=$1`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation, &p.UpdatedAt, &storage.Traces, &storage.Bytes, &storage.NextExpiry)
 	p.Available = s.Enabled()
+	if err == nil {
+		p.Storage = &storage
+	}
 	return p, err
 }
 
