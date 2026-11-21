@@ -127,13 +127,15 @@ with the router's changes, and the response, with omitted payloads as markers.
 ## Logging is enabled but details are missing
 
 Check **My requests → Detailed logging → Stored details**. Each account has a
-limit of **512 traces** and **64 MiB** of logical content. Long prompts, agent
+configurable limit, initially **512 traces** and **64 MiB** of logical content. Long prompts, agent
 histories and tool results can fill the byte limit before the count limit. The
 panel warns at 90% of either budget and shows the next scheduled expiry. New
 details that do not fit are skipped; request metadata and token accounting
 continue normally. Changing the logging switch does not free storage.
 
-To resume capturing sooner, use **Free trace storage…** and confirm deletion of
+To preserve existing logs and resume capturing, ask an administrator to raise the
+[global default or your account quota](ADMIN_GUIDE.md#detailed-log-quotas).
+Alternatively, use **Free trace storage…** and confirm deletion of
 your stored details, or shorten retention and save. Deletion preserves request
 metadata, token totals and the saved capture setting. Shorter retention applies
 to existing traces; cleanup runs every 15 seconds. Otherwise, wait for the shown
@@ -232,8 +234,10 @@ holds at most 4,096 users, reclaiming inactive expired windows before admitting
 another user. Ordinary model controls take priority within the parameters budget;
 the trace counts omitted extensions and marks the capture as limited.
 
-Retained traces are bounded per user across all router replicas: at most **512
-traces** and **64 MiB of logical JSON content**. The byte limit counts PostgreSQL's
+Retained traces are bounded per user across all router replicas, initially **512
+traces** and **64 MiB of logical JSON content**. Administrators can set live
+[global per-user defaults and account overrides](ADMIN_GUIDE.md#detailed-log-quotas);
+these override `content_tracing.max_stored_mib` and `max_stored_traces`. The byte limit counts PostgreSQL's
 text representation of detail and summary plus 256 bytes per row for identifiers
 and fixed overhead; physical table, index, WAL and backup space can be larger.
 Writers serialize budget admission on the user's row without blocking inference.

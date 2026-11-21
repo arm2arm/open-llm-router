@@ -210,6 +210,33 @@ untouched. See [PRIVACY.md](PRIVACY.md).
   "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
   oldest first, from the daily totals (unaffected by deleting activity).
 
+## Administrator trace quotas
+
+Full administrator sessions can use:
+
+- `GET` / `PUT /portal/api/admin/trace-quotas` for global per-user defaults.
+- `GET` / `PUT /portal/api/admin/users/{id}/trace-quota` for one account's overrides
+  and storage usage. These routes never return private trace content.
+
+Both PUT routes require the configured Origin and JSON content type. Send
+`{"version":0,"max_bytes":268435456,"max_traces":4096}`. `version` is required;
+use the latest GET value. A stale edit returns 409 and must be reloaded. Each
+nullable limit inherits independently: account → global → deployment YAML.
+Omitted fields also inherit. Bytes must be a whole MiB from 1,048,576 to
+1,099,511,627,776; trace counts must be integers from 1 to 1,000,000.
+
+Responses include `version`, `updated_at`, `overrides` (nullable saved fields),
+`defaults` (inherited values), `effective` (resolved `max_bytes` / `max_traces`),
+and `bounds` (`max_mib` / `max_traces`). Per-user responses also include `storage`
+with `bytes`, `traces`, `max_bytes`, `max_traces` and `next_expiry`.
+User-facing trace preferences report the same effective limits. Invalid values
+return 400, unknown users 404, non-admins 403, and audit/storage failures 503.
+
+Changes are atomically audited as `trace.quota.defaults` or `trace.quota.user`
+and take effect across replicas on new writes without a restart. They preserve
+stored content, retention, consent and inference limits. Both stored bytes and
+trace count must have room for a new trace; existing over-quota logs remain.
+
 ## Personal trace settings and content
 
 These routes require a full session. Mutations require the configured Origin and JSON

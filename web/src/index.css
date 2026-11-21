@@ -1585,6 +1585,8 @@ progress::-moz-progress-bar {
 }
 @media (max-width: 767px) {
   .user-detail {
+    position: sticky;
+    left: 0;
     width: calc(100vw - 3rem);
     max-width: 100%;
   }

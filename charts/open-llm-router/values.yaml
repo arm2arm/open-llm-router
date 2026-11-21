@@ -110,6 +110,9 @@ config:
   content_tracing:
     enabled: false
     redact_patterns: []
+    # Per-account defaults; Admin -> Request logging can override them live.
+    max_stored_mib: 64
+    max_stored_traces: 512
   auth:
     default_key_lifetime_days: 90
     max_key_lifetime_days: 90

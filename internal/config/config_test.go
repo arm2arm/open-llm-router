@@ -681,6 +681,18 @@ func TestContentTracingPolicy(t *testing.T) {
 	if err != nil || cfg.ContentTracing.Enabled {
 		t.Fatal("content capture must default off", err)
 	}
+	if cfg.ContentTracing.MaxStoredMiB != 64 || cfg.ContentTracing.MaxStoredTraces != 512 {
+		t.Fatal("trace quota defaults", cfg.ContentTracing)
+	}
+	for _, policy := range []string{"max_stored_mib: -1", "max_stored_mib: 1048577", "max_stored_traces: -1", "max_stored_traces: 1000001"} {
+		if _, err := Parse([]byte("content_tracing: {"+policy+"}\n"+valid), lookupIn(validEnv)); err == nil {
+			t.Fatal("invalid trace quota accepted", policy)
+		}
+	}
+	custom, err := Parse([]byte("content_tracing: {max_stored_mib: 256, max_stored_traces: 4096}\n"+valid), lookupIn(validEnv))
+	if err != nil || custom.ContentTracing.MaxStoredMiB != 256 || custom.ContentTracing.MaxStoredTraces != 4096 {
+		t.Fatal("custom trace quota", custom, err)
+	}
 	if _, err := Parse([]byte("content_tracing: {enabled: true, redact_patterns: ['[']}\n"+valid), lookupIn(validEnv)); err == nil {
 		t.Fatal("invalid redaction accepted")
 	}
