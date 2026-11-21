@@ -341,8 +341,26 @@ authorization remains enforced on the server regardless of browser navigation.
   requires a fresh browser login and restores only unrevoked, unexpired keys. Cached OIDC access-token
   principals are refused on their next request. Admins cannot disable themselves.
   Disabling the protected local administrator returns 403, including for another admin.
-- `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
-  and tokens this month. A user in several groups counts in each.
+- `POST /portal/api/admin/groups/sync` with `{}`: run the current router's Keycloak
+  group-sync job immediately. Requires an administrator session and same-origin
+  JSON, including for SSO administrators; no recent local sign-in is required.
+  Uses the running authentication configuration, never a draft. Returns 200 with
+  `result: {checked, updated, disabled, failed, remaining, skipped}` and `problem`
+  (empty on success). An incomplete/failed run includes a safe problem message and
+  any partial progress. `skipped: true` means another scan or settings switch is
+  in progress; retry later. Returns 409 `sync_disabled` if no sync job is configured,
+  or 503 `sync_unavailable` while it is initializing. The portal request deadline
+  bounds the run; incomplete scans resume using the scheduled job's cursor.
+  Existing disable limits, issuer scope and account/cache invalidation apply.
+  This refreshes existing users' memberships and enabled state; it does not import
+  all realm users or create group policies.
+- `GET /portal/api/admin/groups`: configured groups and groups received for known users,
+  with enabled members, requests and tokens today and tokens this month. `configured`
+  distinguishes a group with an active access policy from a received membership with
+  no policy. Discovery grants no access. A user in several groups counts in each.
+  `sync_enabled` reports whether this router has group sync configured.
+  The administration `get_usage` tool retains configured groups only unless its key
+  also has `users:read`; `list_groups` requires `users:read`.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
   `max_inflight` and weight.
 

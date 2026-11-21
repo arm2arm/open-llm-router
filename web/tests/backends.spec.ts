@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
 import type { RoutingDocument, RoutingView } from '../src/lib/api'
 
 // Synthetic API fixture isolates admin interaction from Docker and OIDC.
@@ -632,6 +633,141 @@ test('group policies live in user management and become available to backends', 
     .click()
   await page.getByRole('dialog').locator('.backend-advanced > summary').click()
   await expect(page.getByLabel('Backend access research')).toBeVisible()
+})
+
+test('received Keycloak groups are visible and can become policies without implicit grants', async ({
+  page,
+}) => {
+  const { view, saved } = await workspace(page)
+  await page.route('**/portal/api/admin/groups', (route) =>
+    route.fulfill({
+      json: {
+        groups: ['ErUM', 'erum', 'staff'].map((group) => ({
+          group,
+          configured: Object.hasOwn(
+            view.settings.active!.document!.groups,
+            group,
+          ),
+          members: 1,
+          requests_today: 0,
+          tokens_today: 0,
+          tokens_this_month: 0,
+          admin: false,
+        })),
+      },
+    }),
+  )
+  await page.goto('/portal/admin/users')
+  const groups = page.getByRole('region', { name: 'Group totals' })
+  const erum = groups.getByRole('row').filter({
+    has: page.getByRole('cell', { name: 'ErUM', exact: true }),
+  })
+  await expect(erum).toContainText('No policy')
+  await expect(
+    groups.getByRole('cell', { name: 'erum', exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Create local user', exact: true })
+    .click()
+  let dialog = page.getByRole('dialog')
+  await expect(
+    dialog.getByRole('checkbox', { name: 'ErUM', exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    dialog.getByRole('checkbox', { name: 'staff', exact: true }),
+  ).toBeVisible()
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+  await erum
+    .getByRole('button', { name: 'Configure policy for ErUM', exact: true })
+    .click()
+  dialog = page.getByRole('dialog', {
+    name: 'Configure ErUM policy',
+    exact: true,
+  })
+  await expect(
+    dialog.getByRole('checkbox', { name: 'ErUM grant *', exact: true }),
+  ).not.toBeChecked()
+  await expect(
+    dialog.getByRole('checkbox', { name: 'ErUM administrator', exact: true }),
+  ).not.toBeChecked()
+  expect(saved).toHaveLength(0)
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Discard changes', exact: true })
+    .click()
+  expect(saved).toHaveLength(0)
+
+  await erum
+    .getByRole('button', { name: 'Configure policy for ErUM', exact: true })
+    .click()
+  await dialog
+    .getByRole('button', { name: 'Save group policies', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  await expect(erum).toContainText('Configured')
+  expect(view.settings.active!.document!.groups.ErUM).toEqual({
+    models: [],
+    admin: false,
+    priority: 0,
+    strict_quota: false,
+  })
+  expect(view.settings.active!.document!.groups).not.toHaveProperty('erum')
+  await page.getByRole('link', { name: 'Backends', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Add backend', exact: true })
+    .first()
+    .click()
+  await page.getByRole('dialog').locator('.backend-advanced > summary').click()
+  await expect(
+    page.getByLabel('Backend access ErUM', { exact: true }),
+  ).toBeVisible()
+})
+
+test('group refresh reloads stored memberships and explains missing claims', async ({
+  page,
+}) => {
+  await workspace(page)
+  let received = false
+  await page.route('**/portal/api/admin/groups', (route) =>
+    route.fulfill({
+      json: {
+        groups: received
+          ? [
+              {
+                group: 'ErUM',
+                configured: false,
+                members: 1,
+                admin: false,
+                requests_today: 0,
+                tokens_today: 0,
+                tokens_this_month: 0,
+              },
+            ]
+          : [],
+      },
+    }),
+  )
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/portal/admin/users')
+  const groups = page.getByRole('region', { name: 'Group totals' })
+  await expect(
+    groups.getByRole('cell', { name: 'ErUM', exact: true }),
+  ).toHaveCount(0)
+  await groups.getByText('Missing a Keycloak group?', { exact: true }).click()
+  await expect(groups).toContainText('ID token')
+  await expect(groups).toContainText('signs out and signs in again')
+  await expect(
+    groups.getByRole('link', { name: 'Keycloak settings' }),
+  ).toHaveAttribute('href', '/portal/admin/keycloak')
+  received = true
+  await groups
+    .getByRole('button', { name: 'Refresh memberships', exact: true })
+    .click()
+  await expect(
+    groups.getByRole('cell', { name: 'ErUM', exact: true }),
+  ).toBeVisible()
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
 })
 
 test('pending advanced drafts block direct edits and save errors preserve input', async ({

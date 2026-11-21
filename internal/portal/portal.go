@@ -54,6 +54,7 @@ type Handler struct {
 	// process loaded at startup.
 	Settings     *settings.AuthenticationService
 	AuthServices AuthServices
+	GroupSync    GroupSync
 	runtime      atomic.Pointer[settings.Snapshot]
 	authMu       sync.Mutex // serializes authentication activation
 	// Routing manages models, endpoints and aliases as revisions;
@@ -109,6 +110,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, manager *l
 	h.mux.HandleFunc("DELETE /portal/api/admin/users/{id}/overrides/{field}", h.admin(h.setOverride))
 	h.mux.HandleFunc("PUT /portal/api/admin/users/{id}/enabled", h.admin(h.setEnabled))
 	h.mux.HandleFunc("GET /portal/api/admin/groups", h.admin(h.adminGroups))
+	h.mux.HandleFunc("POST /portal/api/admin/groups/sync", h.admin(h.syncGroups))
 	h.mux.HandleFunc("GET /portal/api/admin/replicas", h.admin(h.adminReplicas))
 	h.mux.HandleFunc("GET /portal/api/admin/endpoints", h.admin(h.endpointList))
 	h.mux.HandleFunc("PUT /portal/api/admin/endpoints", h.admin(h.endpointSave))

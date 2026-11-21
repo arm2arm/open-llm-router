@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { GroupSyncButton } from '@/group-sync'
 import {
   api,
   redirect,
@@ -726,6 +727,13 @@ export function AuthenticationSettingsPanel() {
                       {setting.secret
                         ? describeSecret(setting.secret)
                         : describeValue(setting.value)}
+                      {setting.name === 'sync_interval_s' && (
+                        <div className="mt-2">
+                          <GroupSyncButton
+                            enabled={data.runtime.group_sync_enabled ?? false}
+                          />
+                        </div>
+                      )}
                     </td>
                     <td>
                       <span className="badge">{setting.source}</span>
