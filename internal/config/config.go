@@ -108,9 +108,18 @@ type Security struct {
 
 // ContentTracing is a site-wide content-capture gate. User consent is also required.
 type ContentTracing struct {
-	Enabled        bool     `yaml:"enabled"`
-	RedactPatterns []string `yaml:"redact_patterns"`
+	Enabled         bool     `yaml:"enabled"`
+	RedactPatterns  []string `yaml:"redact_patterns"`
+	MaxStoredMiB    int64    `yaml:"max_stored_mib"`
+	MaxStoredTraces int64    `yaml:"max_stored_traces"`
 }
+
+const (
+	DefaultTraceStoredMiB    = 64
+	DefaultTraceStoredTraces = 512
+	MaxTraceStoredMiB        = 1 << 20 // 1 TiB per account
+	MaxTraceStoredTraces     = 1_000_000
+)
 
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
@@ -582,6 +591,18 @@ func (c *Config) validate() Problems {
 	}
 
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+	if c.ContentTracing.MaxStoredMiB == 0 {
+		c.ContentTracing.MaxStoredMiB = DefaultTraceStoredMiB
+	}
+	if c.ContentTracing.MaxStoredTraces == 0 {
+		c.ContentTracing.MaxStoredTraces = DefaultTraceStoredTraces
+	}
+	if c.ContentTracing.MaxStoredMiB < 1 || c.ContentTracing.MaxStoredMiB > MaxTraceStoredMiB {
+		add("content_tracing.max_stored_mib: must be between 1 and %d", MaxTraceStoredMiB)
+	}
+	if c.ContentTracing.MaxStoredTraces < 1 || c.ContentTracing.MaxStoredTraces > MaxTraceStoredTraces {
+		add("content_tracing.max_stored_traces: must be between 1 and %d", MaxTraceStoredTraces)
+	}
 	if len(c.ContentTracing.RedactPatterns) > 32 {
 		add("content_tracing.redact_patterns: at most 32 patterns")
 	}

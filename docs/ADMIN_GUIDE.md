@@ -19,11 +19,34 @@ and backups as content-bearing storage, and see [the tracing guide](REQUEST_TRAC
 for capture bounds and operational behavior. Server logs, metrics and OTLP stay content-free.
 
 When logging is enabled but new details are missing, check the account's
-**Stored details** budget in **My requests**. Filling the 64 MiB or 512-trace limit
+**Stored details** budget in **My requests**. Filling either configured limit (64 MiB or 512 traces by default)
 skips new captures while accounting continues. The panel shows storage usage,
 warns near the limit and offers confirmed deletion to free space. See
 [missing-detail troubleshooting](REQUEST_TRACING.md#logging-is-enabled-but-details-are-missing)
 for retention, shared API keys and account attribution.
+
+## Detailed log quotas
+
+Open **Admin → Request logging** to set the default **Maximum storage (MiB)** and
+**Maximum stored traces** for each account. These are per-user defaults, not a
+shared site-wide storage pool. For a larger default, for example, enter **256 MiB**
+and **4096 traces**, then **Save defaults**.
+
+For an exception, open **Admin → Users & groups → Manage → Detailed log quota**.
+Set either field and **Save user quota**; an empty field inherits its global
+default independently. **Use global defaults** clears the fields; save to apply.
+The account's current storage use is visible here, but its private log content is not.
+
+Changes are audited and apply across router replicas without a restart. Raising
+a full quota lets new captures resume. Lowering it preserves existing logs and
+pauses captures until storage is below both limits; retention and opt-in are
+unchanged. Site policy must still allow detailed logging.
+
+Deployment fallback values are `config.content_tracing.max_stored_mib: 64` and
+`config.content_tracing.max_stored_traces: 512` in Helm (omit `config.` in the
+standalone YAML). **Use deployment defaults**, then **Save defaults**, removes
+both global overrides. Supported limits are 1–1,048,576 whole MiB and
+1–1,000,000 traces. Neither field accepts zero or unlimited.
 
 ## What an administrator can configure today
 
@@ -34,6 +57,7 @@ for retention, shared API keys and account attribution.
 | Grant a group access to models; set group default limits | **Admin → Advanced routing** group policies, settings API/CLI, or private YAML | Next request after activation; file changes need restart |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
 | View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
+| Set default or per-user detailed log storage quotas | **Admin → Request logging** and **Users & groups → Manage** | New captures on every replica; existing logs preserved |
 | Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next request, for API keys, sessions and OIDC access tokens alike |
 | Disable/re-enable a router user | Portal **Admin** or portal API; CLI can disable | Next request on every authentication path |
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
