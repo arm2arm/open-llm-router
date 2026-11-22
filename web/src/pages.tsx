@@ -1,4 +1,5 @@
 import { ProfileFields, userDisplayName } from '@/profile'
+import { TraceQuotas } from '@/trace-quotas'
 import { Fragment, useId, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -10,6 +11,7 @@ import {
   Network,
   History,
   RefreshCw,
+  Database,
 } from 'lucide-react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { BackendWorkspace } from '@/backends'
@@ -327,6 +329,7 @@ function UserDetail({
         )}
       </div>
       <ProfileFields user={data.user} />
+      <TraceQuotas user={id} />
       <Failure error={enable.error ?? clear.error} />
       <p className="subtitle">
         Identity source: {data.user.issuer === 'local' ? 'Local' : 'Keycloak'} ·{' '}
@@ -517,6 +520,7 @@ export function AdminPage({ self }: { self: string }) {
     ['', 'Backends', Server],
     ['users', 'Users & groups', Users],
     ['presets', 'Backend presets', SlidersHorizontal],
+    ['logging', 'Request logging', Database],
     ['keycloak', 'Keycloak', KeyRound],
     ['advanced', 'Advanced routing', Network],
     ['history', 'History', History],
@@ -550,6 +554,7 @@ export function AdminPage({ self }: { self: string }) {
       {!section && <BackendWorkspace />}
       {section === 'users' && <UserManagement self={self} />}
       {section === 'presets' && <BackendPresets />}
+      {section === 'logging' && <TraceQuotas />}
       {section === 'keycloak' && (
         <>
           <div className="admin-intro">

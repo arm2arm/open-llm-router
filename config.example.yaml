@@ -113,4 +113,6 @@ aliases: {claude-sonnet-4-5: chat-model}
 # Content retention requires data-owner approval and explicit user opt-in.
 content_tracing:
   enabled: false
+  max_stored_mib: 64     # per-account default; Admin → Request logging overrides live
+  max_stored_traces: 512
   redact_patterns: [] # supplemental RE2 patterns, e.g. organization identifiers

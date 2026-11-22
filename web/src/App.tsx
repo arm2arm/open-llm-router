@@ -158,7 +158,7 @@ export default function App() {
     const view = path.startsWith('/requests/')
       ? 'Request details'
       : path.startsWith('/admin')
-        ? `Administration · ${({ users: 'Users', presets: 'Backend presets', keycloak: 'Keycloak', advanced: 'Advanced routing', history: 'History', agents: 'Agent access' } as Record<string, string>)[path.split('/')[2]] ?? 'Backends'}`
+        ? `Administration · ${({ users: 'Users', presets: 'Backend presets', keycloak: 'Keycloak', logging: 'Request logging', advanced: 'Advanced routing', history: 'History', agents: 'Agent access' } as Record<string, string>)[path.split('/')[2]] ?? 'Backends'}`
         : path === '/about'
           ? 'About'
           : path.startsWith('/sign-in')
