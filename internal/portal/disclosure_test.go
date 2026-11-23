@@ -77,6 +77,9 @@ func TestPortalDisclosesOnlyEligibleModelRecipients(t *testing.T) {
 			if entry.Canonical != "test" || !slices.Equal(entry.Recipients, []string{"Site A", "Site B"}) || entry.HasUnlistedRecipients {
 				t.Fatalf("incorrect eligible destinations: %+v", entry)
 			}
+			if len(entry.RecipientDetails) != 2 || entry.RecipientsComplete {
+				t.Fatalf("legacy labels must retain details but report missing privacy URLs: %+v", entry)
+			}
 		case "unknown":
 			if entry.Recipients == nil || len(entry.Recipients) != 0 || !entry.HasUnlistedRecipients {
 				t.Fatalf("missing warning for unlisted recipient: %+v", entry)

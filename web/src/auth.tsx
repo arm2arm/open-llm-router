@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ProfileCard } from '@/profile'
+import { SitePrivacy } from '@/privacy'
 import { safeNext } from '@/lib/session-state'
 import {
   redirect,
@@ -232,12 +233,10 @@ export function SignIn({
         {!directLocal && keycloakFirst && sso?.configured
           ? 'Use your institutional account to access Open LLM Router.'
           : 'Access your models, API keys and usage.'}
-        {methods.data?.privacy_notice_url && (
+        {methods.data && (
           <>
-            {' '}
-            <a className="auth-link" href={methods.data.privacy_notice_url}>
-              Site privacy notice
-            </a>
+            <br />
+            <SitePrivacy url={methods.data.privacy_notice_url} />
           </>
         )}
       </p>

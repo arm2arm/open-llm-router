@@ -163,6 +163,44 @@ function connectionFixture(view: RoutingView, model = true) {
     }
 }
 
+test('public recipient details save separately from the internal backend name', async ({
+  page,
+}) => {
+  const { view, saved } = await workspace(page)
+  connectionFixture(view, false)
+  view.settings.active!.document!.backends!.gpu.api_key = {}
+  await page.goto('/portal/admin')
+  await page
+    .getByRole('article', { name: 'Test GPU' })
+    .getByRole('button', { name: 'Edit backend', exact: true })
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Edit backend' })
+  await dialog
+    .getByLabel('Public organization', { exact: true })
+    .fill('Research Institute')
+  await dialog
+    .getByLabel('Recipient privacy URL', { exact: true })
+    .fill('https://institute.example/privacy')
+  await dialog.getByRole('button', { name: 'Save backend' }).click()
+  await expect(dialog).toBeHidden()
+  expect(saved[0].document.backends!.gpu).toMatchObject({
+    name: 'Test GPU',
+    url: 'http://gpu.cluster:8000',
+    public_organization: 'Research Institute',
+    privacy_url: 'https://institute.example/privacy',
+  })
+  await page
+    .getByRole('article', { name: 'Test GPU' })
+    .getByRole('button', { name: 'Edit backend', exact: true })
+    .click()
+  await expect(
+    dialog.getByLabel('Public organization', { exact: true }),
+  ).toHaveValue('Research Institute')
+  await expect(
+    dialog.getByLabel('Recipient privacy URL', { exact: true }),
+  ).toHaveValue('https://institute.example/privacy')
+})
+
 test('model-less backend checks catalog without claiming generation works', async ({
   page,
 }) => {

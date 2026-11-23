@@ -199,7 +199,7 @@ func (s *Stream) inspect(event []byte) bool {
 	}
 	if raw := field(data, "usage"); len(raw) > 0 && raw[0] == '{' {
 		valid := s.readUsage(raw, true, true)
-		if valid && s.HideUsage && !hasEventMetadata && plainUsageChunk(data) {
+		if valid && s.HideUsage && !hasEventMetadata && plainUsageChunk(data) && uniqueUsageKeys(data) {
 			return true
 		}
 	}
@@ -249,6 +249,34 @@ func plainUsageChunk(data []byte) bool {
 	default:
 		return false
 	}
+}
+
+// plainUsageChunk has validated the envelope and nested accounting objects.
+// Reject duplicate keys as well: decoders may otherwise disagree about which
+// value carries provider metadata. The only accepted array is empty choices.
+func uniqueUsageKeys(raw []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return false
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return false
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+		value = trim(value)
+		if value[0] == '{' && !uniqueUsageKeys(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Stream) readUsage(raw []byte, input, output bool) bool {

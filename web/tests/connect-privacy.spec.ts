@@ -41,16 +41,20 @@ test('Connect shows the possible recipients for the selected model', async ({
     page.getByRole('link', { name: 'Site privacy notice' }),
   ).toHaveAttribute('href', 'https://site.example.org/privacy')
   await expect(
-    page.getByText(/A retry may send the same request/),
+    page.getByText(/The router can send the full request/),
   ).toBeVisible()
   await expect(
-    page.getByText(/Home institute, Partner institute/),
-  ).toContainText('Additional recipients are unlisted')
+    page.getByText('Home institute · No recipient privacy notice linked'),
+  ).toBeVisible()
+  await expect(
+    page.getByText('Partner institute · No recipient privacy notice linked'),
+  ).toBeVisible()
+  await expect(
+    page.getByText(/Recipient information is incomplete/),
+  ).toBeVisible()
   await page.getByLabel('Model', { exact: true }).selectOption('local')
   await expect(page.getByText(/Local lab/)).toBeVisible()
-  await expect(
-    page.getByText(/Additional recipients are unlisted/),
-  ).toHaveCount(0)
+  await expect(page.getByText(/Home institute/)).toHaveCount(0)
   await expect(page.getByTestId('snippet')).toContainText('local')
 
   await page.route('**/portal/api/models', (route) =>
@@ -58,7 +62,7 @@ test('Connect shows the possible recipients for the selected model', async ({
   )
   await page.reload()
   await expect(
-    page.getByText(/Recipient information is unavailable/),
+    page.getByText(/Recipient information is incomplete/),
   ).toBeVisible()
   await expect(
     page.getByRole('link', { name: 'Site privacy notice' }),

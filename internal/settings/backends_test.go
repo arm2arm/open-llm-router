@@ -98,6 +98,21 @@ func TestManagedBackendResolvesRoutesWithoutPersistingKey(t *testing.T) {
 	if strings.Contains(string(encoded), "synthetic-backend-key") {
 		t.Fatal("runtime secret serialized")
 	}
+	backend.PublicOrganization, backend.PrivacyURL = "Research Institute", "https://institute.example/privacy"
+	cfg, err = doc.apply(file, applyInput{})
+	if err != nil || cfg.Models["m"].Pool[0].PublicOrganization != backend.PublicOrganization || cfg.Models["m"].Pool[0].PrivacyURL != backend.PrivacyURL {
+		t.Fatal("public recipient metadata not resolved into active replicas", err)
+	}
+	backend.PrivacyURL = "javascript:alert(1)"
+	if len(doc.problems()) == 0 {
+		t.Fatal("unsafe public privacy link accepted")
+	}
+	backend.PrivacyURL = ""
+	backend.PublicOrganization = "\ninvalid"
+	if len(doc.problems()) == 0 {
+		t.Fatal("invalid public label accepted")
+	}
+	backend.PublicOrganization = ""
 	delete(doc.Backends, "gpu")
 	if _, err := doc.apply(file, applyInput{}); err == nil {
 		t.Fatal("missing backend accepted")

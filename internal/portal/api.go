@@ -134,11 +134,13 @@ func (h *Handler) keyMutationBudget(w http.ResponseWriter, userID string) (func(
 }
 
 type model struct {
-	ID                    string   `json:"id"`
-	Canonical             string   `json:"canonical_model"`
-	Protocols             []string `json:"protocols"`
-	Recipients            []string `json:"recipients"`
-	HasUnlistedRecipients bool     `json:"has_unlisted_recipients"`
+	ID                    string             `json:"id"`
+	Canonical             string             `json:"canonical_model"`
+	Protocols             []string           `json:"protocols"`
+	Recipients            []string           `json:"recipients"`
+	HasUnlistedRecipients bool               `json:"has_unlisted_recipients"`
+	RecipientDetails      []policy.Recipient `json:"recipient_details"`
+	RecipientsComplete    bool               `json:"recipients_complete"`
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
@@ -154,13 +156,11 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 		}
 		if policy.ModelAllowed(cfg, access, target, u.Groups, u.ProtectedAdmin) {
 			entry := model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols, Recipients: []string{}}
+			entry.RecipientDetails, entry.RecipientsComplete = policy.ModelRecipients(cfg, target, u.Groups, u.ProtectedAdmin)
 			// Match the proxy's per-replica grants, including possible retry
 			// destinations. Temporary health or capacity cannot exclude a site.
-			for _, rep := range cfg.Models[target].Pool {
-				if !policy.BackendAllowed(cfg, rep.Backend, u.Groups, u.ProtectedAdmin) {
-					continue
-				}
-				if label := cfg.Portal.RecipientLabels[rep.URL]; label != "" {
+			for _, recipient := range entry.RecipientDetails {
+				if label := recipient.Organization; label != "" {
 					entry.Recipients = append(entry.Recipients, label)
 				} else {
 					entry.HasUnlistedRecipients = true

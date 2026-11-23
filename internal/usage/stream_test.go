@@ -186,6 +186,42 @@ func TestStreamPropagatesWriteFailure(t *testing.T) {
 	}
 }
 
+func TestUsageEventsPreserveSupplementalInformation(t *testing.T) {
+	const plain = `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","system_fingerprint":"fp","service_tier":"default","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19,"prompt_tokens_details":{"cached_tokens":2,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":1,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}`
+	for _, tc := range []struct {
+		name, prefix, data string
+		keep               bool
+	}{
+		{"ordinary", "", plain, false},
+		{"marker", "", strings.TrimSuffix(plain, "}") + `,"provenance":{"marker":"synthetic-test-only","number":123456789012345678901234567890}}`, true},
+		{"nested extension", "", strings.Replace(plain, `"cached_tokens":2`, `"cached_tokens":2,"provenance":"synthetic-test-only"`, 1), true},
+		{"extended envelope field", "", strings.Replace(plain, `"system_fingerprint":"fp"`, `"system_fingerprint":{"provenance":"synthetic-test-only"}`, 1), true},
+		{"extended detail field", "", strings.Replace(plain, `"cached_tokens":2`, `"cached_tokens":{"provenance":"synthetic-test-only"}`, 1), true},
+		{"duplicate", "", strings.TrimSuffix(plain, "}") + `,"model":"second"}`, true},
+		{"SSE extension", "provenance: synthetic-test-only\n", plain, true},
+		{"SSE id", "id: synthetic-test-only\n", plain, true},
+		{"SSE comment", ": synthetic-test-only\n", plain, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, eol := range []string{"\n", "\r\n", "\r"} {
+				wire := []byte(strings.ReplaceAll(tc.prefix+"data: "+tc.data+"\n\n", "\n", eol))
+				for _, hide := range []bool{false, true} {
+					for split := 0; split <= len(wire); split++ {
+						out, totals := observeStream(t, config.ProtocolOpenAI, hide, wire[:split], wire[split:])
+						want := wire
+						if hide && !tc.keep {
+							want = nil
+						}
+						if !bytes.Equal(out, want) || !totals.HasInput || !totals.HasOutput || totals.InputTokens != 12 || totals.OutputTokens != 7 || totals.ContentEvents != 0 {
+							t.Fatalf("hide=%v split=%d totals=%+v output=%s", hide, split, totals, out)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestContentEventsAllocateNoJSONObjects(t *testing.T) {
 	s := NewStream(config.ProtocolOpenAI, false, func([]byte) error { return nil })
 	p := []byte(openAIContentEvent)

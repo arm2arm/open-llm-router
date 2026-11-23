@@ -152,6 +152,7 @@ func (r *Routing) apply(base *config.Config, in applyInput) (*config.Config, err
 				return nil, &ValidationError{[]string{"models." + name + ": choose an existing backend"}}
 			}
 			replica.URL, replica.PrivateNetwork = backend.URL, backend.PrivateNetwork
+			replica.PublicOrganization, replica.PrivacyURL = backend.PublicOrganization, backend.PrivacyURL
 			if replica.HealthPath == "" {
 				replica.HealthPath = backend.HealthPath
 			}

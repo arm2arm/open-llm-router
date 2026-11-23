@@ -7,34 +7,70 @@ The exact supported endpoints and known gaps are listed in
 [API_COMPATIBILITY.md](API_COMPATIBILITY.md); SDK success does not mean complete
 OpenAI or Anthropic platform compatibility.
 
-## AI assistants using OLR
+## First-session AI notice
 
-Connect shows the possible recipients for the selected model. A researcher
-using an IDE, Hermes, DRPHub, or Open WebUI may bypass this portal. Put a clear
-notice at the start of the interactive client session, for example “You’re
-chatting with the DRPHub AI assistant.” Link the deployment’s privacy notice
-and explain any workspace data the client includes. Use the organisation
-operating the client and the actual routing arrangement in the finished copy.
+The portal configures credentials and clients. People can first encounter the
+model in DRPHub, Hermes, an IDE or Open WebUI without visiting the portal. Client
+owners should show an accessible notice at the first interaction in a session,
+before the first prompt can be sent, and keep a way to reopen it. For a new model
+or changed routing configuration, refresh the possible recipients before sending.
+Use visible text, real links and keyboard-operable controls; do not rely on a
+hover tooltip, model name, response header or a portal-only banner.
 
-For a service that needs machine-readable marking and detection of generated
-prose, test its upstream marking method through the entire client path:
+Example to adapt with the site's actual names and links:
 
-1. Send a synthetic prompt directly to the backend and through OLR with the same
-   model and serving settings. Use the upstream detector on both outputs.
-2. Repeat with JSON and streaming, including any optional usage or timing
-   settings used in production. Check the completed reply after client rendering
-   and after transcript copy or export. Use code and prose in the same sample to
-   check that copied code and configuration retain their original text.
-3. Record which provider, detector, routes and client versions were tested.
-   Filtering ordinary streaming usage events and enabling timing enrichment can
-   change response bytes. A signature over an entire upstream response needs
-   verification on the delivered representation. Transporting a marker alone
-   does not demonstrate that the output is detectable after export.
+> You are interacting with an AI model. Responses can be inaccurate; check
+> important information. Your prompts, conversation history, tool information
+> and included attachments are sent through `<site router>` to `<all possible
+> recipient organizations>` for this model, including on retries. Read
+> `<site privacy notice>` and `<recipient privacy notices>` for logging,
+> retention and your rights. Disabling personal router traces does not prevent
+> backend processing or logging.
 
-The [Commission’s Article 50 guidance](https://eur-lex.europa.eu/eli/C/2026/6005/oj/eng)
-discusses components, source code, and upstream marking in paragraphs 24, 68
-and 74. The integrated service operator can use these checks to assess the
-marking and detection mechanism that applies to its outputs.
+Fetch `recipient_details` and `recipients_complete` for each permitted model or alias
+from authenticated `GET /v1/models`; portal integrations can use
+`GET /portal/api/models`, which also returns `privacy_notice_url`. Public sign-in metadata
+at `GET /portal/api/auth` returns the site `privacy_notice_url`. These are current
+configuration snapshots, not a promise that routing cannot change before a call.
+Do not substitute `owned_by`, internal backend IDs, or a single healthy replica
+for the recipient list. If information is incomplete, state that visibly and
+provide the site's operator contact. Keep this notice separate from any personal
+trace opt-in and from the backend's machine-readable provenance mechanism.
+
+## Upstream provenance checks
+
+OLR relays upstream response bodies; it does not generate a watermark, validate
+provenance, or provide a detector. Its Chat Completions/legacy Completions usage
+filter retains a whole empty-choices event when it carries unknown top-level
+fields, nested usage extensions or additional SSE fields/comments. Ordinary
+usage-only events are still suppressed when the caller did not request usage.
+Retained events keep their original bytes and their token counts still contribute
+to accounting. See [response transformation limits](API_COMPATIBILITY.md#response-transformations-and-provenance).
+
+For each deployed backend/model version and client/export path:
+
+1. Obtain the upstream provider's marking specification, supported formats and
+   detector/version. Record what the detector can verify and any unsupported
+   outputs. Use synthetic, non-sensitive test input.
+2. Capture the **same upstream output** directly and through OLR, using a replay
+   fixture if needed; independently generated outputs need not be identical.
+   Check non-stream JSON and raw SSE, with usage omitted, `false` and `true`.
+   Compare marker fields and exact bytes where the mechanism requires them;
+   include primary and retry backends, aliases and optional usage timing if used.
+3. Pass the relayed output to the upstream detector and record its result.
+   A synthetic marker proves transport preservation only, not detection of AI
+   authorship. A missing upstream mark cannot be supplied by this router test.
+4. Repeat after SDK parsing, client display/copy and each actual export format
+   (for example JSON, Markdown, HTML or PDF). Clients may discard extension fields,
+   reconstruct text or remove metadata. Run the upstream detector on the resulting
+   artifacts and record any loss or unsupported format.
+5. Keep the provider/model, router and client versions, transformation options,
+   sample hashes, detector results and limitations with deployment evidence.
+   Recheck after changes. Personal trace views/exports are sanitized and bounded;
+   they are not a byte-preserving copy for this check.
+
+The regression tests use `synthetic-test-only` as an opaque test marker. They
+check pass-through and token accounting, not a production marking scheme.
 
 ## Browser integration and CORS
 

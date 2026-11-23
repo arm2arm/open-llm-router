@@ -104,8 +104,8 @@ export type Session = {
   must_change_password: boolean
 }
 export type AuthMethods = {
-  default?: 'oidc' | 'local'
   privacy_notice_url?: string
+  default?: 'oidc' | 'local'
   local: { available: boolean; login_url: string; password_url: string }
   oidc: { configured: boolean; available: boolean; login_url: string }
 }
@@ -191,6 +191,8 @@ export type Models = {
     protocols: string[]
     recipients?: string[]
     has_unlisted_recipients?: boolean
+    recipient_details?: { organization: string; privacy_url: string }[]
+    recipients_complete?: boolean
   }[]
 }
 export type RequestRecord = {
@@ -274,6 +276,8 @@ export type Replica = {
 }
 
 export type EndpointReplica = {
+  public_organization?: string
+  privacy_url?: string
   backend?: string
   private_network?: boolean
   url: string
@@ -454,6 +458,8 @@ export type RoutingView = {
 }
 
 export type Backend = {
+  public_organization?: string
+  privacy_url?: string
   name?: string
   provider?: string
   groups?: string[] | null

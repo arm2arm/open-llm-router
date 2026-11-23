@@ -2,6 +2,7 @@ import { userDisplayName } from '@/profile'
 import { useEffect, useState, type FormEvent } from 'react'
 import { SessionRecovery } from '@/session-recovery'
 import { AboutPage } from '@/about'
+import { AIInteraction, ModelRecipients } from '@/privacy'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -1143,6 +1144,7 @@ function Connect() {
       ) : (
         query.data && (
           <>
+            <AIInteraction privacyURL={query.data.privacy_notice_url} />
             <div className="panel p-6 mb-6">
               <div className="flex flex-wrap justify-between items-center gap-4">
                 <div>
@@ -1159,14 +1161,6 @@ function Connect() {
                 Anthropic clients use the router origin:{' '}
                 <code>{query.data.router_url}</code>
               </p>
-              {query.data.privacy_notice_url && (
-                <a
-                  className="auth-link mt-3"
-                  href={query.data.privacy_notice_url}
-                >
-                  Site privacy notice
-                </a>
-              )}
             </div>
             <div
               role="group"
@@ -1219,36 +1213,17 @@ function Connect() {
                   disabled={!selected}
                 />
               </div>
+              {selected && <ModelRecipients model={selected} />}
               {selected ? (
-                <>
-                  <div className="px-6 py-4 space-y-1 text-sm">
-                    <p>
-                      The selected backend receives the full model request,
-                      including prompts, attachments and tool results your
-                      client sends. A retry may send the same request to another
-                      eligible backend.
-                    </p>
-                    <p
-                      aria-live="polite"
-                      aria-atomic="true"
-                      className="break-words"
-                    >
-                      {selected.recipients?.length ? (
-                        <>
-                          <strong>Possible recipients:</strong>{' '}
-                          {selected.recipients.join(', ')}.
-                          {selected.has_unlisted_recipients &&
-                            ' Additional recipients are unlisted. Ask your site operator for details.'}
-                        </>
-                      ) : (
-                        'Recipient information is unavailable for this model. Ask your site operator for details.'
-                      )}
-                    </p>
-                  </div>
-                  <pre className="snippet" data-testid="snippet">
-                    <code>{code}</code>
-                  </pre>
-                </>
+                <pre
+                  className="snippet"
+                  data-testid="snippet"
+                  tabIndex={0}
+                  role="region"
+                  aria-label={`${client} connection example`}
+                >
+                  <code>{code}</code>
+                </pre>
               ) : (
                 <p className="empty">
                   No {protocol === 'openai' ? 'OpenAI' : 'Anthropic'} models are
