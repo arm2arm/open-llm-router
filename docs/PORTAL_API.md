@@ -97,9 +97,14 @@ operator recovery while anonymous attempts remain throttled.
 
 `GET /portal/api/me`:
 
+`user.full_name`, `given_name`, `family_name` and `institution` are display-only
+strings, empty when not supplied. They are refreshed from verified ID-token
+claims at institutional sign-in and also appear in administrator user list/detail
+responses. See [profile claim mapping](ADMIN_GUIDE.md#show-institutional-names-and-affiliation).
+
 ```json
 {
-  "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"],"protected_admin":false},
+  "user": {"id":"uuid","username":"staff","email":"staff@example.test","full_name":"Example Person","given_name":"Example","family_name":"Person","institution":"Example Institute","groups":["staff"],"protected_admin":false},
   "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"tpm":null,
              "max_concurrent":4,"max_concurrent_batch":8,"strict_quota":false}
 }
@@ -205,6 +210,33 @@ untouched. See [PRIVACY.md](PRIVACY.md).
   "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
   oldest first, from the daily totals (unaffected by deleting activity).
 
+## Administrator trace quotas
+
+Full administrator sessions can use:
+
+- `GET` / `PUT /portal/api/admin/trace-quotas` for global per-user defaults.
+- `GET` / `PUT /portal/api/admin/users/{id}/trace-quota` for one account's overrides
+  and storage usage. These routes never return private trace content.
+
+Both PUT routes require the configured Origin and JSON content type. Send
+`{"version":0,"max_bytes":268435456,"max_traces":4096}`. `version` is required;
+use the latest GET value. A stale edit returns 409 and must be reloaded. Each
+nullable limit inherits independently: account → global → deployment YAML.
+Omitted fields also inherit. Bytes must be a whole MiB from 1,048,576 to
+1,099,511,627,776; trace counts must be integers from 1 to 1,000,000.
+
+Responses include `version`, `updated_at`, `overrides` (nullable saved fields),
+`defaults` (inherited values), `effective` (resolved `max_bytes` / `max_traces`),
+and `bounds` (`max_mib` / `max_traces`). Per-user responses also include `storage`
+with `bytes`, `traces`, `max_bytes`, `max_traces` and `next_expiry`.
+User-facing trace preferences report the same effective limits. Invalid values
+return 400, unknown users 404, non-admins 403, and audit/storage failures 503.
+
+Changes are atomically audited as `trace.quota.defaults` or `trace.quota.user`
+and take effect across replicas on new writes without a restart. They preserve
+stored content, retention, consent and inference limits. Both stored bytes and
+trace count must have room for a new trace; existing over-quota logs remain.
+
 ## Personal trace settings and content
 
 These routes require a full session. Mutations require the configured Origin and JSON
@@ -273,7 +305,7 @@ The browser gates workspace/Admin on completing a required first password change
 labels the identity source and offers local rotation under **Account**. API
 authorization remains enforced on the server regardless of browser navigation.
 
-- `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
+- `GET /portal/api/admin/users?match=text`: up to 500 users whose username, full name, email or institution contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
   month, overrides by field, `issuer`, `protected_admin`, `has_local_password` and
   `must_change_password`.
@@ -336,8 +368,26 @@ authorization remains enforced on the server regardless of browser navigation.
   requires a fresh browser login and restores only unrevoked, unexpired keys. Cached OIDC access-token
   principals are refused on their next request. Admins cannot disable themselves.
   Disabling the protected local administrator returns 403, including for another admin.
-- `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
-  and tokens this month. A user in several groups counts in each.
+- `POST /portal/api/admin/groups/sync` with `{}`: run the current router's Keycloak
+  group-sync job immediately. Requires an administrator session and same-origin
+  JSON, including for SSO administrators; no recent local sign-in is required.
+  Uses the running authentication configuration, never a draft. Returns 200 with
+  `result: {checked, updated, disabled, failed, remaining, skipped}` and `problem`
+  (empty on success). An incomplete/failed run includes a safe problem message and
+  any partial progress. `skipped: true` means another scan or settings switch is
+  in progress; retry later. Returns 409 `sync_disabled` if no sync job is configured,
+  or 503 `sync_unavailable` while it is initializing. The portal request deadline
+  bounds the run; incomplete scans resume using the scheduled job's cursor.
+  Existing disable limits, issuer scope and account/cache invalidation apply.
+  This refreshes existing users' memberships and enabled state; it does not import
+  all realm users or create group policies.
+- `GET /portal/api/admin/groups`: configured groups and groups received for known users,
+  with enabled members, requests and tokens today and tokens this month. `configured`
+  distinguishes a group with an active access policy from a received membership with
+  no policy. Discovery grants no access. A user in several groups counts in each.
+  `sync_enabled` reports whether this router has group sync configured.
+  The administration `get_usage` tool retains configured groups only unless its key
+  also has `users:read`; `list_groups` requires `users:read`.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
   `max_inflight` and weight.
 

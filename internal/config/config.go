@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // IANA zones also work in the static runtime image.
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/arm2arm/open-llm-router/internal/adminaccess"
 	"github.com/jackc/pgx/v5"
@@ -106,9 +108,18 @@ type Security struct {
 
 // ContentTracing is a site-wide content-capture gate. User consent is also required.
 type ContentTracing struct {
-	Enabled        bool     `yaml:"enabled"`
-	RedactPatterns []string `yaml:"redact_patterns"`
+	Enabled         bool     `yaml:"enabled"`
+	RedactPatterns  []string `yaml:"redact_patterns"`
+	MaxStoredMiB    int64    `yaml:"max_stored_mib"`
+	MaxStoredTraces int64    `yaml:"max_stored_traces"`
 }
+
+const (
+	DefaultTraceStoredMiB    = 64
+	DefaultTraceStoredTraces = 512
+	MaxTraceStoredMiB        = 1 << 20 // 1 TiB per account
+	MaxTraceStoredTraces     = 1_000_000
+)
 
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
@@ -150,12 +161,13 @@ type Limits struct {
 
 // OIDC describes the identity provider used for portal login.
 type OIDC struct {
-	RequireTLS     bool   `yaml:"-"`
-	Issuer         string `yaml:"issuer"`
-	PortalClientID string `yaml:"portal_client_id"`
-	GroupsClaim    string `yaml:"groups_claim"`   // default "groups"
-	UsernameClaim  string `yaml:"username_claim"` // default "preferred_username"
-	BackchannelURL string `yaml:"-"`
+	RequireTLS       bool   `yaml:"-"`
+	Issuer           string `yaml:"issuer"`
+	PortalClientID   string `yaml:"portal_client_id"`
+	GroupsClaim      string `yaml:"groups_claim"`      // default "groups"
+	UsernameClaim    string `yaml:"username_claim"`    // default "preferred_username"
+	InstitutionClaim string `yaml:"institution_claim"` // empty: common institution claims
+	BackchannelURL   string `yaml:"-"`
 	// Audience enables identity-provider access tokens on /v1/*: a token
 	// must name it in aud. Empty: API keys only.
 	Audience string `yaml:"audience"`
@@ -321,7 +333,7 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 		cfg.OIDC.Issuer = issuer
 	}
 	if cfg.OIDC != nil {
-		for name, target := range map[string]*string{"OIDC_AUDIENCE": &cfg.OIDC.Audience, "OIDC_SYNC_CLIENT_ID": &cfg.OIDC.SyncClientID, "OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
+		for name, target := range map[string]*string{"OIDC_AUDIENCE": &cfg.OIDC.Audience, "OIDC_SYNC_CLIENT_ID": &cfg.OIDC.SyncClientID, "OIDC_PORTAL_CLIENT_ID": &cfg.OIDC.PortalClientID, "OIDC_GROUPS_CLAIM": &cfg.OIDC.GroupsClaim, "OIDC_USERNAME_CLAIM": &cfg.OIDC.UsernameClaim, "OIDC_INSTITUTION_CLAIM": &cfg.OIDC.InstitutionClaim, "OIDC_BACKCHANNEL_URL": &cfg.OIDC.BackchannelURL} {
 			if value, ok := lookup(name); ok {
 				*target = value
 			}
@@ -579,6 +591,18 @@ func (c *Config) validate() Problems {
 	}
 
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+	if c.ContentTracing.MaxStoredMiB == 0 {
+		c.ContentTracing.MaxStoredMiB = DefaultTraceStoredMiB
+	}
+	if c.ContentTracing.MaxStoredTraces == 0 {
+		c.ContentTracing.MaxStoredTraces = DefaultTraceStoredTraces
+	}
+	if c.ContentTracing.MaxStoredMiB < 1 || c.ContentTracing.MaxStoredMiB > MaxTraceStoredMiB {
+		add("content_tracing.max_stored_mib: must be between 1 and %d", MaxTraceStoredMiB)
+	}
+	if c.ContentTracing.MaxStoredTraces < 1 || c.ContentTracing.MaxStoredTraces > MaxTraceStoredTraces {
+		add("content_tracing.max_stored_traces: must be between 1 and %d", MaxTraceStoredTraces)
+	}
 	if len(c.ContentTracing.RedactPatterns) > 32 {
 		add("content_tracing.redact_patterns: at most 32 patterns")
 	}
@@ -671,6 +695,9 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.DefaultSignIn != "" && c.OIDC.DefaultSignIn != "keycloak" && c.OIDC.DefaultSignIn != "local" {
 			add("oidc.default_sign_in: must be keycloak or local")
+		}
+		if len(c.OIDC.InstitutionClaim) > 256 || !utf8.ValidString(c.OIDC.InstitutionClaim) || strings.ContainsFunc(c.OIDC.InstitutionClaim, unicode.IsControl) {
+			add("oidc.institution_claim: use at most 256 bytes without control characters")
 		}
 		if c.OIDC.GroupNames != "" && c.OIDC.GroupNames != "leaf" && c.OIDC.GroupNames != "path" {
 			add("oidc.group_names: must be leaf or path")

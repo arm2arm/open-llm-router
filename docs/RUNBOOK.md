@@ -181,6 +181,7 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `retention.usage_days` / `usage_daily_days` / `run_at` | 90 / 400 / `03:00` | how long records and daily totals are kept; when the nightly job runs |
 | `oidc.issuer`, `portal_client_id` | — / `olr-portal` | identity provider; leave `oidc` out for local portal authentication and API keys |
 | `oidc.groups_claim`, `username_claim` | `groups`, `preferred_username` | claim names |
+| `oidc.institution_claim` / `OIDC_INSTITUTION_CLAIM` | empty | optional top-level institution claim; empty tries `institution`, `organization`, `schacHomeOrganization` at portal sign-in |
 | `oidc.default_sign_in` | `keycloak` | sign-in option selected by default: `keycloak` or `local` |
 | `oidc.group_names` | `leaf` | normalize Keycloak groups as `leaf` or full `path`; use the same mode for sign-in, API tokens and sync |
 | `oidc.audience` | — | enables access tokens on `/v1/*` with this `aud` |
@@ -798,6 +799,12 @@ with their keys and sessions; changed groups → stored, effective for existing 
 Users are not re-enabled automatically: use `olr admin user list` and the portal's admin page,
 or `PUT /portal/api/admin/users/{id}/enabled`. Each run logs `msg="group sync"` with counts, or
 `group sync failed`.
+
+For an immediate run, choose **Admin → Users & groups → Sync now** (also available
+beside the effective sync interval in **Admin → Keycloak**). It uses the existing
+job and running configuration, reports progress counts, and refreshes the user and
+group views. It does not import realm users or create OLR group policies. The button
+is disabled when no sync client and secret are configured.
 
 A working admin user-list route is required before checking individuals. A
 realm-wide 404, bad service-account authorization or transport outage changes no

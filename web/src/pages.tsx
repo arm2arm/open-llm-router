@@ -1,3 +1,5 @@
+import { ProfileFields, userDisplayName } from '@/profile'
+import { TraceQuotas } from '@/trace-quotas'
 import { Fragment, useId, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -8,11 +10,14 @@ import {
   KeyRound,
   Network,
   History,
+  RefreshCw,
+  Database,
 } from 'lucide-react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { BackendWorkspace } from '@/backends'
 import { BackendPresets } from '@/backend-presets'
 import { GroupManager } from '@/group-manager'
+import { GroupSyncButton } from '@/group-sync'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { EndpointSettingsPanel } from '@/endpoints'
@@ -299,7 +304,7 @@ function UserDetail({
     <div className="user-detail p-6 grid grid-cols-1 gap-4 border-t whitespace-normal">
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
-          <div className="font-semibold">{data.user.username}</div>
+          <div className="font-semibold">{userDisplayName(data.user)}</div>
           <div className="text-xs text-muted-foreground">
             {data.user.email || 'no email'} ·{' '}
             {data.user.groups.join(', ') || 'no groups'} ·{' '}
@@ -323,6 +328,8 @@ function UserDetail({
           </Button>
         )}
       </div>
+      <ProfileFields user={data.user} />
+      <TraceQuotas user={id} />
       <Failure error={enable.error ?? clear.error} />
       <p className="subtitle">
         Identity source: {data.user.issuer === 'local' ? 'Local' : 'Keycloak'} ·{' '}
@@ -513,6 +520,7 @@ export function AdminPage({ self }: { self: string }) {
     ['', 'Backends', Server],
     ['users', 'Users & groups', Users],
     ['presets', 'Backend presets', SlidersHorizontal],
+    ['logging', 'Request logging', Database],
     ['keycloak', 'Keycloak', KeyRound],
     ['advanced', 'Advanced routing', Network],
     ['history', 'History', History],
@@ -546,6 +554,7 @@ export function AdminPage({ self }: { self: string }) {
       {!section && <BackendWorkspace />}
       {section === 'users' && <UserManagement self={self} />}
       {section === 'presets' && <BackendPresets />}
+      {section === 'logging' && <TraceQuotas />}
       {section === 'keycloak' && (
         <>
           <div className="admin-intro">
@@ -583,8 +592,10 @@ function UserManagement({ self }: { self: string }) {
   })
   const groups = useQuery({
     queryKey: ['admin-groups'],
-    queryFn: () => api<{ groups: GroupTotals[] }>('admin/groups'),
+    queryFn: () =>
+      api<{ groups: GroupTotals[]; sync_enabled: boolean }>('admin/groups'),
   })
+  const policyGroups = groups.data?.groups.filter((g) => g.configured !== false)
   return (
     <>
       <div className="page-head">
@@ -596,7 +607,7 @@ function UserManagement({ self }: { self: string }) {
           </p>
         </div>
         <CreateLocalUser
-          groups={groups.data?.groups ?? []}
+          groups={policyGroups ?? []}
           ready={!!groups.data}
           onCreated={async (id) => {
             setMatch('')
@@ -610,15 +621,58 @@ function UserManagement({ self }: { self: string }) {
       <section className="panel" aria-label="Group totals">
         <div className="panel-head">
           <h2 className="panel-title">Groups</h2>
-          <GroupManager />
+          <div className="flex min-w-0 max-w-full flex-wrap items-start gap-2">
+            <Button
+              variant="outline"
+              disabled={groups.isFetching || users.isFetching}
+              onClick={() => {
+                void cache.invalidateQueries({ queryKey: ['admin-groups'] })
+                void cache.invalidateQueries({ queryKey: ['admin-users'] })
+              }}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+              Refresh memberships
+            </Button>
+            <GroupManager />
+            <GroupSyncButton enabled={groups.data?.sync_enabled ?? false} />
+          </div>
+        </div>
+        <div className="px-6 pb-4 grid gap-3 text-sm text-muted-foreground">
+          <p>
+            Groups include configured policies and memberships OLR has received
+            for its users. Groups marked No policy need model access configured
+            here before their membership grants access.
+          </p>
+          <details>
+            <summary className="cursor-pointer">
+              Missing a Keycloak group?
+            </summary>
+            <p className="mt-2">
+              Check that the OLR client&apos;s Group Membership mapper includes
+              the group in the ID token, using the claim configured in{' '}
+              <NavLink to="/admin/keycloak" className="underline">
+                Keycloak settings
+              </NavLink>
+              . The user then signs out and signs in again, or the configured
+              group sync updates their membership. Refresh memberships reloads
+              OLR&apos;s stored information; it does not fetch Keycloak groups.
+              Group names are case-sensitive: ErUM and erum are different.
+            </p>
+          </details>
         </div>
         <Failure error={groups.error} />
-        <div className="table-wrap">
+        <div
+          className="table-wrap"
+          tabIndex={0}
+          role="region"
+          aria-label="Group usage table"
+        >
           <table>
             <caption className="sr-only">Usage by group</caption>
             <thead>
               <tr>
                 <th>Group</th>
+                <th>Access policy</th>
                 <th>Members</th>
                 <th>Requests today</th>
                 <th>Tokens today</th>
@@ -636,6 +690,16 @@ function UserManagement({ self }: { self: string }) {
                         className="inline ml-2"
                         aria-label="admin group"
                       />
+                    )}
+                  </td>
+                  <td>
+                    {g.configured === false ? (
+                      <div className="grid gap-2 justify-items-start">
+                        <span>No policy</span>
+                        <GroupManager groupName={g.group} />
+                      </div>
+                    ) : (
+                      'Configured'
                     )}
                   </td>
                   <td>{number(g.members)}</td>
@@ -663,7 +727,7 @@ function UserManagement({ self }: { self: string }) {
             </label>
             <Input
               id="user-search"
-              placeholder="Name or email"
+              placeholder="Name, email or institution"
               value={match}
               onChange={(e) => setMatch(e.target.value)}
             />
@@ -677,10 +741,15 @@ function UserManagement({ self }: { self: string }) {
         {users.data?.has_more && (
           <p role="status" className="px-4 pb-3 text-sm text-muted-foreground">
             Showing the first {users.data.limit} matching users. Search by name
-            or email to find others.
+            or institution to find others.
           </p>
         )}
-        <div className="table-wrap">
+        <div
+          className="table-wrap"
+          tabIndex={0}
+          role="region"
+          aria-label="User list table"
+        >
           <table data-testid="users-table">
             <caption className="sr-only">Users</caption>
             <thead>
@@ -701,7 +770,17 @@ function UserManagement({ self }: { self: string }) {
                 <Fragment key={u.id}>
                   <tr>
                     <td>
-                      <div className="font-medium">{u.username}</div>
+                      <div className="font-medium">{userDisplayName(u)}</div>
+                      {userDisplayName(u) !== u.username && (
+                        <div className="text-xs text-muted-foreground">
+                          {u.username}
+                        </div>
+                      )}
+                      {u.institution && (
+                        <div className="text-xs text-muted-foreground">
+                          {u.institution}
+                        </div>
+                      )}
                       <div className="text-xs text-muted-foreground">
                         {u.email}
                         {!u.enabled && ' · disabled'}
@@ -738,7 +817,7 @@ function UserManagement({ self }: { self: string }) {
                         <UserDetail
                           id={u.id}
                           self={self}
-                          groups={groups.data?.groups}
+                          groups={policyGroups}
                         />
                       </td>
                     </tr>

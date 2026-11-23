@@ -118,8 +118,14 @@ export type Limits = {
   max_concurrent_batch: number | null
   strict_quota: boolean
 }
+export type IdentityProfile = {
+  full_name?: string
+  given_name?: string
+  family_name?: string
+  institution?: string
+}
 export type Me = {
-  user: {
+  user: IdentityProfile & {
     id: string
     username: string
     email: string
@@ -201,7 +207,7 @@ export type DailyTotal = {
   input_tokens: number
   output_tokens: number
 }
-export type AdminUser = {
+export type AdminUser = IdentityProfile & {
   id: string
   issuer: string
   username: string
@@ -224,7 +230,7 @@ export type Override = {
   set_at: string
 }
 export type AdminUserDetail = {
-  user: {
+  user: IdentityProfile & {
     id: string
     username: string
     email: string
@@ -243,6 +249,7 @@ export type AdminUserDetail = {
 }
 export type GroupTotals = {
   group: string
+  configured?: boolean
   members: number
   requests_today: number
   tokens_today: number
@@ -309,6 +316,7 @@ export type AuthenticationDocument = {
   groups_claim: string
   group_names: 'leaf' | 'path'
   username_claim: string
+  institution_claim?: string
   required_claim: { name: string; value: string } | null
   sync_client_id: string
   sync_client_secret: SecretRef
@@ -372,6 +380,7 @@ export type AuthenticationView = {
     problem?: string
     sso_configured: boolean
     sso_available: boolean
+    group_sync_enabled?: boolean
   }
   other_issuers: {
     issuer: string
