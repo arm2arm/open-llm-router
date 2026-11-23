@@ -2,6 +2,7 @@ package usage
 
 import (
 	"bytes"
+	"encoding/json"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
@@ -132,6 +133,7 @@ func (s *Stream) inspect(event []byte) bool {
 	}
 	var name, data []byte
 	haveData := false
+	supplementalSSE := false
 	s.data = s.data[:0]
 	for len(event) > 0 {
 		end := bytes.IndexAny(event, "\r\n")
@@ -146,6 +148,9 @@ func (s *Stream) inspect(event []byte) bool {
 		event = event[end+eol:]
 		key, value, _ := bytes.Cut(line, []byte(":"))
 		value = bytes.TrimPrefix(value, []byte(" "))
+		if len(line) > 0 && !bytes.Equal(key, []byte("data")) {
+			supplementalSSE = true
+		}
 		if bytes.Equal(key, []byte("event")) {
 			name = value
 		} else if bytes.Equal(key, []byte("data")) {
@@ -192,7 +197,7 @@ func (s *Stream) inspect(event []byte) bool {
 	if raw := field(data, "usage"); len(raw) > 0 && raw[0] == '{' {
 		valid := s.readUsage(raw, true, true)
 		choices := trim(field(data, "choices"))
-		if valid && s.HideUsage && len(choices) >= 2 && choices[0] == '[' && choices[len(choices)-1] == ']' && len(trim(choices[1:len(choices)-1])) == 0 {
+		if valid && s.HideUsage && !supplementalSSE && len(choices) >= 2 && choices[0] == '[' && choices[len(choices)-1] == ']' && len(trim(choices[1:len(choices)-1])) == 0 && ordinaryUsageObject(data, "event") {
 			return true
 		}
 	}
@@ -200,6 +205,59 @@ func (s *Stream) inspect(event []byte) bool {
 		s.Totals.ContentEvents++
 	}
 	return false
+}
+
+// Suppress only a recognized usage envelope. Unknown fields (including nested
+// usage extensions), ambiguous JSON and supplemental SSE fields pass through
+// byte-for-byte. This inspection runs only on otherwise suppressible events.
+func ordinaryUsageObject(raw []byte, kind string) bool {
+	if !json.Valid(raw) {
+		return false
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return false
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return false
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+		switch kind + "." + key {
+		case "event.choices": // Already verified to be an empty array.
+		case "event.id", "event.object", "event.created", "event.model", "event.system_fingerprint", "event.service_tier",
+			"usage.prompt_tokens", "usage.completion_tokens", "usage.total_tokens",
+			"prompt.cached_tokens", "prompt.audio_tokens",
+			"completion.reasoning_tokens", "completion.audio_tokens", "completion.accepted_prediction_tokens", "completion.rejected_prediction_tokens":
+			// Standard scalar fields must not conceal an extended object/array.
+			value = trim(value)
+			if value[0] == '{' || value[0] == '[' {
+				return false
+			}
+		case "event.usage":
+			if !ordinaryUsageObject(value, "usage") {
+				return false
+			}
+		case "usage.prompt_tokens_details":
+			if !bytes.Equal(trim(value), []byte("null")) && !ordinaryUsageObject(value, "prompt") {
+				return false
+			}
+		case "usage.completion_tokens_details":
+			if !bytes.Equal(trim(value), []byte("null")) && !ordinaryUsageObject(value, "completion") {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Stream) readUsage(raw []byte, input, output bool) bool {

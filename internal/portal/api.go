@@ -134,14 +134,16 @@ func (h *Handler) keyMutationBudget(w http.ResponseWriter, userID string) (func(
 }
 
 type model struct {
-	ID        string   `json:"id"`
-	Canonical string   `json:"canonical_model"`
-	Protocols []string `json:"protocols"`
+	ID                 string             `json:"id"`
+	Canonical          string             `json:"canonical_model"`
+	Protocols          []string           `json:"protocols"`
+	Recipients         []policy.Recipient `json:"recipients"`
+	RecipientsComplete bool               `json:"recipients_complete"`
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 	cfg := h.routingConfig()
-	access := h.access(u)
+	access := policy.ForUser(cfg.Groups, u.Groups, u.Overrides, u.ProtectedAdmin)
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
 	models := make([]model, 0, len(names))
@@ -151,10 +153,11 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 			target = canonical
 		}
 		if policy.ModelAllowed(cfg, access, target, u.Groups, u.ProtectedAdmin) {
-			models = append(models, model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols})
+			recipients, complete := policy.ModelRecipients(cfg, target, u.Groups, u.ProtectedAdmin)
+			models = append(models, model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols, Recipients: recipients, RecipientsComplete: complete})
 		}
 	}
-	respond(w, 200, map[string]any{"router_url": h.cfg.Portal.BaseURL, "base_url": h.cfg.Portal.BaseURL + "/v1", "models": models})
+	respond(w, 200, map[string]any{"router_url": h.cfg.Portal.BaseURL, "base_url": h.cfg.Portal.BaseURL + "/v1", "privacy_url": h.cfg.Portal.PrivacyURL, "models": models})
 }
 
 // deleteUsage erases the caller's per-request records. Daily totals stay, so

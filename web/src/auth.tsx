@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ProfileCard } from '@/profile'
+import { SitePrivacy } from '@/privacy'
 import { safeNext } from '@/lib/session-state'
 import {
   redirect,
@@ -278,6 +279,11 @@ export function SignIn({
           localForm
         ))}
       {!keycloakFirst && keycloak}
+      {methods.data && (
+        <p className="subtitle mt-5">
+          <SitePrivacy url={methods.data.privacy_url} />
+        </p>
+      )}
       {directLocal && (
         <Link className="auth-link mt-5" to="/sign-in">
           All sign-in options

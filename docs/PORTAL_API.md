@@ -17,6 +17,7 @@ fields relevant to that operation rather than an exhaustive response schema.
 
 - `GET /portal/api/auth`: public authentication metadata,
   with `default` (`oidc` or `local`: the primary sign-in option),
+  `privacy_url` (the site's public notice, or empty when unconfigured),
   `local: {available, login_url, password_url}` and
   `oidc: {configured, available, login_url}`. No secret or account-existence information
   is returned. The OIDC `login_url` points to the browser entry below.
@@ -610,15 +611,32 @@ checks; drafts accept up to 256 KiB.
 {
   "router_url":"http://localhost:8080",
   "base_url":"http://localhost:8080/v1",
+  "privacy_url":"https://site.example/privacy",
   "models":[
-    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"]},
-    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"]}
+    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true},
+    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true}
   ]
 }
 ```
 
 Models and aliases are sorted by ID and filtered by the user's effective model policy.
 The origin is configured, never derived from untrusted Host or forwarding headers.
+`privacy_url` is `PORTAL_PRIVACY_URL`, or an empty string if unconfigured; public
+`GET /portal/api/auth` also returns it for sign-in. See the [site notice setup](PRIVACY.md#for-operators).
+
+Each model/alias lists distinct `(organization, privacy_url)` pairs from **all**
+permitted replicas in the active routing snapshot, regardless of health or capacity.
+Model policy and backend group restrictions are both applied. Aliases disclose the
+same recipients as their canonical model. `recipients_complete` is false if any
+permitted replica lacks either field (or there are no destinations). Empty fields
+are preserved explicitly; internal names, connection URLs, paths and credentials
+are never substituted. Duplicate public pairs are collapsed, so this is not a
+replica inventory. Values are operator declarations, not verification of provider
+practices. Refresh when models or routing change; the snapshot is not a routing lock.
+
+Authenticated `GET /v1/models` includes the same additive `recipients` and
+`recipients_complete` fields on each OpenAI-style model entry. Client owners can
+use these before the first prompt; see the [session notice example](CLIENTS.md#first-session-ai-notice).
 
 ## Deployment settings
 

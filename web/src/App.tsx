@@ -2,6 +2,7 @@ import { userDisplayName } from '@/profile'
 import { useEffect, useState, type FormEvent } from 'react'
 import { SessionRecovery } from '@/session-recovery'
 import { AboutPage } from '@/about'
+import { AIInteraction, ModelRecipients } from '@/privacy'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -1143,6 +1144,7 @@ function Connect() {
       ) : (
         query.data && (
           <>
+            <AIInteraction privacyURL={query.data.privacy_url} />
             <div className="panel p-6 mb-6">
               <div className="flex flex-wrap justify-between items-center gap-4">
                 <div>
@@ -1212,7 +1214,13 @@ function Connect() {
                 />
               </div>
               {selected ? (
-                <pre className="snippet" data-testid="snippet">
+                <pre
+                  className="snippet"
+                  data-testid="snippet"
+                  tabIndex={0}
+                  role="region"
+                  aria-label={`${client} connection example`}
+                >
                   <code>{code}</code>
                 </pre>
               ) : (
@@ -1221,6 +1229,7 @@ function Connect() {
                   available for your groups. Contact your operator for access.
                 </p>
               )}
+              {selected && <ModelRecipients model={selected} />}
             </div>
             <div className="hint">
               <ShieldCheck size={18} className="shrink-0 mt-1" />

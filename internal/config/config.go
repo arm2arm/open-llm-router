@@ -199,6 +199,7 @@ type RequiredClaim struct {
 
 type Portal struct {
 	BaseURL      string
+	PrivacyURL   string
 	CookieSecure bool
 }
 
@@ -232,14 +233,16 @@ type Priorities struct {
 
 // Replica is one backend server of a model.
 type Replica struct {
-	Backend        string  `yaml:"-" json:"backend,omitempty"` // managed backend reference
-	PrivateNetwork bool    `yaml:"private_network" json:"private_network,omitempty"`
-	URL            string  `yaml:"url" json:"url"`
-	HealthPath     string  `yaml:"health_path" json:"health_path"` // default /health; Ollama uses /
-	Weight         float64 `yaml:"weight" json:"weight"`           // relative throughput
-	MaxInflight    int     `yaml:"max_inflight" json:"max_inflight"`
-	BearerTokenEnv string  `yaml:"bearer_token_env" json:"bearer_token_env"`
-	BearerToken    string  `yaml:"-" json:"-"` // resolved from BearerTokenEnv, never written to YAML
+	PublicOrganization string  `yaml:"public_organization" json:"public_organization,omitempty"`
+	PrivacyURL         string  `yaml:"privacy_url" json:"privacy_url,omitempty"`
+	Backend            string  `yaml:"-" json:"backend,omitempty"` // managed backend reference
+	PrivateNetwork     bool    `yaml:"private_network" json:"private_network,omitempty"`
+	URL                string  `yaml:"url" json:"url"`
+	HealthPath         string  `yaml:"health_path" json:"health_path"` // default /health; Ollama uses /
+	Weight             float64 `yaml:"weight" json:"weight"`           // relative throughput
+	MaxInflight        int     `yaml:"max_inflight" json:"max_inflight"`
+	BearerTokenEnv     string  `yaml:"bearer_token_env" json:"bearer_token_env"`
+	BearerToken        string  `yaml:"-" json:"-"` // resolved from BearerTokenEnv, never written to YAML
 }
 
 // Group is the policy for the members of one identity-provider group. A limit
@@ -364,6 +367,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 				cfg.Portal.BaseURL = origin
 			}
 		}
+	}
+	if value, ok := lookup("PORTAL_PRIVACY_URL"); ok {
+		cfg.Portal.PrivacyURL = value
 	}
 	if value, ok := lookup("PORTAL_COOKIE_SECURE"); ok {
 		secure, err := strconv.ParseBool(value)
@@ -706,6 +712,9 @@ func (c *Config) validate() Problems {
 	if !isBackendURL(c.Portal.BaseURL) {
 		add("PORTAL_BASE_URL: must be an http or https origin without credentials, path, query or fragment")
 	}
+	if !ValidPrivacyURL(c.Portal.PrivacyURL) {
+		add("PORTAL_PRIVACY_URL: use an absolute HTTP(S) URL without credentials, or leave empty")
+	}
 	if strings.HasPrefix(c.Portal.BaseURL, "https://") && !c.Portal.CookieSecure {
 		add("PORTAL_COOKIE_SECURE: must be true when PORTAL_BASE_URL uses HTTPS")
 	}
@@ -744,6 +753,12 @@ func (c *Config) validate() Problems {
 		seen := make(map[string]bool)
 		for i, r := range m.Pool {
 			at := fmt.Sprintf("%s.pool[%d]", at, i)
+			if !ValidPublicOrganization(r.PublicOrganization) {
+				add("%s.public_organization: use at most 128 bytes of text without control characters", at)
+			}
+			if !ValidPrivacyURL(r.PrivacyURL) {
+				add("%s.privacy_url: use an absolute HTTP(S) URL without credentials, or leave empty", at)
+			}
 			switch {
 			case !isBackendURL(r.URL):
 				add("%s.url: must be an HTTP(S) origin without credentials, path, query or fragment", at)

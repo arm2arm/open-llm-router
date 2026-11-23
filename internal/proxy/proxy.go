@@ -139,7 +139,8 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 		if !policy.ModelAllowed(cfg, access, target, principal.Groups, principal.ProtectedAdmin) {
 			continue
 		}
-		data = append(data, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router"})
+		recipients, complete := policy.ModelRecipients(cfg, target, principal.Groups, principal.ProtectedAdmin)
+		data = append(data, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router", "recipients": recipients, "recipients_complete": complete})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})

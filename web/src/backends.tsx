@@ -113,6 +113,8 @@ function entries(document: RoutingDocument): Entry[] {
           id,
           backend: {
             name: hostname,
+            public_organization: replica.public_organization,
+            privacy_url: replica.privacy_url,
             url: replica.url,
             api_key: {},
             private_network:
@@ -492,6 +494,10 @@ function BackendEditor({
     entry?.clone ? copyName(entry, document) : (entry?.backend.name ?? ''),
   )
   const [host, setHost] = useState(entry?.backend.url ?? '')
+  const [publicOrganization, setPublicOrganization] = useState(
+    entry?.backend.public_organization ?? '',
+  )
+  const [privacyURL, setPrivacyURL] = useState(entry?.backend.privacy_url ?? '')
   const [privateNetwork, setPrivateNetwork] = useState(
     entry?.backend.private_network ?? true,
   )
@@ -621,6 +627,8 @@ function BackendEditor({
             ...document.backends,
             [id]: {
               name: name.trim() || new URL(origin).host,
+              public_organization: publicOrganization.trim() || undefined,
+              privacy_url: privacyURL.trim() || undefined,
               provider: catalog?.provider || entry?.backend.provider,
               url: origin,
               api_key: stored ? { stored } : {},
@@ -782,6 +790,35 @@ function BackendEditor({
                 </span>
               </label>
             )}
+            <fieldset className="backend-fieldset">
+              <legend>Public recipient information</legend>
+              <p className="subtitle">
+                Shown to users before they send a prompt. Use the organization’s
+                public name and actual privacy notice; keep internal hostnames
+                and credentials out of these fields. Empty fields are shown as
+                incomplete.
+              </p>
+              <label className="field">
+                Public organization
+                <Input
+                  value={publicOrganization}
+                  maxLength={128}
+                  onChange={(event) =>
+                    setPublicOrganization(event.target.value)
+                  }
+                />
+              </label>
+              <label className="field">
+                Recipient privacy URL
+                <Input
+                  type="url"
+                  value={privacyURL}
+                  maxLength={2048}
+                  placeholder="https://organization.example/privacy"
+                  onChange={(event) => setPrivacyURL(event.target.value)}
+                />
+              </label>
+            </fieldset>
             <fieldset className="backend-fieldset">
               <legend>
                 Models <span>{models.length} selected</span>
