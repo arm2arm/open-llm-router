@@ -113,9 +113,10 @@ data-export operators can access stored content.
 
 ## For operators
 
-- Publish the completed site notice and set `PORTAL_PRIVACY_URL` to its absolute
-  HTTP(S) URL (up to 2048 bytes, no credentials or whitespace). Empty/unset leaves
-  sign-in and Connect usable and displays a contact-operator message. The router
+- Publish the completed site notice and set `portal.privacy_notice_url` to its
+  absolute HTTPS URL (up to 2048 bytes, no credentials, query or whitespace).
+  A nonempty `PORTAL_PRIVACY_URL` overrides the file setting. When both are empty,
+  sign-in and Connect remain usable and displays a contact-operator message. The router
   validates the link's syntax; the operator owns its content and availability.
   Compose forwards this environment variable; Helm accepts it under
   `env.PORTAL_PRIVACY_URL`. Restart the router after changing it.
@@ -126,7 +127,11 @@ data-export operators can access stored content.
   are public: do not put credentials, internal hostnames, private backend paths
   or administrator-only names in them. They are never inferred from connection
   settings. Missing labels/notices are explicitly incomplete in Connect and the
-  authenticated catalogues. Review them whenever routing or access changes.
+  authenticated catalogues. Existing `portal.recipient_labels` entries remain
+  a fallback when a replica has no public organization; they do not supply a
+  recipient privacy URL. Review them whenever routing or access changes.
+  If a backend is itself a gateway, confirm its onward recipients and include
+  them in the site notice.
 - Put the [first-session AI notice](CLIENTS.md#first-session-ai-notice) in each
   client where users actually send prompts, including users who never visit the
   portal. The sign-in privacy link and Connect explanation do not replace it.

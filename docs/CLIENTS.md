@@ -27,10 +27,10 @@ Example to adapt with the site's actual names and links:
 > retention and your rights. Disabling personal router traces does not prevent
 > backend processing or logging.
 
-Fetch `recipients` and `recipients_complete` for each permitted model or alias
+Fetch `recipient_details` and `recipients_complete` for each permitted model or alias
 from authenticated `GET /v1/models`; portal integrations can use
-`GET /portal/api/models`, which also returns `privacy_url`. Public sign-in metadata
-at `GET /portal/api/auth` returns the site `privacy_url`. These are current
+`GET /portal/api/models`, which also returns `privacy_notice_url`. Public sign-in metadata
+at `GET /portal/api/auth` returns the site `privacy_notice_url`. These are current
 configuration snapshots, not a promise that routing cannot change before a call.
 Do not substitute `owned_by`, internal backend IDs, or a single healthy replica
 for the recipient list. If information is incomplete, state that visibly and

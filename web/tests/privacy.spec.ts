@@ -23,7 +23,7 @@ for (const privacyURL of ['', 'https://site.example/privacy']) {
       await page.route('**/portal/api/auth', (route) =>
         route.fulfill({
           json: {
-            privacy_url: privacyURL,
+            privacy_notice_url: privacyURL,
             default: 'local',
             local: { available: true },
             oidc: { configured: false, available: false },
@@ -78,13 +78,13 @@ for (const privacyURL of ['', 'https://site.example/privacy']) {
         json: {
           router_url: 'https://router.example',
           base_url: 'https://router.example/v1',
-          privacy_url: privacyURL,
+          privacy_notice_url: privacyURL,
           models: [
             {
               id: 'alias',
               canonical_model: 'mixed',
               protocols: ['openai'],
-              recipients: [
+              recipient_details: [
                 {
                   organization: 'Research Institute',
                   privacy_url: 'https://institute.example/privacy',
@@ -97,7 +97,7 @@ for (const privacyURL of ['', 'https://site.example/privacy']) {
               id: 'complete',
               canonical_model: 'complete',
               protocols: ['openai'],
-              recipients: [
+              recipient_details: [
                 {
                   organization: 'Other Institute',
                   privacy_url: 'https://other.example/privacy',

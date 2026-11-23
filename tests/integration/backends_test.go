@@ -161,7 +161,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 			Recipients []struct {
 				Organization string `json:"organization"`
 				PrivacyURL   string `json:"privacy_url"`
-			} `json:"recipients"`
+			} `json:"recipient_details"`
 			Complete bool `json:"recipients_complete"`
 		}
 		// Other top-level fields are strings; decode only the model array.

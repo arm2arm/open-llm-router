@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
@@ -133,7 +134,7 @@ func (s *Stream) inspect(event []byte) bool {
 	}
 	var name, data []byte
 	haveData := false
-	supplementalSSE := false
+	hasEventMetadata := false
 	s.data = s.data[:0]
 	for len(event) > 0 {
 		end := bytes.IndexAny(event, "\r\n")
@@ -148,11 +149,11 @@ func (s *Stream) inspect(event []byte) bool {
 		event = event[end+eol:]
 		key, value, _ := bytes.Cut(line, []byte(":"))
 		value = bytes.TrimPrefix(value, []byte(" "))
-		if len(line) > 0 && !bytes.Equal(key, []byte("data")) {
-			supplementalSSE = true
-		}
 		if bytes.Equal(key, []byte("event")) {
 			name = value
+			if len(name) != 0 && !bytes.Equal(name, []byte("message")) {
+				hasEventMetadata = true
+			}
 		} else if bytes.Equal(key, []byte("data")) {
 			if !haveData {
 				data, haveData = value, true
@@ -164,6 +165,8 @@ func (s *Stream) inspect(event []byte) bool {
 				s.data = append(s.data, value...)
 				data = s.data
 			}
+		} else if len(line) != 0 {
+			hasEventMetadata = true
 		}
 	}
 	if !haveData {
@@ -196,8 +199,7 @@ func (s *Stream) inspect(event []byte) bool {
 	}
 	if raw := field(data, "usage"); len(raw) > 0 && raw[0] == '{' {
 		valid := s.readUsage(raw, true, true)
-		choices := trim(field(data, "choices"))
-		if valid && s.HideUsage && !supplementalSSE && len(choices) >= 2 && choices[0] == '[' && choices[len(choices)-1] == ']' && len(trim(choices[1:len(choices)-1])) == 0 && ordinaryUsageObject(data, "event") {
+		if valid && s.HideUsage && !hasEventMetadata && plainUsageChunk(data) && uniqueUsageKeys(data) {
 			return true
 		}
 	}
@@ -207,13 +209,52 @@ func (s *Stream) inspect(event []byte) bool {
 	return false
 }
 
-// Suppress only a recognized usage envelope. Unknown fields (including nested
-// usage extensions), ambiguous JSON and supplemental SSE fields pass through
-// byte-for-byte. This inspection runs only on otherwise suppressible events.
-func ordinaryUsageObject(raw []byte, kind string) bool {
-	if !json.Valid(raw) {
+// Only the ordinary accounting envelope may be removed. A provider can attach
+// provenance to the final chunk, including inside its usage object.
+func plainUsageChunk(data []byte) bool {
+	choices := trim(field(data, "choices"))
+	if len(choices) < 2 || choices[0] != '[' || choices[len(choices)-1] != ']' || len(trim(choices[1:len(choices)-1])) != 0 {
 		return false
 	}
+	var chunk struct {
+		ID, Model, Object string
+		Created           int64
+		Choices           []struct{}
+		SystemFingerprint string `json:"system_fingerprint"`
+		ServiceTier       string `json:"service_tier"`
+		Usage             struct {
+			Prompt        int64 `json:"prompt_tokens"`
+			Completion    int64 `json:"completion_tokens"`
+			Total         int64 `json:"total_tokens"`
+			PromptDetails struct {
+				Cached int64 `json:"cached_tokens"`
+				Audio  int64 `json:"audio_tokens"`
+			} `json:"prompt_tokens_details"`
+			CompletionDetails struct {
+				Reasoning int64 `json:"reasoning_tokens"`
+				Audio     int64 `json:"audio_tokens"`
+				Accepted  int64 `json:"accepted_prediction_tokens"`
+				Rejected  int64 `json:"rejected_prediction_tokens"`
+			} `json:"completion_tokens_details"`
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&chunk) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF {
+		return false
+	}
+	switch chunk.Object {
+	case "", "chat.completion.chunk", "text_completion":
+		return len(chunk.Choices) == 0
+	default:
+		return false
+	}
+}
+
+// plainUsageChunk has validated the envelope and nested accounting objects.
+// Reject duplicate keys as well: decoders may otherwise disagree about which
+// value carries provider metadata. The only accepted array is empty choices.
+func uniqueUsageKeys(raw []byte) bool {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	if token, err := d.Token(); err != nil || token != json.Delim('{') {
 		return false
@@ -230,30 +271,8 @@ func ordinaryUsageObject(raw []byte, kind string) bool {
 		if d.Decode(&value) != nil {
 			return false
 		}
-		switch kind + "." + key {
-		case "event.choices": // Already verified to be an empty array.
-		case "event.id", "event.object", "event.created", "event.model", "event.system_fingerprint", "event.service_tier",
-			"usage.prompt_tokens", "usage.completion_tokens", "usage.total_tokens",
-			"prompt.cached_tokens", "prompt.audio_tokens",
-			"completion.reasoning_tokens", "completion.audio_tokens", "completion.accepted_prediction_tokens", "completion.rejected_prediction_tokens":
-			// Standard scalar fields must not conceal an extended object/array.
-			value = trim(value)
-			if value[0] == '{' || value[0] == '[' {
-				return false
-			}
-		case "event.usage":
-			if !ordinaryUsageObject(value, "usage") {
-				return false
-			}
-		case "usage.prompt_tokens_details":
-			if !bytes.Equal(trim(value), []byte("null")) && !ordinaryUsageObject(value, "prompt") {
-				return false
-			}
-		case "usage.completion_tokens_details":
-			if !bytes.Equal(trim(value), []byte("null")) && !ordinaryUsageObject(value, "completion") {
-				return false
-			}
-		default:
+		value = trim(value)
+		if value[0] == '{' && !uniqueUsageKeys(value) {
 			return false
 		}
 	}

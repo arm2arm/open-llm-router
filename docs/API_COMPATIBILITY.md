@@ -75,7 +75,7 @@ did not request usage. Only recognized envelope fields (`id`, `object`, `created
 `model`, `system_fingerprint`, `service_tier`, `choices`, `usage`) and standard
 token counts/details qualify;
 unknown fields, nested usage extensions, duplicate keys and additional SSE
-fields/comments prevent suppression. An event with supplemental information is
+fields/comments prevent suppression (the default `event: message` is allowed). An event with supplemental information is
 forwarded whole, including its usage, even when the caller set `include_usage:false`.
 Responses and Anthropic events do not use this suppression.
 

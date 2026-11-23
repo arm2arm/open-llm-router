@@ -233,6 +233,12 @@ export function SignIn({
         {!directLocal && keycloakFirst && sso?.configured
           ? 'Use your institutional account to access Open LLM Router.'
           : 'Access your models, API keys and usage.'}
+        {methods.data && (
+          <>
+            <br />
+            <SitePrivacy url={methods.data.privacy_notice_url} />
+          </>
+        )}
       </p>
       {!embedded && params.get('expired') === '1' && (
         <p role="status" className="notice mb-5">
@@ -279,11 +285,6 @@ export function SignIn({
           localForm
         ))}
       {!keycloakFirst && keycloak}
-      {methods.data && (
-        <p className="subtitle mt-5">
-          <SitePrivacy url={methods.data.privacy_url} />
-        </p>
-      )}
       {directLocal && (
         <Link className="auth-link mt-5" to="/sign-in">
           All sign-in options

@@ -43,8 +43,19 @@ export function ModelRecipients({
 }: {
   model: Models['models'][number]
 }) {
+  const recipients =
+    model.recipient_details ??
+    (model.recipients ?? []).map((organization) => ({
+      organization,
+      privacy_url: '',
+    }))
   return (
-    <section className="p-6 border-t" aria-labelledby="recipients-title">
+    <section
+      className="p-6 border-t break-words"
+      aria-labelledby="recipients-title"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <h3 id="recipients-title">Possible recipients for {model.id}</h3>
       <p className="subtitle">
         Any of these organizations may receive the request on initial selection
@@ -52,7 +63,7 @@ export function ModelRecipients({
         included.
       </p>
       <ul className="list-disc pl-5 mt-3 space-y-2">
-        {(model.recipients ?? []).map((recipient, index) => (
+        {recipients.map((recipient, index) => (
           <li key={index}>
             {recipient.organization || 'Unlabelled destination'}
             {' · '}

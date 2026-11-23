@@ -21,6 +21,9 @@ func ModelRecipients(cfg *config.Config, name string, groups []string, protected
 			continue
 		}
 		recipient := Recipient{Organization: replica.PublicOrganization, PrivacyURL: replica.PrivacyURL}
+		if recipient.Organization == "" {
+			recipient.Organization = cfg.Portal.RecipientLabels[replica.URL]
+		}
 		if recipient.Organization == "" || recipient.PrivacyURL == "" {
 			complete = false
 		}

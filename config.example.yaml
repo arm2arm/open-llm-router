@@ -15,6 +15,15 @@ auth:
   max_key_lifetime_days: 90
   max_active_keys_per_user: 10
 
+# Optional public information for the portal. Use a reachable site notice and
+# public organisation names. Origin keys stay on the server. Restart OLR after
+# changing these file-based settings.
+# portal:
+#   privacy_notice_url: https://research.example.org/llm-privacy
+#   recipient_labels:
+#     "http://mock-llm-a:8000": Example Institute
+#     "http://mock-llm-b:8000": Example Federation Partner
+
 # Personal browser clients (Open WebUI Direct Connections); empty disables CORS.
 # Use the browser site's origin, without a path: [https://ai.aip.de].
 cors:

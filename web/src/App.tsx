@@ -1123,7 +1123,7 @@ function Connect() {
           <div className="eyebrow">From key to first request</div>
           <h1>Connect</h1>
           <p className="subtitle">
-            One endpoint for your apps and the tools you already use.
+            Your client sends requests to an AI model through this router.
           </p>
         </div>
         <span className="badge">
@@ -1144,7 +1144,7 @@ function Connect() {
       ) : (
         query.data && (
           <>
-            <AIInteraction privacyURL={query.data.privacy_url} />
+            <AIInteraction privacyURL={query.data.privacy_notice_url} />
             <div className="panel p-6 mb-6">
               <div className="flex flex-wrap justify-between items-center gap-4">
                 <div>
@@ -1213,6 +1213,7 @@ function Connect() {
                   disabled={!selected}
                 />
               </div>
+              {selected && <ModelRecipients model={selected} />}
               {selected ? (
                 <pre
                   className="snippet"
@@ -1229,7 +1230,6 @@ function Connect() {
                   available for your groups. Contact your operator for access.
                 </p>
               )}
-              {selected && <ModelRecipients model={selected} />}
             </div>
             <div className="hint">
               <ShieldCheck size={18} className="shrink-0 mt-1" />

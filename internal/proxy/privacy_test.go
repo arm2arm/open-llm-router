@@ -31,7 +31,7 @@ func TestModelAPIRecipientsUseActiveRoutingAndAccess(t *testing.T) {
 	var body struct {
 		Data []struct {
 			ID         string             `json:"id"`
-			Recipients []policy.Recipient `json:"recipients"`
+			Recipients []policy.Recipient `json:"recipient_details"`
 			Complete   bool               `json:"recipients_complete"`
 		}
 	}

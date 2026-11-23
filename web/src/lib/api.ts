@@ -104,7 +104,7 @@ export type Session = {
   must_change_password: boolean
 }
 export type AuthMethods = {
-  privacy_url?: string
+  privacy_notice_url?: string
   default?: 'oidc' | 'local'
   local: { available: boolean; login_url: string; password_url: string }
   oidc: { configured: boolean; available: boolean; login_url: string }
@@ -184,12 +184,14 @@ export type Usage = {
 export type Models = {
   router_url: string
   base_url: string
-  privacy_url?: string
+  privacy_notice_url?: string
   models: {
     id: string
     canonical_model: string
     protocols: string[]
-    recipients?: { organization: string; privacy_url: string }[]
+    recipients?: string[]
+    has_unlisted_recipients?: boolean
+    recipient_details?: { organization: string; privacy_url: string }[]
     recipients_complete?: boolean
   }[]
 }
