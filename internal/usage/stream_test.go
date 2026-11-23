@@ -132,6 +132,52 @@ func TestStreamDoesNotDropUsageOnContentOrInvalidCounts(t *testing.T) {
 	}
 }
 
+func TestUsageChunkWithMetadataIsPreserved(t *testing.T) {
+	const counters = `"prompt_tokens":12,"completion_tokens":7,"total_tokens":19`
+	const ordinary = `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"test","choices":[],"usage":{` + counters + `,"prompt_tokens_details":{"cached_tokens":3}}}`
+	for _, tc := range []struct {
+		name, prefix, payload string
+		keep                  bool
+	}{
+		{"ordinary", "", ordinary, false},
+		{"default event", "event: message\r\n", ordinary, false},
+		{"top-level extension", "", `{"provenance":{"signature":"abc"},"choices":[],"usage":{` + counters + `}}`, true},
+		{"standard fingerprint", "", `{"system_fingerprint":"fp123","choices":[],"usage":{` + counters + `}}`, false},
+		{"custom object", "", `{"object":"provider.provenance","choices":[],"usage":{` + counters + `}}`, true},
+		{"usage extension", "", `{"choices":[],"usage":{` + counters + `,"attestation":"abc"}}`, true},
+		{"usage detail extension", "", `{"choices":[],"usage":{` + counters + `,"prompt_tokens_details":{"proof":"abc"}}}`, true},
+		{"custom event", "event: provider.provenance\r\n", ordinary, true},
+		{"SSE id", "id: signed-frame-12\r\n", ordinary, true},
+		{"comment", ": marking\r\n", ordinary, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := []byte(tc.prefix + "data: " + tc.payload + "\r\n\r\n")
+			var output bytes.Buffer
+			observed := 0
+			stream := NewStream(config.ProtocolOpenAI, true, func(p []byte) error { _, err := output.Write(p); return err })
+			stream.UsageObserver = func([]byte) { observed++ }
+			for i := range wire {
+				if err := stream.Write(wire[i : i+1]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := stream.Finish(); err != nil {
+				t.Fatal(err)
+			}
+			if observed != 1 || stream.Totals.InputTokens != 12 || stream.Totals.OutputTokens != 7 {
+				t.Fatalf("usage observations=%d totals=%+v", observed, stream.Totals)
+			}
+			var want []byte
+			if tc.keep {
+				want = wire
+			}
+			if !bytes.Equal(output.Bytes(), want) {
+				t.Fatalf("got %q, want %q", output.Bytes(), want)
+			}
+		})
+	}
+}
+
 func TestStreamPropagatesWriteFailure(t *testing.T) {
 	failure := errors.New("disconnected")
 	s := NewStream(config.ProtocolOpenAI, false, func([]byte) error { return failure })

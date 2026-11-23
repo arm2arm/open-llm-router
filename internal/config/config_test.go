@@ -777,3 +777,39 @@ func TestPortalBaseURLCanonicalOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestPortalDisclosureConfiguration(t *testing.T) {
+	const disclosure = `portal:
+  privacy_notice_url: https://institute.example/privacy#llm
+  recipient_labels:
+    "HTTPS://GPU-A.EXAMPLE:443/": "Institute A (DE)"
+`
+	cfg, err := Parse([]byte(valid+disclosure), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Portal.PrivacyNoticeURL != "https://institute.example/privacy#llm" ||
+		cfg.Portal.RecipientLabels["https://gpu-a.example"] != "Institute A (DE)" ||
+		cfg.Portal.BaseURL != "http://localhost:8080" || !cfg.Portal.CookieSecure {
+		t.Fatal("disclosures did not preserve the canonical upstream or existing portal defaults")
+	}
+	for _, invalid := range []string{
+		"privacy_notice_url: http://institute.example/privacy",
+		"privacy_notice_url: //institute.example/privacy",
+		"privacy_notice_url: https://password@institute.example/",
+		"privacy_notice_url: https://institute.example/private?token=value",
+		"recipient_labels: {'https://user:password@backend': 'Institute'}",
+		"recipient_labels: {'https://backend/v1': 'Institute'}",
+		"recipient_labels: {'https://backend': 'A', 'https://BACKEND:443/': 'B'}",
+		"recipient_labels: {'https://backend': ' '}",
+		"recipient_labels: {'https://backend': 'https://user:password@backend'}",
+		"base_url: https://override.example",
+		"cookie_secure: false",
+	} {
+		t.Run(invalid, func(t *testing.T) {
+			if _, err := Parse([]byte(valid+"portal:\n  "+invalid+"\n"), lookupIn(validEnv)); err == nil {
+				t.Fatal("accepted invalid portal configuration")
+			}
+		})
+	}
+}

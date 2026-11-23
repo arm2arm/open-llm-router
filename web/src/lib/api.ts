@@ -105,6 +105,7 @@ export type Session = {
 }
 export type AuthMethods = {
   default?: 'oidc' | 'local'
+  privacy_notice_url?: string
   local: { available: boolean; login_url: string; password_url: string }
   oidc: { configured: boolean; available: boolean; login_url: string }
 }
@@ -183,7 +184,14 @@ export type Usage = {
 export type Models = {
   router_url: string
   base_url: string
-  models: { id: string; canonical_model: string; protocols: string[] }[]
+  privacy_notice_url?: string
+  models: {
+    id: string
+    canonical_model: string
+    protocols: string[]
+    recipients?: string[]
+    has_unlisted_recipients?: boolean
+  }[]
 }
 export type RequestRecord = {
   request_id: string | null

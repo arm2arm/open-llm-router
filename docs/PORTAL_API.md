@@ -16,7 +16,8 @@ fields relevant to that operation rather than an exhaustive response schema.
 ## Login and logout
 
 - `GET /portal/api/auth`: public authentication metadata,
-  with `default` (`oidc` or `local`: the primary sign-in option),
+  with `privacy_notice_url` (site HTTPS URL, empty when unconfigured),
+  `default` (`oidc` or `local`: the primary sign-in option),
   `local: {available, login_url, password_url}` and
   `oidc: {configured, available, login_url}`. No secret or account-existence information
   is returned. The OIDC `login_url` points to the browser entry below.
@@ -610,14 +611,19 @@ checks; drafts accept up to 256 KiB.
 {
   "router_url":"http://localhost:8080",
   "base_url":"http://localhost:8080/v1",
+  "privacy_notice_url":"https://research.example.org/llm-privacy",
   "models":[
-    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"]},
-    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"]}
+    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":["Example Institute"],"has_unlisted_recipients":true},
+    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":["Example Institute"],"has_unlisted_recipients":true}
   ]
 }
 ```
 
 Models and aliases are sorted by ID and filtered by the user's effective model policy.
+Each model and alias includes the sorted, distinct public recipient labels of
+all replicas permitted for the user, including possible retries. A true
+`has_unlisted_recipients` means one or more eligible replicas lack a label.
+This is a list of possible destinations, not a prediction of the selected replica.
 The origin is configured, never derived from untrusted Host or forwarding headers.
 
 ## Deployment settings

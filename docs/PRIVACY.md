@@ -9,6 +9,20 @@ notices.
 
 **Controller:** `<organization, address>` · **Contact for privacy requests:** `<email or form>`
 
+## Who processes your model requests
+
+When you submit a request, the selected inference backend receives its contents.
+Depending on your client, this can include prior messages, attachments, and tool
+results. After a connection failure or a timeout waiting for response headers,
+the router may retry once on another eligible replica. Both sites may receive
+the same request. Switching off personal tracing stops optional capture by OLR;
+the selected backend still processes the request.
+
+For this deployment: <list actual inference operators, locations, applicable
+models, onward recipients, backend retention and any use for training>. The
+Connect page lists operator-supplied recipient names for your selected model
+and flags eligible replicas whose recipients have not been identified.
+
 ## What is stored
 
 When you use the LLM router at `<https://router.example.org>`, it stores:
@@ -86,6 +100,12 @@ data-export operators can access stored content.
 
 ## For operators
 
+- Set `portal.privacy_notice_url` to the published HTTPS notice and use
+  `portal.recipient_labels` to associate each upstream origin with its public
+  recipient name ([example configuration](../config.example.yaml)). A label
+  describes the configured destination. If a backend is itself a gateway,
+  confirm its onward recipients and include them in the site notice. Review
+  labels, access grants and all possible retry destinations when pools change.
 - Per-request retention is `retention.usage_days` (default 90) and daily totals
   `retention.usage_daily_days` (default 400) in the config file; put the same values in this
   notice. The router deletes older rows at startup and every night at `retention.run_at`, and
