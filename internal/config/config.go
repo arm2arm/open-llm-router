@@ -58,7 +58,7 @@ type Config struct {
 	Limits         Limits                   `yaml:"limits"`
 	Retention      Retention                `yaml:"retention"`
 	OIDC           *OIDC                    `yaml:"oidc"` // nil: local portal login only
-	Portal         Portal                   `yaml:"-"`
+	Portal         Portal                   `yaml:"portal"`
 	Models         map[string]Model         `yaml:"models"`
 	Groups         map[string]Group         `yaml:"groups"`
 	Aliases        map[string]string        `yaml:"aliases"` // client model name -> model
@@ -198,8 +198,10 @@ type RequiredClaim struct {
 }
 
 type Portal struct {
-	BaseURL      string
-	CookieSecure bool
+	BaseURL          string            `yaml:"-"`
+	CookieSecure     bool              `yaml:"-"`
+	PrivacyNoticeURL string            `yaml:"privacy_notice_url"`
+	RecipientLabels  map[string]string `yaml:"recipient_labels" json:"-"`
 }
 
 // Model is one model name served to clients and the replicas behind it.
@@ -325,7 +327,27 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
 	}
-	cfg.Portal = Portal{BaseURL: "http://localhost:8080", CookieSecure: true}
+	cfg.Portal.BaseURL = "http://localhost:8080"
+	cfg.Portal.CookieSecure = true
+	// Origins in routing snapshots use the same canonical form for file and
+	// managed replicas. Labels can be declared in advance for a managed pool.
+	labels := make(map[string]string, len(cfg.Portal.RecipientLabels))
+	for _, raw := range slices.Sorted(maps.Keys(cfg.Portal.RecipientLabels)) {
+		origin, err := NormalizeBackendURL(raw)
+		if !isBackendURL(raw) || err != nil {
+			problems = append(problems, "portal.recipient_labels: keys must be HTTP(S) origins without credentials, path, query or fragment")
+			continue
+		}
+		if _, exists := labels[origin]; exists {
+			problems = append(problems, "portal.recipient_labels: duplicate normalized origin")
+		}
+		label := strings.TrimSpace(cfg.Portal.RecipientLabels[raw])
+		if label == "" || len(label) > 160 || strings.Contains(label, "://") || strings.ContainsFunc(label, func(r rune) bool { return !unicode.IsPrint(r) }) {
+			problems = append(problems, "portal.recipient_labels: use a printable organization or site name of 1–160 bytes")
+		}
+		labels[origin] = label
+	}
+	cfg.Portal.RecipientLabels = labels
 	if issuer, ok := lookup("OIDC_ISSUER"); ok && (issuer != "" || cfg.OIDC != nil) {
 		if cfg.OIDC == nil {
 			cfg.OIDC = &OIDC{PortalClientID: "olr-portal"}
@@ -701,6 +723,12 @@ func (c *Config) validate() Problems {
 		}
 		if c.OIDC.GroupNames != "" && c.OIDC.GroupNames != "leaf" && c.OIDC.GroupNames != "path" {
 			add("oidc.group_names: must be leaf or path")
+		}
+	}
+	if raw := c.Portal.PrivacyNoticeURL; raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || len(raw) > 2048 || strings.ContainsAny(raw, " \\") {
+			add("portal.privacy_notice_url: use an absolute HTTPS notice URL without credentials or query parameters")
 		}
 	}
 	if !isBackendURL(c.Portal.BaseURL) {

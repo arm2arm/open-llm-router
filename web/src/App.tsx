@@ -1122,7 +1122,7 @@ function Connect() {
           <div className="eyebrow">From key to first request</div>
           <h1>Connect</h1>
           <p className="subtitle">
-            One endpoint for your apps and the tools you already use.
+            Your client sends requests to an AI model through this router.
           </p>
         </div>
         <span className="badge">
@@ -1159,6 +1159,14 @@ function Connect() {
                 Anthropic clients use the router origin:{' '}
                 <code>{query.data.router_url}</code>
               </p>
+              {query.data.privacy_notice_url && (
+                <a
+                  className="auth-link mt-3"
+                  href={query.data.privacy_notice_url}
+                >
+                  Site privacy notice
+                </a>
+              )}
             </div>
             <div
               role="group"
@@ -1212,9 +1220,35 @@ function Connect() {
                 />
               </div>
               {selected ? (
-                <pre className="snippet" data-testid="snippet">
-                  <code>{code}</code>
-                </pre>
+                <>
+                  <div className="px-6 py-4 space-y-1 text-sm">
+                    <p>
+                      The selected backend receives the full model request,
+                      including prompts, attachments and tool results your
+                      client sends. A retry may send the same request to another
+                      eligible backend.
+                    </p>
+                    <p
+                      aria-live="polite"
+                      aria-atomic="true"
+                      className="break-words"
+                    >
+                      {selected.recipients?.length ? (
+                        <>
+                          <strong>Possible recipients:</strong>{' '}
+                          {selected.recipients.join(', ')}.
+                          {selected.has_unlisted_recipients &&
+                            ' Additional recipients are unlisted. Ask your site operator for details.'}
+                        </>
+                      ) : (
+                        'Recipient information is unavailable for this model. Ask your site operator for details.'
+                      )}
+                    </p>
+                  </div>
+                  <pre className="snippet" data-testid="snippet">
+                    <code>{code}</code>
+                  </pre>
+                </>
               ) : (
                 <p className="empty">
                   No {protocol === 'openai' ? 'OpenAI' : 'Anthropic'} models are

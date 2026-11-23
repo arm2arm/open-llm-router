@@ -5,6 +5,12 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Sign-in and Connect can link the operator’s privacy notice. Connect shows the
+  possible recipients of a request for each permitted model and alias, including
+  unlabelled destinations. Both portal settings are optional.
+- OpenAI streaming preserves supplemental metadata on final usage events.
+  Ordinary usage-only events can still be suppressed when the client omits usage.
+
 - Helm upgrades preserve an existing settings encryption key when values omit it
   or supply an empty entry, and reject accidental replacement with another key.
   Ordinary removed backend tokens are still removed from the managed Secret.

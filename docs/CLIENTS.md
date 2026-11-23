@@ -7,6 +7,35 @@ The exact supported endpoints and known gaps are listed in
 [API_COMPATIBILITY.md](API_COMPATIBILITY.md); SDK success does not mean complete
 OpenAI or Anthropic platform compatibility.
 
+## AI assistants using OLR
+
+Connect shows the possible recipients for the selected model. A researcher
+using an IDE, Hermes, DRPHub, or Open WebUI may bypass this portal. Put a clear
+notice at the start of the interactive client session, for example “You’re
+chatting with the DRPHub AI assistant.” Link the deployment’s privacy notice
+and explain any workspace data the client includes. Use the organisation
+operating the client and the actual routing arrangement in the finished copy.
+
+For a service that needs machine-readable marking and detection of generated
+prose, test its upstream marking method through the entire client path:
+
+1. Send a synthetic prompt directly to the backend and through OLR with the same
+   model and serving settings. Use the upstream detector on both outputs.
+2. Repeat with JSON and streaming, including any optional usage or timing
+   settings used in production. Check the completed reply after client rendering
+   and after transcript copy or export. Use code and prose in the same sample to
+   check that copied code and configuration retain their original text.
+3. Record which provider, detector, routes and client versions were tested.
+   Filtering ordinary streaming usage events and enabling timing enrichment can
+   change response bytes. A signature over an entire upstream response needs
+   verification on the delivered representation. Transporting a marker alone
+   does not demonstrate that the output is detectable after export.
+
+The [Commission’s Article 50 guidance](https://eur-lex.europa.eu/eli/C/2026/6005/oj/eng)
+discusses components, source code, and upstream marking in paragraphs 24, 68
+and 74. The integrated service operator can use these checks to assess the
+marking and detection mechanism that applies to its outputs.
+
 ## Browser integration and CORS
 
 OLR supports Open WebUI **Direct Connections**, where each user's browser calls

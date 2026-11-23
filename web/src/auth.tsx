@@ -232,6 +232,14 @@ export function SignIn({
         {!directLocal && keycloakFirst && sso?.configured
           ? 'Use your institutional account to access Open LLM Router.'
           : 'Access your models, API keys and usage.'}
+        {methods.data?.privacy_notice_url && (
+          <>
+            {' '}
+            <a className="auth-link" href={methods.data.privacy_notice_url}>
+              Site privacy notice
+            </a>
+          </>
+        )}
       </p>
       {!embedded && params.get('expired') === '1' && (
         <p role="status" className="notice mb-5">
