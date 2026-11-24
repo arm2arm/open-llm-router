@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"hash/fnv"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"net/http"
@@ -164,7 +165,13 @@ waiting:
 		case <-changed:
 			p.mu.Lock()
 			changed = p.events.channel()
-			p.dispatch()
+			// One dispatch serves every waiter that fits, in queue order, so
+			// only the head runs it. A notification wakes all waiters; letting
+			// each of them dispatch would repeat that scan once per waiter.
+			// A departing head dispatches and notifies again (below).
+			if len(p.waiters) > 0 && p.waiters[0] == w {
+				p.dispatch()
+			}
 			p.mu.Unlock()
 		case <-timer.C:
 			break waiting
@@ -217,9 +224,12 @@ func (p *Pool) dispatchBefore(priority int) {
 	}
 }
 
+// eligible runs the cheap state checks before the caller's access filter: a
+// full pool is rescanned for every queued caller on each release.
 func (p *Pool) eligible(i int, r Request, now time.Time) bool {
 	rep := &p.replicas[i]
-	return (r.Allowed == nil || r.Allowed(rep.config)) && !(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight
+	return rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight &&
+		!(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && (r.Allowed == nil || r.Allowed(rep.config))
 }
 
 // reserve picks a replica for r: the session's preferred replica if it is
@@ -347,7 +357,9 @@ type Manager struct {
 	Pools      map[string]*Pool // immutable after construction
 	client     *http.Client
 	capacities map[string]*atomic.Int64
-	events     *capacityEvents
+	// events are per model, like the capacity counters its revisions share:
+	// a release wakes only callers that could use the freed capacity.
+	events map[string]*capacityEvents
 }
 
 func New(cfg *config.Config, transport http.RoundTripper) *Manager {
@@ -360,14 +372,17 @@ func Replace(cfg *config.Config, transport http.RoundTripper, previous *Manager)
 	m := &Manager{Pools: make(map[string]*Pool), client: &http.Client{Transport: transport, Timeout: CheckTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 	m.capacities = map[string]*atomic.Int64{}
-	m.events = &capacityEvents{changed: make(chan struct{})}
+	m.events = map[string]*capacityEvents{}
 	if previous != nil {
-		m.events = previous.events
-		for key, counter := range previous.capacities {
-			m.capacities[key] = counter
-		}
+		// Removed models keep their entries: their draining leases still
+		// release capacity that a restored revision must observe.
+		maps.Copy(m.capacities, previous.capacities)
+		maps.Copy(m.events, previous.events)
 	}
 	for name, model := range cfg.Models {
+		if m.events[name] == nil {
+			m.events[name] = &capacityEvents{changed: make(chan struct{})}
+		}
 		if previous != nil {
 			if old := previous.Pools[name]; old != nil {
 				old.mu.Lock()
@@ -382,7 +397,7 @@ func Replace(cfg *config.Config, transport http.RoundTripper, previous *Manager)
 				}
 			}
 		}
-		p := &Pool{events: m.events}
+		p := &Pool{events: m.events[name]}
 		for _, r := range model.Pool {
 			key := name + "\x00" + r.URL
 			counter := m.capacities[key]
