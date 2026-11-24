@@ -5,6 +5,16 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Admin-added backends can no longer reach blocked destinations through IPv6
+  forms that a translator delivers to IPv4: NAT64 (`64:ff9b::/96`) and
+  IPv4-compatible addresses get the verdict of their embedded IPv4 address,
+  local-use NAT64 needs an explicit `OLR_BACKEND_ALLOWED_CIDRS` grant, and
+  IPv6 zone identifiers are refused. A zone previously let a private-network
+  origin evade the AWS IPv6 metadata block. Grant translated private
+  backends by their IPv4 network.
+- Queued inference requests cost far less CPU: a release no longer makes every
+  caller queued for any model rescan the pool.
+
 - The API-key creation dialog explains Interactive and Batch use, their separate
   concurrency limits and shared quotas, and labels Interactive as the default
   for most uses.

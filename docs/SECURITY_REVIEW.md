@@ -153,6 +153,30 @@ reader/byte ceiling and live heap, then verifies cancellation cleanup. Network r
 tests cover stalled fixed-length and chunked uploads and immediate oversized rejection.
 See [edge configuration](RUNBOOK.md#behind-a-tls-reverse-proxy) for the matching limits.
 
+### Follow-up: translated and zoned backend addresses (medium)
+
+24 November 2026, automated review (Claude Code). The destination policy for
+Admin-added backends judged each resolved address by its own class, but some
+IPv6 forms are delivered to a different, IPv4 destination:
+
+- A NAT64 address such as `64:ff9b::a00:1` is global unicast, so it passed as a
+  public destination. Behind a NAT64 gateway (usual in IPv6-only Kubernetes
+  clusters) it reaches `10.0.0.1`, bypassing `OLR_BACKEND_ALLOWED_CIDRS`; the
+  translated forms of `127.0.0.1` and the metadata addresses passed too.
+  Deprecated IPv4-compatible addresses (`::a9fe:a9fe`) had the same gap.
+- An IPv6 zone survived URL normalization and resolution where the interface
+  exists, and a zoned address never equals the AWS IPv6 metadata constant. With
+  the private-network opt-in, `http://[fd00:ec2::254%251]` passed the check.
+
+Fix: `internal/backendpolicy` judges NAT64 and IPv4-compatible addresses by their
+embedded IPv4 address (so the CIDR grant, metadata and loopback rules apply),
+requires an explicit grant for local-use NAT64 (`64:ff9b:1::/48`), and refuses
+zone identifiers before resolution. File-defined destinations stay trusted.
+Test: `TestTranslatedAndZonedAddressesCannotReachForbiddenDestinations`, which
+fails 16 checks against the previous policy. A NAT64 gateway with a
+network-specific prefix cannot be recognized by address; restrict egress at the
+network layer where one is deployed.
+
 
 ## Local administration follow-up (#83–85)
 

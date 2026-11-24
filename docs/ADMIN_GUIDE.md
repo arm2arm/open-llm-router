@@ -959,8 +959,12 @@ HTTP(S) origins are allowed; manual private destinations require an operator-set
 `OLR_BACKEND_ALLOWED_CIDRS`, for example `192.168.178.0/24`. Development Compose
 defaults to `192.168.0.0/16`, covering the Ollama example. Production defaults to
 no additional private networks. New loopback, link-local and cloud metadata
-destinations are refused even with a broad CIDR. DNS is checked again on each new
-connection for both health tests and inference; redirects are not followed.
+destinations are refused even with a broad CIDR. NAT64 (`64:ff9b::/96`) and
+IPv4-compatible IPv6 addresses are judged by the IPv4 address a translator
+delivers them to, so grant the IPv4 network (for example `10.20.0.0/16`), not
+its translated form; local-use NAT64 (`64:ff9b:1::/48`) needs an explicit grant.
+IPv6 zone identifiers (`[fe80::1%eth0]`) are refused. DNS is checked again on
+each new connection for both health tests and inference; redirects are not followed.
 Backend connections use this policy directly, without environment HTTP proxies.
 Container `localhost` refers to the router container, not the host's Ollama.
 

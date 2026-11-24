@@ -169,3 +169,54 @@ func TestConfiguredDestinationAllowsDNSFailureButNotForbiddenAddress(t *testing.
 		}
 	}
 }
+
+// Translated IPv6 forms reach an IPv4 destination through a NAT64 gateway
+// (common in IPv6-only clusters), and a zone made exact comparisons miss the
+// metadata address. Each form must get the verdict of what it reaches.
+func TestTranslatedAndZonedAddressesCannotReachForbiddenDestinations(t *testing.T) {
+	p, err := New(&config.Config{}, func(name string) (string, bool) {
+		if name == "OLR_BACKEND_ALLOWED_CIDRS" {
+			return "10.20.0.0/16,64:ff9b:1:ab::/64", true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		address string
+		allowed bool
+	}{
+		{"64:ff9b::a9fe:a9fe", false},     // NAT64 of 169.254.169.254
+		{"64:ff9b::6464:64c8", false},     // NAT64 of 100.100.100.200
+		{"64:ff9b::a00:1", false},         // NAT64 of 10.0.0.1, outside the grant
+		{"64:ff9b::7f00:1", false},        // NAT64 of 127.0.0.1
+		{"64:ff9b::a14:102", true},        // NAT64 of 10.20.1.2, inside the grant
+		{"64:ff9b::808:808", true},        // NAT64 of public 8.8.8.8
+		{"::a9fe:a9fe", false},            // IPv4-compatible 169.254.169.254
+		{"::a00:1", false},                // IPv4-compatible 10.0.0.1
+		{"64:ff9b:1::a00:1", false},       // local-use NAT64 without a grant
+		{"64:ff9b:1:ab::a00:1", true},     // local-use NAT64 inside the grant
+		{"fd00:ec2::254%1", false},        // zoned AWS IPv6 metadata
+		{"2001:4860:4860::8888%1", false}, // a zone never belongs on a backend
+	} {
+		if got := p.allowed(netip.MustParseAddr(test.address)); got != test.allowed {
+			t.Errorf("allowed(%s) = %v, want %v", test.address, got, test.allowed)
+		}
+	}
+	// The private-network opt-in admits internal addresses, never control ones.
+	for _, origin := range []string{"http://[fd00:ec2::254%251]", "http://[fd12::1%25eth0]:8000", "http://[64:ff9b::a9fe:a9fe]", "http://[64:ff9b::7f00:1]:8000", "http://[::a9fe:a9fe]"} {
+		if err := p.CheckBackend(t.Context(), origin, true); err == nil {
+			t.Errorf("private-network origin %s reached a forbidden destination", origin)
+		}
+		if err := p.CheckBackend(t.Context(), origin, false); err == nil {
+			t.Errorf("origin %s reached a forbidden destination", origin)
+		}
+	}
+	if err := p.CheckBackend(t.Context(), "http://[64:ff9b::a01:203]:8000", true); err != nil {
+		t.Error("private-network NAT64 origin of 10.1.2.3 refused:", err)
+	}
+	if err := p.CheckBackend(t.Context(), "http://[64:ff9b::a01:203]:8000", false); err == nil {
+		t.Error("NAT64 of 10.1.2.3 bypassed the private network grant")
+	}
+}
