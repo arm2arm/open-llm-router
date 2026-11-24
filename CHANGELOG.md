@@ -5,6 +5,9 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- The API-key creation dialog explains Interactive and Batch use, their separate
+  concurrency limits and shared quotas, and labels Interactive as the default
+  for most uses.
 - Backend editors can publish an organization name and recipient privacy URL.
   Connect explains AI interaction, retries and backend processing, shows per-model
   recipient privacy links, and identifies missing notices. Authenticated model
