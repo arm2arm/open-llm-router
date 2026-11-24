@@ -129,6 +129,7 @@ func (h *Handler) callerPolicy(r *http.Request, cfg *config.Config) policy.Polic
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := h.Snapshot()
 	access := h.callerPolicy(r, cfg)
+	principal, _ := auth.FromContext(r.Context())
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
 	data := make([]map[string]any, 0, len(names))
@@ -137,7 +138,6 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 		if model, ok := cfg.Aliases[name]; ok {
 			target = model
 		}
-		principal, _ := auth.FromContext(r.Context())
 		if !policy.ModelAllowed(cfg, access, target, principal.Groups, principal.ProtectedAdmin) {
 			continue
 		}
