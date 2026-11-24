@@ -14,6 +14,9 @@ The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATI
   backends by their IPv4 network.
 - Queued inference requests cost far less CPU: a release no longer makes every
   caller queued for any model rescan the pool.
+- The portal loads faster: its content-hashed JavaScript and CSS bundles are
+  cached by the browser and sent gzip-compressed (about 705 KB down to 200 KB),
+  instead of being transferred again, uncompressed, on every page load.
 
 - The API-key creation dialog explains Interactive and Batch use, their separate
   concurrency limits and shared quotas, and labels Interactive as the default

@@ -3,7 +3,11 @@
 The portal is served at the configured `PORTAL_BASE_URL` origin. `/portal/*` uses an
 opaque eight-hour session cookie; `/v1/*` continues to require API keys and ignores cookies.
 The initial local password-change session is restricted and lasts ten minutes.
-All portal responses use `Cache-Control: no-store`. Errors are JSON:
+All portal API and page responses use `Cache-Control: no-store`. The static
+bundle is the exception: content-hashed files below `/portal/assets/` are
+`public, max-age=31536000, immutable`, other static files revalidate with
+`no-cache` and an `ETag`, and text assets are sent gzip-compressed when the
+browser accepts it. Errors are JSON:
 `{"error":{"type":"authentication_error","message":"authentication required"}}`.
 Unauthenticated API calls return 401; forbidden origins/disabled logins return 403;
 invalid input returns 400, unknown or other users' keys return 404, and unavailable
