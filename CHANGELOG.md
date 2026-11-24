@@ -11,7 +11,8 @@ The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATI
   local-use NAT64 needs an explicit `OLR_BACKEND_ALLOWED_CIDRS` grant, and
   IPv6 zone identifiers are refused. A zone previously let a private-network
   origin evade the AWS IPv6 metadata block. Grant translated private
-  backends by their IPv4 network.
+  backends by their IPv4 network. Identity-provider checks apply the same
+  rules to metadata addresses and now also refuse Alibaba's `100.100.100.200`.
 - Queued inference requests cost far less CPU: a release no longer makes every
   caller queued for any model rescan the pool.
 - Forwarding large requests is cheaper: routing fields are read, and the

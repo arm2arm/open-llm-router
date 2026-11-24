@@ -159,11 +159,13 @@ var (
 	localNAT64 = netip.MustParsePrefix("64:ff9b:1::/48")
 )
 
-// reached returns the address that finally receives traffic sent to ip, so a
-// translated form of a private or metadata IPv4 address gets its verdict.
-func reached(ip netip.Addr) netip.Addr {
+// Reached returns the address that finally receives traffic sent to ip, so a
+// translated form of a private or metadata IPv4 address gets its verdict:
+// the IPv4 address of IPv4-mapped, NAT64 and IPv4-compatible forms. The
+// unspecified and loopback addresses are not IPv4-compatible (RFC 4291).
+func Reached(ip netip.Addr) netip.Addr {
 	ip = ip.Unmap()
-	if nat64.Contains(ip) || ipv4Compatible.Contains(ip) {
+	if nat64.Contains(ip) || ipv4Compatible.Contains(ip) && ip != netip.IPv6Unspecified() && ip != netip.IPv6Loopback() {
 		b := ip.As16()
 		return netip.AddrFrom4([4]byte(b[12:]))
 	}
@@ -176,7 +178,7 @@ func (p *Policy) allowed(ip netip.Addr) bool {
 	if ip.Zone() != "" {
 		return false
 	}
-	ip = reached(ip)
+	ip = Reached(ip)
 	if ip.Is4() {
 		v4 := ip.As4()
 		// Unspecified/reserved and protocol-assignment networks may expose
@@ -230,7 +232,7 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 		// destinations remain forbidden regardless of the address class.
 		permitted := p.allowed(ip)
 		if cluster && ip.Zone() == "" {
-			target := reached(ip)
+			target := Reached(ip)
 			permitted = permitted || target.IsPrivate() && target.IsGlobalUnicast() && target != metadataV6
 		}
 		ip = ip.Unmap()

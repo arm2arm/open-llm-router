@@ -220,3 +220,14 @@ func TestTranslatedAndZonedAddressesCannotReachForbiddenDestinations(t *testing.
 		t.Error("NAT64 of 10.1.2.3 bypassed the private network grant")
 	}
 }
+
+func TestReachedAddress(t *testing.T) {
+	for address, want := range map[string]string{
+		"64:ff9b::a00:1": "10.0.0.1", "::ffff:1.2.3.4": "1.2.3.4", "::a9fe:a9fe": "169.254.169.254",
+		"::1": "::1", "::": "::", "2001:db8::1": "2001:db8::1", "10.0.0.1": "10.0.0.1", "64:ff9b:1::a00:1": "64:ff9b:1::a00:1",
+	} {
+		if got := Reached(netip.MustParseAddr(address)); got != netip.MustParseAddr(want) {
+			t.Errorf("Reached(%s) = %s, want %s", address, got, want)
+		}
+	}
+}

@@ -480,7 +480,8 @@ change always return 403. This lookup does not merge accounts or transfer their 
 Failed checks name the problem without showing secrets or provider responses
 (for example *the provider rejected the portal client ID or secret*). Checks and
 test sign-ins contact only the configured issuer, never follow redirects and
-refuse link-local, metadata, multicast and unspecified addresses. This page
+refuse link-local, metadata, multicast and unspecified addresses, including
+their NAT64 and IPv6-zoned forms. This page
 manages the router's connection only: realms, clients, brokering and group
 membership stay with the Keycloak administrator. Local sign-in stays available
 throughout.

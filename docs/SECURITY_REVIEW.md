@@ -178,6 +178,10 @@ Fix: `internal/backendpolicy` judges NAT64 and IPv4-compatible addresses by thei
 embedded IPv4 address (so the CIDR grant, metadata and loopback rules apply),
 requires an explicit grant for local-use NAT64 (`64:ff9b:1::/48`), and refuses
 zone identifiers before resolution. File-defined destinations stay trusted.
+Identity-provider checks (`internal/idpcheck`), which deliberately allow loopback and
+private issuers, had the same metadata gaps at dial time and also missed Alibaba's
+`100.100.100.200`; they now share the translation rule and refuse zones
+(`TestDestinationsAreRestrictedAtDialTime`).
 Test: `TestTranslatedAndZonedAddressesCannotReachForbiddenDestinations`, which
 fails 16 checks against the previous policy. A NAT64 gateway with a
 network-specific prefix cannot be recognized by address; restrict egress at the
