@@ -4,78 +4,44 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
-	"strings"
+
+	"github.com/arm2arm/open-llm-router/internal/jsonobject"
 )
 
 // IncludeUsage requests accounting metadata while preserving unknown fields and
 // numeric values. asked reports whether the client wanted the extra chunk.
+//
+// Duplicate and case-variant spellings of the keys the router changes are
+// refused: a Go-struct backend accepts case variants and uses the last match,
+// other backends may use the first. Neither interpretation may override the
+// router's usage request. Only stream_options is rewritten; every other
+// member keeps its bytes.
 func IncludeUsage(body []byte) (updated []byte, asked bool, err error) {
-	fields, err := accountingObject(body, "stream_options")
-	if err != nil || fields == nil {
+	object, err := jsonobject.Parse(body)
+	if err != nil {
 		return nil, false, errors.New("invalid request")
 	}
-	var options map[string]json.RawMessage
-	if raw := fields["stream_options"]; raw != nil {
-		options, err = accountingObject(raw, "include_usage")
+	options, present, err := object.Unique("stream_options")
+	if err != nil {
+		return nil, false, errors.New("invalid request")
+	}
+	value := []byte(`{"include_usage":true}`)
+	if present && !bytes.Equal(options.Value(), []byte("null")) {
+		nested, ok := options.Object()
+		if !ok {
+			return nil, false, errors.New("invalid stream_options")
+		}
+		include, present, err := nested.Unique("include_usage")
 		if err != nil {
 			return nil, false, errors.New("invalid stream_options")
 		}
-	}
-	if options == nil {
-		options = make(map[string]json.RawMessage)
-	}
-	if raw := options["include_usage"]; raw != nil {
-		if json.Unmarshal(raw, &asked) != nil {
+		if present && json.Unmarshal(include.Value(), &asked) != nil {
 			return nil, false, errors.New("invalid include_usage")
 		}
-	}
-	if asked {
-		return body, true, nil
-	}
-	options["include_usage"] = json.RawMessage("true")
-	fields["stream_options"], _ = json.Marshal(options)
-	updated, err = json.Marshal(fields)
-	return updated, false, err
-}
-
-// accountingObject preserves opaque values while refusing duplicate and
-// case-variant spellings of the key the router changes. A Go-struct backend
-// accepts case variants and uses the last match; other backends may use the
-// first. Neither interpretation may override the router's usage request.
-func accountingObject(raw []byte, protected string) (map[string]json.RawMessage, error) {
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return nil, errors.New("invalid accounting options")
-	}
-	fields := map[string]json.RawMessage{}
-	seen := false
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return nil, err
+		if asked {
+			return body, true, nil
 		}
-		key, _ := token.(string)
-		if strings.EqualFold(key, protected) {
-			if key != protected || seen {
-				return nil, errors.New("ambiguous accounting option")
-			}
-			seen = true
-		}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
-		}
-		fields[key] = value
+		value = nested.With(jsonobject.Field{Name: "include_usage", Value: []byte("true")})
 	}
-	if _, err := decoder.Token(); err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return nil, errors.New("trailing accounting options")
-	}
-	return fields, nil
+	return object.With(jsonobject.Field{Name: "stream_options", Value: value}), false, nil
 }

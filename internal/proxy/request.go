@@ -1,12 +1,11 @@
 package proxy
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"math"
-	"strings"
+
+	"github.com/arm2arm/open-llm-router/internal/jsonobject"
 )
 
 // routingFields are the top-level request fields the router acts on. Their
@@ -16,7 +15,7 @@ import (
 // {"model":"secret","MODEL":"allowed"} would otherwise be authorized as one
 // model and served as another by a backend that serves both.
 // Output-token limits size strict-quota reservations.
-var routingFields = []string{"model", "stream", "max_tokens", "max_completion_tokens", "max_output_tokens", "n", "best_of", "prompt"}
+var routingFields = [...]string{"model", "stream", "max_tokens", "max_completion_tokens", "max_output_tokens", "n", "best_of", "prompt"}
 
 var errAmbiguousField = errors.New("ambiguous routing field")
 
@@ -29,72 +28,52 @@ type requestMeta struct {
 	MaxOutputTokens int64
 }
 
-// parseRequest reads the routing fields from a JSON object in one pass. It
-// refuses a top-level key that matches a routing field only when case is
-// ignored, and any duplicate of a routing field.
+// parseRequest reads the routing fields of a JSON object. It refuses a
+// top-level key that matches a routing field only when case is ignored, and
+// any duplicate of a routing field. Other values are validated, not copied.
 func parseRequest(body []byte) (requestMeta, error) {
 	var meta requestMeta
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return meta, errors.New("not a JSON object")
+	object, err := jsonobject.Parse(body)
+	if err != nil {
+		return meta, err
 	}
-	seen := make(map[string]bool, len(routingFields))
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return meta, err
-		}
-		key, _ := token.(string)
-		field := ""
-		for _, name := range routingFields {
-			if strings.EqualFold(key, name) {
-				field = name
+	var seen [len(routingFields)]bool
+	for member := range object.Members() {
+		field := -1
+		for i, name := range routingFields {
+			if member.Folds(name) {
+				field = i
 			}
 		}
-		if field == "" {
-			var skip json.RawMessage
-			if err := decoder.Decode(&skip); err != nil {
-				return meta, err
-			}
+		if field < 0 {
 			continue
 		}
-		if key != field || seen[field] {
+		if !member.Is(routingFields[field]) || seen[field] {
 			return meta, errAmbiguousField
 		}
 		seen[field] = true
-		switch field {
+		value := member.Value()
+		switch routingFields[field] {
 		case "model":
-			err = decoder.Decode(&meta.Model)
+			err = json.Unmarshal(value, &meta.Model)
 		case "stream":
 			var stream *bool
-			err = decoder.Decode(&stream)
+			err = json.Unmarshal(value, &stream)
 			meta.Stream = stream != nil && *stream
 		case "max_tokens", "max_completion_tokens", "max_output_tokens":
 			// Lenient: the backend validates the value; only a usable
 			// number sizes a reservation.
-			var raw json.RawMessage
-			err = decoder.Decode(&raw)
 			var limit float64
-			if err == nil && json.Unmarshal(raw, &limit) == nil && limit > 0 && limit < 1<<53 {
+			if json.Unmarshal(value, &limit) == nil && limit > 0 && limit < 1<<53 {
 				meta.MaxTokens = max(meta.MaxTokens, int64(math.Ceil(limit)))
-				if field == "max_output_tokens" {
+				if routingFields[field] == "max_output_tokens" {
 					meta.MaxOutputTokens = int64(math.Ceil(limit))
 				}
 			}
-		default:
-			var skip json.RawMessage
-			err = decoder.Decode(&skip)
 		}
 		if err != nil {
 			return meta, err
 		}
-	}
-	if _, err := decoder.Token(); err != nil {
-		return meta, err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return meta, errors.New("trailing data after the JSON object")
 	}
 	return meta, nil
 }

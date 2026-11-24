@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/backendlimits"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/jsonobject"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
 	"github.com/arm2arm/open-llm-router/internal/policy"
@@ -296,16 +298,20 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 	}
 	if upstreamName != meta.Model || model.Priority != nil {
-		// RawMessage retains unknown values, including large integers, while
-		// replacing only the model and the priority, which callers cannot
-		// choose. Otherwise forward the original bytes.
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(body, &fields)
-		fields["model"], _ = json.Marshal(upstreamName)
-		if model.Priority != nil {
-			fields["priority"], _ = json.Marshal(priority)
+		// Replace only the model and the priority, which callers cannot
+		// choose, including any case variant of priority a backend might
+		// read. Every other member keeps its bytes, including large integers.
+		object, err := jsonobject.Parse(body)
+		if err != nil {
+			apierr.Write(w, protocol, 400, "invalid_request_error", "a JSON object with a model and optional boolean stream is required")
+			return
 		}
-		body, _ = json.Marshal(fields)
+		name, _ := json.Marshal(upstreamName)
+		owned := []jsonobject.Field{{Name: "model", Value: name}}
+		if model.Priority != nil {
+			owned = append(owned, jsonobject.Field{Name: "priority", Value: strconv.AppendInt(nil, int64(priority), 10)})
+		}
+		body = object.With(owned...)
 	}
 
 	if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {

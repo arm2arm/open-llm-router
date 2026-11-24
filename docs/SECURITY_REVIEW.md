@@ -146,6 +146,12 @@ Declared oversized requests get 413 before any read; chunked requests have the s
 
 The body limit defaults to 4 MiB. These are pre-admission bounds, not a total process memory
 budget: admitted requests, JSON copies, tracing and runtime overhead need separate headroom.
+Since 24 November 2026 the forwarding path itself makes at most one copy of the body per
+rewrite: `internal/jsonobject` validates with encoding/json's grammar and reads members as
+views. Decoding into maps of raw values and re-encoding had allocated about ten times the
+body size (and eight times for many tiny members). Differential fuzz tests
+(`FuzzParseRequestMatchesReference`, `FuzzStatelessResponsesMatchesReference`,
+`FuzzIncludeUsageMatchesReference`) require the previous decisions on every input.
 The existing inference concurrency and replica limits still govern admitted work.
 `TestConcurrentLargeUploadsHaveFixedMemoryCeiling` holds a nearly full body for a user with
 `max_concurrent: 1`, rejects 128 simultaneous uploads without reading them, checks the active

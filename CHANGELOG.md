@@ -14,6 +14,13 @@ The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATI
   backends by their IPv4 network.
 - Queued inference requests cost far less CPU: a release no longer makes every
   caller queued for any model rescan the pool.
+- Forwarding large requests is cheaper: routing fields are read, and the
+  model, priority, `stream_options` and `store` fields rewritten, without
+  decoding and re-encoding the body. A 0.8 MB chat request takes 2.3x less
+  CPU and a tenth of the memory; a body of many small fields no longer
+  allocates per field. Other members are forwarded byte for byte (no key
+  re-sorting or HTML escaping). When a model sets `priority`, the router also
+  removes case variants such as `"Priority"`, which some decoders apply.
 - The portal loads faster: its content-hashed JavaScript and CSS bundles are
   cached by the browser and sent gzip-compressed (about 705 KB down to 200 KB),
   instead of being transferred again, uncompressed, on every page load.
