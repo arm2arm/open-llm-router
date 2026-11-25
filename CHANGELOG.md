@@ -5,6 +5,10 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- `GET /v1/me/usage` exposes the calling API key's label, workload class and
+  expiry alongside its ID and display prefix. Clients that use a pasted key
+  can warn the user before it expires.
+
 - A trusted application that signs users in through the router's Keycloak realm
   can issue each user an inference key, without sending them to the portal. The
   new administration-key permission `user_keys:issue` (grantable alone; it does

@@ -465,6 +465,10 @@ curl --fail http://localhost:8080/v1/me/usage \
 | `in_flight`, `in_flight_batch` | Currently reserved user slots, and those of batch keys |
 | `reserved_tokens` | Strict-quota reservations of calls in flight |
 | `models` | Today's per-model `input_tokens`, `output_tokens`, `average_ttfb_ms`, `average_tokens_per_second`, sorted by `model`; empty array without usage |
+| `key` | The authenticating API key's `id`, display `prefix`, `label`, workload `class` (`interactive` or `batch`), and `expires` (an RFC 3339 timestamp or null for a key without an expiry). Omitted for OIDC bearer tokens. |
+
+A trusted forwarder receives the metadata for the key it used and the usage
+snapshot of the end user it named.
 
 Model averages are arithmetic means of measured requests. TTFB excludes missing values;
 tokens/second includes only streams with positive output and generation duration. Missing

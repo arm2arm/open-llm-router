@@ -105,6 +105,25 @@ func (h *Handler) Register(handle func(string, http.Handler)) {
 	handle("GET /v1/me/usage", http.HandlerFunc(h.myUsage))
 }
 
+type usageKey struct {
+	ID      string     `json:"id"`
+	Prefix  string     `json:"prefix"`
+	Label   string     `json:"label"`
+	Class   string     `json:"class"`
+	Expires *time.Time `json:"expires"`
+}
+
+func callingUsageKey(p auth.Principal) *usageKey {
+	if p.KeyID == "" {
+		return nil
+	}
+	key := &usageKey{ID: p.KeyID, Prefix: p.KeyPrefix, Label: p.KeyLabel, Class: p.KeyClass}
+	if !p.KeyExpiresAt.IsZero() {
+		key.Expires = &p.KeyExpiresAt
+	}
+	return key
+}
+
 func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 	if h.Limits == nil {
 		limits.WriteError(w, config.ProtocolOpenAI, limits.ErrUnavailable)
@@ -117,7 +136,11 @@ func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(snapshot)
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(struct {
+		limits.Snapshot
+		Key *usageKey `json:"key,omitempty"`
+	}{Snapshot: snapshot, Key: callingUsageKey(principal)})
 }
 
 func (h *Handler) currentConfig() *config.Config { cfg, _ := h.Snapshot(); return cfg }
