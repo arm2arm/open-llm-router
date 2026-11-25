@@ -212,7 +212,7 @@ func TestAccountingReasoningStreams(t *testing.T) {
 					wire += "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":42}}\n\ndata: [DONE]\n\n"
 				}
 				backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/health" {
+					if backendProbe(r) {
 						return
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
@@ -269,7 +269,7 @@ func TestAccountingGenerationRate(t *testing.T) {
 
 func TestAccountingFailoverRecordsOnce(t *testing.T) {
 	failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if !backendProbe(r) {
 			panic(http.ErrAbortHandler)
 		}
 	}))
@@ -302,7 +302,7 @@ func TestAccountingUsageOptionsReachGoStructBackend(t *testing.T) {
 	var calls atomic.Int64
 	const wire = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n"
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		calls.Add(1)
@@ -350,7 +350,7 @@ func TestAccountingUsageOptionsReachGoStructBackend(t *testing.T) {
 func TestAccountingCancellationDuringPrefillChargesInput(t *testing.T) {
 	started := make(chan struct{}, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -397,7 +397,7 @@ func TestAccountingCancellationDuringPrefillChargesInput(t *testing.T) {
 func TestAccountingDoesNotEstimateUpstreamHTTPRefusals(t *testing.T) {
 	var status atomic.Int64
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

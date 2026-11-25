@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -834,6 +835,75 @@ func TestUserKeyIssuanceSettings(t *testing.T) {
 	} {
 		if _, err := Parse([]byte(input+"\n"+valid), lookupIn(validEnv)); err == nil {
 			t.Errorf("accepted %s", input)
+		}
+	}
+}
+
+func TestModelMetadataSettings(t *testing.T) {
+	yaml := change(t, "timeout_s: 900", "timeout_s: 900\n    context_length: 131072\n    type: embedding")
+	cfg, err := Parse([]byte(yaml), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := cfg.Models["chat-model"]
+	if model.ContextLength == nil || *model.ContextLength != 131072 || model.Type != ModelTypeEmbedding || model.ModelType() != ModelTypeEmbedding {
+		t.Fatalf("model metadata not loaded: %+v", model)
+	}
+	// Both settings are optional, and existing files encode as before.
+	cfg, err = Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model = cfg.Models["chat-model"]
+	if model.ContextLength != nil || model.Type != "" || model.ModelType() != ModelTypeChat {
+		t.Fatalf("defaults changed: %+v", model)
+	}
+	if encoded, _ := json.Marshal(model); strings.Contains(string(encoded), "context_length") || strings.Contains(string(encoded), `"type"`) {
+		t.Fatalf("unset metadata is stored: %s", encoded)
+	}
+	if _, err := Parse([]byte(change(t, "timeout_s: 900", "timeout_s: 900\n    type: chat\n    context_length: 2147483647")), lookupIn(validEnv)); err != nil {
+		t.Fatal("explicit chat type and the largest context length refused:", err)
+	}
+	for _, tc := range []struct{ setting, want string }{
+		{"context_length: 0", "context_length: must be between 1 and 2147483647"},
+		{"context_length: -4096", "context_length: must be between 1 and 2147483647"},
+		{"context_length: 2147483648", "context_length: must be between 1 and 2147483647"},
+		{"context_length: 1.5", "line 8:"},
+		{"context_length: large", "line 8:"},
+		{"type: rerank", `type: unknown type "rerank"`},
+		{"type: Chat", `type: unknown type "Chat"`},
+	} {
+		_, err := Parse([]byte(change(t, "timeout_s: 900", "timeout_s: 900\n    "+tc.setting)), lookupIn(validEnv))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error %v, want %q", tc.setting, err, tc.want)
+		}
+	}
+}
+
+func TestManagedModelMetadataIsValidated(t *testing.T) {
+	base, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models map[string]Model
+	if err := json.Unmarshal([]byte(`{"chat-model":{"protocols":["openai"],"timeout_s":60,"context_length":8192,"type":"embedding","pool":[{"url":"http://backend-a:8000","weight":1,"max_inflight":1}]}}`), &models); err != nil {
+		t.Fatal(err)
+	}
+	next, err := WithModels(base, models, func(string, string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model := next.Models["chat-model"]; *model.ContextLength != 8192 || model.ModelType() != ModelTypeEmbedding {
+		t.Fatalf("managed metadata lost: %+v", model)
+	}
+	for _, change := range []func(*Model){
+		func(m *Model) { zero := 0; m.ContextLength = &zero },
+		func(m *Model) { m.Type = "image" },
+	} {
+		model := models["chat-model"]
+		change(&model)
+		if _, err := WithModels(base, map[string]Model{"chat-model": model}, func(string, string) (string, bool) { return "", false }); err == nil {
+			t.Fatalf("invalid managed metadata accepted: %+v", model)
 		}
 	}
 }

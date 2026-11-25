@@ -124,8 +124,10 @@ type issuedKey struct {
 		Created  bool
 	}
 	Models []struct {
-		ID        string
-		Protocols []string
+		ID            string
+		Protocols     []string
+		Type          string
+		ContextLength int `json:"context_length"`
 	}
 	Limits map[string]any
 }
@@ -275,6 +277,11 @@ func TestUserKeyIssuanceForExistingAndKeycloakUsers(t *testing.T) {
 		if m.ID == "chat-model" && !slices.Equal(m.Protocols, []string{"openai", "anthropic"}) {
 			t.Fatal("model protocols missing")
 		}
+		// The same metadata as GET /v1/models: mock-llm's max_model_len, read by
+		// the health check, also for the alias.
+		if m.Type != "chat" || m.ContextLength != 32768 {
+			t.Fatalf("%s: type %q context_length %d", m.ID, m.Type, m.ContextLength)
+		}
 	}
 	if !slices.Equal(models, []string{"alias", "chat-model"}) || key.Limits == nil {
 		t.Fatalf("models or limits: %v %v", models, key.Limits)
@@ -421,6 +428,8 @@ func TestUserKeyIssuanceForExistingAndKeycloakUsers(t *testing.T) {
 	}
 	if models, _ := view["models"].([]any); len(models) != 2 {
 		t.Fatal("summary lacks the user's models")
+	} else if first, _ := models[0].(map[string]any); first["context_length"] != float64(32768) || first["type"] != "chat" || first["protocols"] == nil {
+		t.Fatalf("summary model metadata: %v", first)
 	}
 	if status, _ := summary(other, key.ID); status != 404 {
 		t.Fatalf("another administration key read the summary: %d", status)

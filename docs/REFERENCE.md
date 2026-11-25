@@ -28,7 +28,8 @@ names match exactly. Allowed models are the union of all matching groups; `model
 grants every configured model. A user with no matching configured group has no model access,
 including when the config has no groups. Ordinary CLI users need `user add -groups staff`
 or another configured group. The protected local administrator has all model grants,
-unlimited limits and admin authority independently of editable groups or overrides. `GET /v1/models` returns only allowed models and their aliases;
+unlimited limits and admin authority independently of editable groups or overrides. `GET /v1/models` returns only allowed models and their aliases, with
+[their context length, type and protocols](#model-list-metadata);
 callers with no access receive `{"object":"list","data":[]}`.
 
 Model checks run after alias resolution and before upstream-name rewriting or replica selection.
@@ -154,6 +155,36 @@ results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `
 / `make bench-real`. Against local vLLM 0.33.0, the SDK, cancellation and timing checks pass
 and Claude Code and OpenCode complete a tool session with Qwen3 8B. The same checks on the
 deployed GPU backend remain pending.
+
+### Model list metadata
+
+Each `GET /v1/models` entry also reports what clients such as agents and portals set
+themselves up from. The fields are additive; existing fields are unchanged:
+
+```json
+{"id":"aip-best","object":"model","created":0,"owned_by":"open-llm-router",
+ "context_length":131072,"type":"chat","protocols":["openai","anthropic"],
+ "recipient_details":[...],"recipients_complete":true}
+```
+
+- `context_length` is the model's configured `context_length`. Without one, it is detected
+  from the backends' OpenAI-compatible model catalogs (`GET /v1/models` on each replica):
+  vLLM's and SGLang's `max_model_len`, or `context_length` where a catalog reports that. The
+  router looks up the model's `upstream_model` (or its name) and reports the smallest value
+  across the replicas that report one, so a request fits whichever replica serves it. The field
+  is omitted while no value is known, for example for Ollama replicas, before a replica's first
+  successful health check, or when the catalog lacks the model.
+- `type` is the model's `type`, `chat` (the default) or `embedding`, so a client never picks
+  an embedding model as its chat default.
+- `protocols` are the model's configured protocols, `openai`, `anthropic` or both.
+
+An alias reports its target's values. The portal's `/portal/api/models` and the
+administration API's `issue_user_key` and `get_issued_key_summary` responses return the same
+fields. Health checks read a replica's catalog on its first successful check, when it recovers
+from being unhealthy, and every 10 minutes; a replica whose `health_path` is `/v1/models` is
+read from the probe itself. A failed or unreadable catalog keeps the last value; a readable
+catalog without the model clears it. The catalog read uses the replica's credential and the
+same outbound policy as health checks, and is limited to 1 MiB.
 
 ## Keycloak and portal login
 
@@ -476,9 +507,12 @@ OLR_BASE_URL=http://127.0.0.1:8000 OLR_EMBEDDING_MODEL=chat-model uv run tests/c
 OLR_BASE_URL=http://127.0.0.1:8000 OLR_CHECK_THINKING=1 uv run tests/clients/check_anthropic.py
 ```
 
-Configure it with `MOCK_MODELS`, `MOCK_TOKENS`, `MOCK_TOKEN_DELAY`, `MOCK_FAIL`, and
-`MOCK_THINKING`; the equivalent `X-Mock-*` headers override one request. `GET /_mock/stats`
-reports requests and cancelled streams, and `POST /_mock/reset` clears the counters.
+Configure it with `MOCK_MODELS`, `MOCK_TOKENS`, `MOCK_TOKEN_DELAY`, `MOCK_FAIL`,
+`MOCK_THINKING` and `MOCK_MAX_MODEL_LEN` (the `max_model_len` its `GET /v1/models` reports
+for every model, default 32768); the equivalent `X-Mock-*` headers override one request, and
+`X-Mock-Max-Model-Len: 0` leaves the field out. `GET /_mock/stats` reports requests and
+cancelled streams, counting model catalog reads (the router's health checks make them)
+separately as `catalog_requests`, and `POST /_mock/reset` clears the counters.
 
 The router reads one YAML file, named by `OLR_CONFIG` or `-config`;
 [config.example.yaml](../config.example.yaml) explains the format. It refuses to start on an unknown

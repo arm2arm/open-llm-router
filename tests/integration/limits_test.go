@@ -91,7 +91,7 @@ func TestLimitsStreamingSlotsFinishAndDisconnect(t *testing.T) {
 	finished := make(chan struct{}, 1)
 	var calls atomic.Int32
 	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			w.WriteHeader(200)
 			return
 		}
@@ -168,7 +168,7 @@ func TestLimitsAuthenticationAndModelPolicyPrecedeGates(t *testing.T) {
 	var calls atomic.Int32
 	mock := mockllm.New(mockllm.Options{})
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if !backendProbe(r) {
 			calls.Add(1)
 		}
 		mock.ServeHTTP(w, r)

@@ -190,6 +190,8 @@ limits mean unlimited; the process upload bounds above always have finite defaul
 | `oidc.required_claim` | — | `{name, value}` a portal login must carry |
 | `models.<name>.protocols` | — | `openai`, `anthropic` or both |
 | `models.<name>.upstream_model` | the name | model name sent to the backend |
+| `models.<name>.context_length` | detected | positive integer up to 2147483647 reported in `/v1/models`; leave it out to report the smallest `max_model_len` the replicas' `/v1/models` catalogs give, or nothing if none does |
+| `models.<name>.type` | `chat` | `chat` or `embedding`, reported in `/v1/models` |
 | `models.<name>.timeout_s` | — | each wait for response headers and for the first body byte after headers |
 | `models.<name>.idle_timeout_s` | 30 | silence allowed between chunks |
 | `models.<name>.queue_timeout_s` | 0 | wait for a free replica when all are full |

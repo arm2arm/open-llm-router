@@ -6,6 +6,7 @@ import (
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/endpoints"
+	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/settings"
 )
 
@@ -131,13 +132,18 @@ func (h *Handler) endpointRestore(w http.ResponseWriter, r *http.Request, by use
 }
 
 func (h *Handler) routingConfig() *config.Config {
+	cfg, _ := h.routingSnapshot()
+	return cfg
+}
+
+// routingSnapshot is the active routing and its replica pools; pools are nil
+// for a portal without a routing runtime.
+func (h *Handler) routingSnapshot() (*config.Config, *pool.Manager) {
 	if h.RoutingRuntime != nil {
-		cfg, _ := h.RoutingRuntime.Snapshot()
-		return cfg
+		return h.RoutingRuntime.Snapshot()
 	}
 	if h.Endpoints != nil {
-		cfg, _ := h.Endpoints.Runtime.Snapshot()
-		return cfg
+		return h.Endpoints.Runtime.Snapshot()
 	}
-	return h.cfg
+	return h.cfg, h.Pools
 }

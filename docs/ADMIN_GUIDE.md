@@ -1138,7 +1138,8 @@ in **Admin → Advanced routing** (or `/portal/api/admin/settings/routing`, or
 model (`*` grants all), its aliases, native protocols, upstream name and each
 endpoint with its credential reference, health and in-flight count. After
 **Import current routing**, edit a draft: add a logical model, set its upstream
-name, protocols, timeouts and session affinity, add or remove endpoint replicas
+name, protocols, timeouts, session affinity, context length (empty reports the
+smallest value the backends' catalogs give) and model type, add or remove endpoint replicas
 (origin, health path, weight, capacity, credential reference chosen from the
 allowed list), and add or retarget aliases. A model still granted by a group
 or named by an alias cannot be removed; the page names the dependency. **Save

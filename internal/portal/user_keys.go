@@ -16,7 +16,9 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/groupsync"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/modelinfo"
 	"github.com/arm2arm/open-llm-router/internal/policy"
+	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,13 +27,13 @@ import (
 // alone reveals no user directory: the caller names a subject it verified
 // itself and sees only that user's username, models and limits.
 
-// userModelEntries lists the models and aliases a user may call, built the
-// way GET /v1/models builds its entries, plus the configured protocols.
-// Keep catalog entries in this one place so a shared builder can replace it.
-func userModelEntries(cfg *config.Config, access policy.Policy, groups []string, protectedAdmin bool) []map[string]any {
+// userModelEntries lists the models and aliases a user may call, as
+// GET /v1/models lists them for that user: with context length, type,
+// protocols and recipients.
+func userModelEntries(cfg *config.Config, pools *pool.Manager, access policy.Policy, groups []string, protectedAdmin bool) []modelinfo.Entry {
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
-	entries := make([]map[string]any, 0, len(names))
+	entries := make([]modelinfo.Entry, 0, len(names))
 	for _, name := range names {
 		target := name
 		if canonical, ok := cfg.Aliases[name]; ok {
@@ -40,12 +42,9 @@ func userModelEntries(cfg *config.Config, access policy.Policy, groups []string,
 		if !policy.ModelAllowed(cfg, access, target, groups, protectedAdmin) {
 			continue
 		}
-		recipients, complete := policy.ModelRecipients(cfg, target, groups, protectedAdmin)
-		protocols := slices.Clone(cfg.Models[target].Protocols)
-		if protocols == nil {
-			protocols = []string{}
+		if entry, ok := modelinfo.NewEntry(cfg, pools, name, groups, protectedAdmin); ok {
+			entries = append(entries, entry)
 		}
-		entries = append(entries, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router", "protocols": protocols, "recipient_details": recipients, "recipients_complete": complete})
 	}
 	return entries
 }
@@ -90,7 +89,7 @@ func (h *Handler) issuanceRefusal(t issuanceTarget) *refusal {
 	if allowed := h.cfg.AdminAPI.UserKeyIssuance.AllowedGroups; len(allowed) > 0 && !slices.ContainsFunc(t.Groups, func(g string) bool { return slices.Contains(allowed, g) }) {
 		return &refusal{403, "user_not_eligible", "the user is in no group allowed by admin_api.user_key_issuance.allowed_groups"}
 	}
-	if len(userModelEntries(h.routingConfig(), h.access(t.user), t.Groups, t.ProtectedAdmin)) == 0 {
+	if len(userModelEntries(h.routingConfig(), nil, h.access(t.user), t.Groups, t.ProtectedAdmin)) == 0 {
 		return &refusal{409, "no_model_access", "the user's policy grants no models; no key was issued"}
 	}
 	return nil
@@ -232,7 +231,9 @@ func (h *Handler) issueUserKey(w http.ResponseWriter, r *http.Request, _ user) {
 		refused.write(w)
 		return
 	}
-	access := h.access(target.user)
+	// One routing snapshot gives the access policy and the model list.
+	cfg, pools := h.routingSnapshot()
+	access := policy.ForUser(cfg.Groups, target.Groups, target.Overrides, target.ProtectedAdmin)
 	key, err := (auth.Admin{Pool: h.pool, KeyPolicy: h.cfg.Auth}).CreateIssuedKey(ctx, target.ID, prefix+label, class, time.Duration(days)*24*time.Hour, agent.Key.ID)
 	if errors.Is(err, auth.ErrKeyLimit) {
 		fail(w, http.StatusConflict, "key_limit_error", err.Error())
@@ -251,7 +252,7 @@ func (h *Handler) issueUserKey(w http.ResponseWriter, r *http.Request, _ user) {
 		"key": key.Secret, "id": key.ID, "prefix": key.Prefix, "label": key.Label, "class": key.Class, "expires": key.Expires,
 		"base_url": h.cfg.Portal.BaseURL + "/v1",
 		"user":     map[string]any{"username": target.Username, "created": created},
-		"models":   userModelEntries(h.routingConfig(), access, target.Groups, target.ProtectedAdmin),
+		"models":   userModelEntries(cfg, pools, access, target.Groups, target.ProtectedAdmin),
 		"limits":   limits.Effective(access),
 	})
 }
@@ -315,7 +316,8 @@ func (h *Handler) issuedKeySummary(w http.ResponseWriter, r *http.Request, _ use
 	if target.Groups == nil {
 		target.Groups = []string{}
 	}
-	access := h.access(target)
+	cfg, pools := h.routingSnapshot()
+	access := policy.ForUser(cfg.Groups, target.Groups, target.Overrides, target.ProtectedAdmin)
 	quota, err := h.limits.Snapshot(r.Context(), target.ID, access)
 	if err != nil {
 		unavailable(w)
@@ -326,7 +328,7 @@ func (h *Handler) issuedKeySummary(w http.ResponseWriter, r *http.Request, _ use
 		"expires": key.Expires, "expired": key.Expired, "revoked": key.Revoked, "last_used": key.LastUsed,
 		"active": enabled && !key.Revoked && !key.Expired,
 		"user":   map[string]any{"username": target.Username, "enabled": enabled},
-		"models": userModelEntries(h.routingConfig(), access, target.Groups, target.ProtectedAdmin),
+		"models": userModelEntries(cfg, pools, access, target.Groups, target.ProtectedAdmin),
 		"limits": quota.Limits,
 		// Totals only: no per-model breakdown, prompts or request records.
 		"usage": map[string]any{"timezone": quota.Timezone, "used": quota.Used, "remaining": quota.Remaining, "reset_at": quota.ResetAt},

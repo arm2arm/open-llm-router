@@ -250,8 +250,9 @@ Apply returns 201 once, with `Cache-Control: no-store`:
   "expires": "RFC3339", "base_url": "https://router.example.org/v1",
   "user": {"username": "alice", "created": false},
   "models": [{"id": "chat-model", "object": "model", "created": 0,
-    "owned_by": "open-llm-router", "protocols": ["openai", "anthropic"],
-    "recipient_details": [], "recipients_complete": true}],
+    "owned_by": "open-llm-router", "context_length": 131072, "type": "chat",
+    "protocols": ["openai", "anthropic"],
+    "recipient_details": [], "recipients_complete": false}],
   "limits": {"tokens_per_day": 100000, "rpm": 20, "...": "..."}
 }
 ```
@@ -285,8 +286,10 @@ change status, then revoke the key and issue another.
 - **Active keys.** Issued keys count against `auth.max_active_keys_per_user`;
   over the cap, the result is 409 `key_limit_error`.
 - **Models.** `models` lists the models and aliases the user's effective policy
-  allows, built like the entries of `GET /v1/models`, plus their configured
-  `protocols`. `limits` lists the effective quotas and concurrency.
+  allows, exactly as `GET /v1/models` lists them for that user: with
+  `context_length` (omitted while unknown), `type` and `protocols`; see
+  [model list metadata](REFERENCE.md#model-list-metadata). `limits` lists the
+  effective quotas and concurrency.
 
 Each issued key records the administration key that issued it. The user sees it in
 the portal's API-key list under its label and can revoke it there.

@@ -35,7 +35,7 @@ func TestUpstreamProvenancePassthrough(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				w.Header().Set("Content-Type", tc.contentType)

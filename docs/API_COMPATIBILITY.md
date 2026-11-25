@@ -12,7 +12,7 @@ and the official API references on 2026-11-16.
 | `POST /v1/chat/completions` | Native JSON and SSE; tools, tool results and provider fields pass through. |
 | `POST /v1/completions` | Native JSON and SSE. |
 | `POST /v1/embeddings` | Native JSON. An embedding-capable backend/model is required. |
-| `GET /v1/models` | OLR's access-filtered models and aliases in the OpenAI list format, rather than the backend catalog. |
+| `GET /v1/models` | OLR's access-filtered models and aliases in the OpenAI list format, rather than the backend catalog. Each entry adds `context_length` (configured, or the smallest `max_model_len` the replicas report; omitted when unknown), `type` (`chat` or `embedding`) and `protocols`, plus the recipient fields; see [model list metadata](REFERENCE.md#model-list-metadata). OpenAI clients ignore the extra fields. |
 | `POST /v1/responses` | Native stateless JSON and SSE, including full-history tool loops, structured output and reasoning fields. Requires a backend implementing Responses. |
 | Stored Chat Completions retrieval/list/update/delete and message listing | Not implemented. |
 | Responses retrieval/delete/cancel/input-item listing, compact and input-token counting | Not implemented. |
@@ -31,7 +31,7 @@ Reference: [OpenAI API reference](https://developers.openai.com/api/reference/ov
 | `POST /v1/messages` | Native JSON and SSE, including tool use/results, thinking and provider fields when the backend supports them. |
 | `POST /v1/messages/count_tokens` | Forwarded natively; token-count requests do not become generation usage charges. |
 | `anthropic-version`, `anthropic-beta`, cache controls | Forwarded; acceptance and cache hits depend on the backend. |
-| Native Models list/retrieve | Not implemented. `GET /v1/models` currently returns OpenAI's schema; it lacks Anthropic model metadata and pagination. `GET /v1/models/{id}` is not registered. |
+| Native Models list/retrieve | Not implemented. `GET /v1/models` currently returns OpenAI's schema; it lacks Anthropic model metadata (`display_name`, `created_at`) and pagination, and its `type` is the model type (`chat` or `embedding`), not Anthropic's object type `"model"`. `protocols` tells a client whether a model accepts `/v1/messages`. `GET /v1/models/{id}` is not registered. |
 | Message Batches, Files, Skills, managed agents/sessions, organization/admin APIs | Not implemented. |
 | Provider-hosted tools | Passed through in Messages only when supported by the backend. OLR does not supply a web-search or code-execution service. |
 

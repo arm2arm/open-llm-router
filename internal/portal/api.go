@@ -12,6 +12,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/modelinfo"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -134,9 +135,9 @@ func (h *Handler) keyMutationBudget(w http.ResponseWriter, userID string) (func(
 }
 
 type model struct {
-	ID                    string             `json:"id"`
-	Canonical             string             `json:"canonical_model"`
-	Protocols             []string           `json:"protocols"`
+	ID        string `json:"id"`
+	Canonical string `json:"canonical_model"`
+	modelinfo.Metadata
 	Recipients            []string           `json:"recipients"`
 	HasUnlistedRecipients bool               `json:"has_unlisted_recipients"`
 	RecipientDetails      []policy.Recipient `json:"recipient_details"`
@@ -144,7 +145,7 @@ type model struct {
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
-	cfg := h.routingConfig()
+	cfg, pools := h.routingSnapshot()
 	access := policy.ForUser(cfg.Groups, u.Groups, u.Overrides, u.ProtectedAdmin)
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
@@ -155,7 +156,11 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 			target = canonical
 		}
 		if policy.ModelAllowed(cfg, access, target, u.Groups, u.ProtectedAdmin) {
-			entry := model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols, Recipients: []string{}}
+			_, metadata, ok := modelinfo.Describe(cfg, pools, name)
+			if !ok {
+				continue
+			}
+			entry := model{ID: name, Canonical: target, Metadata: metadata, Recipients: []string{}}
 			entry.RecipientDetails, entry.RecipientsComplete = policy.ModelRecipients(cfg, target, u.Groups, u.ProtectedAdmin)
 			// Match the proxy's per-replica grants, including possible retry
 			// destinations. Temporary health or capacity cannot exclude a site.

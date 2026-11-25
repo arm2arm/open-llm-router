@@ -189,6 +189,9 @@ export type Models = {
     id: string
     canonical_model: string
     protocols: string[]
+    /** Omitted while no configured or detected value is known. */
+    context_length?: number
+    type?: ModelType
     recipients?: string[]
     has_unlisted_recipients?: boolean
     recipient_details?: { organization: string; privacy_url: string }[]
@@ -286,9 +289,14 @@ export type EndpointReplica = {
   max_inflight: number
   bearer_token_env: string
 }
+export type ModelType = 'chat' | 'embedding'
 export type EndpointModel = {
   upstream_model: string
   protocols: ('openai' | 'anthropic')[]
+  /** Configured context length; omitted to use the backends' reported one. */
+  context_length?: number
+  /** Omitted means chat. */
+  type?: ModelType
   timeout_s: number
   idle_timeout_s: number
   queue_timeout_s: number

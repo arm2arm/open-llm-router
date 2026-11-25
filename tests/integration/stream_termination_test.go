@@ -9,7 +9,7 @@ import (
 
 func TestStreamEOFClientAndPersistedOutcome(t *testing.T) {
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

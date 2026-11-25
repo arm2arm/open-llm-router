@@ -13,7 +13,7 @@ import (
 
 func TestResponsesStrictQuotaAndPersistence(t *testing.T) {
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -56,7 +56,7 @@ func TestInterruptedResponsesInputChargesTPM(t *testing.T) {
 	body := `{"model":"chat-model","input":"` + strings.Repeat("x", 1200) + `","stream":true,"store":false,"max_output_tokens":1}`
 	charge := int64(len(body) + 1)
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
