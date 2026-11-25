@@ -2,6 +2,8 @@ package usage
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
 )
@@ -132,6 +134,7 @@ func (s *Stream) inspect(event []byte) bool {
 	}
 	var name, data []byte
 	haveData := false
+	hasEventMetadata := false
 	s.data = s.data[:0]
 	for len(event) > 0 {
 		end := bytes.IndexAny(event, "\r\n")
@@ -148,6 +151,9 @@ func (s *Stream) inspect(event []byte) bool {
 		value = bytes.TrimPrefix(value, []byte(" "))
 		if bytes.Equal(key, []byte("event")) {
 			name = value
+			if len(name) != 0 && !bytes.Equal(name, []byte("message")) {
+				hasEventMetadata = true
+			}
 		} else if bytes.Equal(key, []byte("data")) {
 			if !haveData {
 				data, haveData = value, true
@@ -159,6 +165,8 @@ func (s *Stream) inspect(event []byte) bool {
 				s.data = append(s.data, value...)
 				data = s.data
 			}
+		} else if len(line) != 0 {
+			hasEventMetadata = true
 		}
 	}
 	if !haveData {
@@ -191,8 +199,7 @@ func (s *Stream) inspect(event []byte) bool {
 	}
 	if raw := field(data, "usage"); len(raw) > 0 && raw[0] == '{' {
 		valid := s.readUsage(raw, true, true)
-		choices := trim(field(data, "choices"))
-		if valid && s.HideUsage && len(choices) >= 2 && choices[0] == '[' && choices[len(choices)-1] == ']' && len(trim(choices[1:len(choices)-1])) == 0 {
+		if valid && s.HideUsage && !hasEventMetadata && plainUsageChunk(data) && uniqueUsageKeys(data) {
 			return true
 		}
 	}
@@ -200,6 +207,76 @@ func (s *Stream) inspect(event []byte) bool {
 		s.Totals.ContentEvents++
 	}
 	return false
+}
+
+// Only the ordinary accounting envelope may be removed. A provider can attach
+// provenance to the final chunk, including inside its usage object.
+func plainUsageChunk(data []byte) bool {
+	choices := trim(field(data, "choices"))
+	if len(choices) < 2 || choices[0] != '[' || choices[len(choices)-1] != ']' || len(trim(choices[1:len(choices)-1])) != 0 {
+		return false
+	}
+	var chunk struct {
+		ID, Model, Object string
+		Created           int64
+		Choices           []struct{}
+		SystemFingerprint string `json:"system_fingerprint"`
+		ServiceTier       string `json:"service_tier"`
+		Usage             struct {
+			Prompt        int64 `json:"prompt_tokens"`
+			Completion    int64 `json:"completion_tokens"`
+			Total         int64 `json:"total_tokens"`
+			PromptDetails struct {
+				Cached int64 `json:"cached_tokens"`
+				Audio  int64 `json:"audio_tokens"`
+			} `json:"prompt_tokens_details"`
+			CompletionDetails struct {
+				Reasoning int64 `json:"reasoning_tokens"`
+				Audio     int64 `json:"audio_tokens"`
+				Accepted  int64 `json:"accepted_prediction_tokens"`
+				Rejected  int64 `json:"rejected_prediction_tokens"`
+			} `json:"completion_tokens_details"`
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&chunk) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF {
+		return false
+	}
+	switch chunk.Object {
+	case "", "chat.completion.chunk", "text_completion":
+		return len(chunk.Choices) == 0
+	default:
+		return false
+	}
+}
+
+// plainUsageChunk has validated the envelope and nested accounting objects.
+// Reject duplicate keys as well: decoders may otherwise disagree about which
+// value carries provider metadata. The only accepted array is empty choices.
+func uniqueUsageKeys(raw []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return false
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return false
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+		value = trim(value)
+		if value[0] == '{' && !uniqueUsageKeys(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Stream) readUsage(raw []byte, input, output bool) bool {

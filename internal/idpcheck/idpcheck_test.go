@@ -160,12 +160,14 @@ func TestChecksPassAndFailSpecifically(t *testing.T) {
 }
 
 func TestDestinationsAreRestrictedAtDialTime(t *testing.T) {
-	for _, addr := range []string{"169.254.169.254", "fe80::1", "0.0.0.0", "224.0.0.1", "fd00:ec2::254"} {
+	for _, addr := range []string{"169.254.169.254", "fe80::1", "0.0.0.0", "224.0.0.1", "fd00:ec2::254", "100.100.100.200",
+		// Translated and zoned forms reach the same refused destinations.
+		"64:ff9b::a9fe:a9fe", "::ffff:169.254.169.254", "::a9fe:a9fe", "64:ff9b::6464:64c8", "fd00:ec2::254%1", "fe80::1%1", "::"} {
 		if Allow(netip.MustParseAddr(addr)) == nil {
 			t.Fatal("allowed", addr)
 		}
 	}
-	for _, addr := range []string{"127.0.0.1", "10.0.0.5", "192.168.1.10", "203.0.113.7", "::1"} {
+	for _, addr := range []string{"127.0.0.1", "10.0.0.5", "192.168.1.10", "203.0.113.7", "::1", "64:ff9b::a00:5", "fd12::1"} {
 		if Allow(netip.MustParseAddr(addr)) != nil {
 			t.Fatal("refused", addr)
 		}

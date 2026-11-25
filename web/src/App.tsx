@@ -2,6 +2,7 @@ import { userDisplayName } from '@/profile'
 import { useEffect, useState, type FormEvent } from 'react'
 import { SessionRecovery } from '@/session-recovery'
 import { AboutPage } from '@/about'
+import { AIInteraction, ModelRecipients } from '@/privacy'
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -158,7 +159,7 @@ export default function App() {
     const view = path.startsWith('/requests/')
       ? 'Request details'
       : path.startsWith('/admin')
-        ? `Administration · ${({ users: 'Users', presets: 'Backend presets', keycloak: 'Keycloak', advanced: 'Advanced routing', history: 'History', agents: 'Agent access' } as Record<string, string>)[path.split('/')[2]] ?? 'Backends'}`
+        ? `Administration · ${({ users: 'Users', presets: 'Backend presets', keycloak: 'Keycloak', logging: 'Request logging', advanced: 'Advanced routing', history: 'History', agents: 'Agent access' } as Record<string, string>)[path.split('/')[2]] ?? 'Backends'}`
         : path === '/about'
           ? 'About'
           : path.startsWith('/sign-in')
@@ -717,23 +718,38 @@ function Keys() {
                   ))}
                 </select>
               </label>
-              <label className="field">
-                Use
+              <div className="field">
+                <label htmlFor="key-use">Use</label>
                 <select
+                  id="key-use"
                   className="select"
+                  aria-describedby="key-use-help"
                   value={keyClass}
                   onChange={(e) =>
                     setKeyClass(e.target.value as 'interactive' | 'batch')
                   }
                 >
                   <option value="interactive">
-                    Interactive: chat, coding tools
+                    Interactive: default for most uses
                   </option>
-                  <option value="batch">
-                    Batch: scripts and bulk jobs (own concurrency limit)
-                  </option>
+                  <option value="batch">Batch: scripts and bulk jobs</option>
                 </select>
-              </label>
+                <div
+                  id="key-use-help"
+                  className="space-y-2 text-sm text-muted-foreground"
+                >
+                  <p>
+                    Choose Interactive for chat, coding tools and agents when
+                    you want prompt replies. Choose Batch for unattended
+                    scripts, scheduled tasks and bulk jobs.
+                  </p>
+                  <p>
+                    Batch has its own limit on simultaneous requests and
+                    normally lower queue priority. Both share your account’s
+                    token quotas and rate limits.
+                  </p>
+                </div>
+              </div>
               <DialogFooter>
                 <Button
                   type="button"
@@ -1122,7 +1138,7 @@ function Connect() {
           <div className="eyebrow">From key to first request</div>
           <h1>Connect</h1>
           <p className="subtitle">
-            One endpoint for your apps and the tools you already use.
+            Your client sends requests to an AI model through this router.
           </p>
         </div>
         <span className="badge">
@@ -1143,6 +1159,7 @@ function Connect() {
       ) : (
         query.data && (
           <>
+            <AIInteraction privacyURL={query.data.privacy_notice_url} />
             <div className="panel p-6 mb-6">
               <div className="flex flex-wrap justify-between items-center gap-4">
                 <div>
@@ -1211,8 +1228,15 @@ function Connect() {
                   disabled={!selected}
                 />
               </div>
+              {selected && <ModelRecipients model={selected} />}
               {selected ? (
-                <pre className="snippet" data-testid="snippet">
+                <pre
+                  className="snippet"
+                  data-testid="snippet"
+                  tabIndex={0}
+                  role="region"
+                  aria-label={`${client} connection example`}
+                >
                   <code>{code}</code>
                 </pre>
               ) : (

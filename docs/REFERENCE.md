@@ -243,11 +243,14 @@ For streaming calls, derive output tokens/second as
 this rate is not meaningful for non-stream responses that arrive all at once.
 
 OpenAI Chat Completions and legacy Completions streams request `stream_options.include_usage: true`. If the caller omitted it or
-set it to false, the router removes only the extra event with empty `choices` and numeric
-usage; all other events keep their original bytes. If the caller requested usage, that
+set it to false, the router removes only an ordinary extra event with empty `choices`, numeric
+usage and recognized envelope/accounting fields. Supplemental fields (including nested
+usage extensions), duplicate keys and extra SSE fields/comments keep the whole event,
+including its usage, unchanged. All retained events keep their original bytes. If the caller requested usage, that
 event is delivered unchanged unless usage timing is explicitly enabled below. Duplicate or case-variant `stream_options` or nested
 `include_usage` keys return 400 before forwarding; a backend cannot interpret another
 spelling as an override. Unknown request fields and stream options remain intact.
+See [provenance preservation and transformation limits](API_COMPATIBILITY.md#response-transformations-and-provenance).
 
 `X-OLR-Usage-Timing: true` opts Chat Completions and Responses into two additional
 numeric usage fields: `olr_observed_output_tokens_per_second` and

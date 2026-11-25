@@ -132,11 +132,93 @@ func TestStreamDoesNotDropUsageOnContentOrInvalidCounts(t *testing.T) {
 	}
 }
 
+func TestUsageChunkWithMetadataIsPreserved(t *testing.T) {
+	const counters = `"prompt_tokens":12,"completion_tokens":7,"total_tokens":19`
+	const ordinary = `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"test","choices":[],"usage":{` + counters + `,"prompt_tokens_details":{"cached_tokens":3}}}`
+	for _, tc := range []struct {
+		name, prefix, payload string
+		keep                  bool
+	}{
+		{"ordinary", "", ordinary, false},
+		{"default event", "event: message\r\n", ordinary, false},
+		{"top-level extension", "", `{"provenance":{"signature":"abc"},"choices":[],"usage":{` + counters + `}}`, true},
+		{"standard fingerprint", "", `{"system_fingerprint":"fp123","choices":[],"usage":{` + counters + `}}`, false},
+		{"custom object", "", `{"object":"provider.provenance","choices":[],"usage":{` + counters + `}}`, true},
+		{"usage extension", "", `{"choices":[],"usage":{` + counters + `,"attestation":"abc"}}`, true},
+		{"usage detail extension", "", `{"choices":[],"usage":{` + counters + `,"prompt_tokens_details":{"proof":"abc"}}}`, true},
+		{"custom event", "event: provider.provenance\r\n", ordinary, true},
+		{"SSE id", "id: signed-frame-12\r\n", ordinary, true},
+		{"comment", ": marking\r\n", ordinary, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := []byte(tc.prefix + "data: " + tc.payload + "\r\n\r\n")
+			var output bytes.Buffer
+			observed := 0
+			stream := NewStream(config.ProtocolOpenAI, true, func(p []byte) error { _, err := output.Write(p); return err })
+			stream.UsageObserver = func([]byte) { observed++ }
+			for i := range wire {
+				if err := stream.Write(wire[i : i+1]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := stream.Finish(); err != nil {
+				t.Fatal(err)
+			}
+			if observed != 1 || stream.Totals.InputTokens != 12 || stream.Totals.OutputTokens != 7 {
+				t.Fatalf("usage observations=%d totals=%+v", observed, stream.Totals)
+			}
+			var want []byte
+			if tc.keep {
+				want = wire
+			}
+			if !bytes.Equal(output.Bytes(), want) {
+				t.Fatalf("got %q, want %q", output.Bytes(), want)
+			}
+		})
+	}
+}
+
 func TestStreamPropagatesWriteFailure(t *testing.T) {
 	failure := errors.New("disconnected")
 	s := NewStream(config.ProtocolOpenAI, false, func([]byte) error { return failure })
 	if !errors.Is(s.Write([]byte(openAIContentEvent)), failure) {
 		t.Fatal("swallowed a write failure")
+	}
+}
+
+func TestUsageEventsPreserveSupplementalInformation(t *testing.T) {
+	const plain = `{"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","system_fingerprint":"fp","service_tier":"default","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19,"prompt_tokens_details":{"cached_tokens":2,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":1,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}`
+	for _, tc := range []struct {
+		name, prefix, data string
+		keep               bool
+	}{
+		{"ordinary", "", plain, false},
+		{"marker", "", strings.TrimSuffix(plain, "}") + `,"provenance":{"marker":"synthetic-test-only","number":123456789012345678901234567890}}`, true},
+		{"nested extension", "", strings.Replace(plain, `"cached_tokens":2`, `"cached_tokens":2,"provenance":"synthetic-test-only"`, 1), true},
+		{"extended envelope field", "", strings.Replace(plain, `"system_fingerprint":"fp"`, `"system_fingerprint":{"provenance":"synthetic-test-only"}`, 1), true},
+		{"extended detail field", "", strings.Replace(plain, `"cached_tokens":2`, `"cached_tokens":{"provenance":"synthetic-test-only"}`, 1), true},
+		{"duplicate", "", strings.TrimSuffix(plain, "}") + `,"model":"second"}`, true},
+		{"SSE extension", "provenance: synthetic-test-only\n", plain, true},
+		{"SSE id", "id: synthetic-test-only\n", plain, true},
+		{"SSE comment", ": synthetic-test-only\n", plain, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, eol := range []string{"\n", "\r\n", "\r"} {
+				wire := []byte(strings.ReplaceAll(tc.prefix+"data: "+tc.data+"\n\n", "\n", eol))
+				for _, hide := range []bool{false, true} {
+					for split := 0; split <= len(wire); split++ {
+						out, totals := observeStream(t, config.ProtocolOpenAI, hide, wire[:split], wire[split:])
+						want := wire
+						if hide && !tc.keep {
+							want = nil
+						}
+						if !bytes.Equal(out, want) || !totals.HasInput || !totals.HasOutput || totals.InputTokens != 12 || totals.OutputTokens != 7 || totals.ContentEvents != 0 {
+							t.Fatalf("hide=%v split=%d totals=%+v output=%s", hide, split, totals, out)
+						}
+					}
+				}
+			}
+		})
 	}
 }
 

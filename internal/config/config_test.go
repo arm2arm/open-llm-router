@@ -681,6 +681,18 @@ func TestContentTracingPolicy(t *testing.T) {
 	if err != nil || cfg.ContentTracing.Enabled {
 		t.Fatal("content capture must default off", err)
 	}
+	if cfg.ContentTracing.MaxStoredMiB != 64 || cfg.ContentTracing.MaxStoredTraces != 512 {
+		t.Fatal("trace quota defaults", cfg.ContentTracing)
+	}
+	for _, policy := range []string{"max_stored_mib: -1", "max_stored_mib: 1048577", "max_stored_traces: -1", "max_stored_traces: 1000001"} {
+		if _, err := Parse([]byte("content_tracing: {"+policy+"}\n"+valid), lookupIn(validEnv)); err == nil {
+			t.Fatal("invalid trace quota accepted", policy)
+		}
+	}
+	custom, err := Parse([]byte("content_tracing: {max_stored_mib: 256, max_stored_traces: 4096}\n"+valid), lookupIn(validEnv))
+	if err != nil || custom.ContentTracing.MaxStoredMiB != 256 || custom.ContentTracing.MaxStoredTraces != 4096 {
+		t.Fatal("custom trace quota", custom, err)
+	}
 	if _, err := Parse([]byte("content_tracing: {enabled: true, redact_patterns: ['[']}\n"+valid), lookupIn(validEnv)); err == nil {
 		t.Fatal("invalid redaction accepted")
 	}
@@ -763,5 +775,41 @@ func TestPortalBaseURLCanonicalOrigin(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "PORTAL_BASE_URL") || strings.Contains(err.Error(), "password") {
 			t.Fatal("unsafe portal origin accepted or disclosed", err)
 		}
+	}
+}
+
+func TestPortalDisclosureConfiguration(t *testing.T) {
+	const disclosure = `portal:
+  privacy_notice_url: https://institute.example/privacy#llm
+  recipient_labels:
+    "HTTPS://GPU-A.EXAMPLE:443/": "Institute A (DE)"
+`
+	cfg, err := Parse([]byte(valid+disclosure), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Portal.PrivacyNoticeURL != "https://institute.example/privacy#llm" ||
+		cfg.Portal.RecipientLabels["https://gpu-a.example"] != "Institute A (DE)" ||
+		cfg.Portal.BaseURL != "http://localhost:8080" || !cfg.Portal.CookieSecure {
+		t.Fatal("disclosures did not preserve the canonical upstream or existing portal defaults")
+	}
+	for _, invalid := range []string{
+		"privacy_notice_url: http://institute.example/privacy",
+		"privacy_notice_url: //institute.example/privacy",
+		"privacy_notice_url: https://password@institute.example/",
+		"privacy_notice_url: https://institute.example/private?token=value",
+		"recipient_labels: {'https://user:password@backend': 'Institute'}",
+		"recipient_labels: {'https://backend/v1': 'Institute'}",
+		"recipient_labels: {'https://backend': 'A', 'https://BACKEND:443/': 'B'}",
+		"recipient_labels: {'https://backend': ' '}",
+		"recipient_labels: {'https://backend': 'https://user:password@backend'}",
+		"base_url: https://override.example",
+		"cookie_secure: false",
+	} {
+		t.Run(invalid, func(t *testing.T) {
+			if _, err := Parse([]byte(valid+"portal:\n  "+invalid+"\n"), lookupIn(validEnv)); err == nil {
+				t.Fatal("accepted invalid portal configuration")
+			}
+		})
 	}
 }

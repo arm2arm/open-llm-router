@@ -35,8 +35,8 @@ const (
 	MaxProviderUsage = 64 << 10
 	// Stored JSON content and the number of retained traces are bounded per
 	// account across replicas. Existing content expires normally after upgrade.
-	MaxStoredBytes        = 64 << 20
-	MaxStoredTraces       = 512
+	MaxStoredBytes        = config.DefaultTraceStoredMiB << 20
+	MaxStoredTraces       = config.DefaultTraceStoredTraces
 	UserSlots             = 4
 	UserCapturesPerMinute = 30
 	maxUserBudgets        = 4096
@@ -50,6 +50,17 @@ type Preferences struct {
 	RetentionDays int        `json:"retention_days"`
 	UpdatedAt     *time.Time `json:"updated_at"`
 	Generation    int64      `json:"-"`
+	Storage       *Storage   `json:"storage,omitempty"`
+}
+
+// Storage reports the same per-account budget enforced by persist. Expired rows
+// count until pruning removes them, just as they do during capture admission.
+type Storage struct {
+	Traces     int64      `json:"traces"`
+	Bytes      int64      `json:"bytes"`
+	MaxTraces  int64      `json:"max_traces"`
+	MaxBytes   int64      `json:"max_bytes"`
+	NextExpiry *time.Time `json:"next_expiry"`
 }
 
 func defaults() Preferences { return Preferences{Enabled: false, RetentionDays: 7} }
@@ -59,6 +70,7 @@ type Service struct {
 	enabled          bool
 	epoch            uint64
 	redactor         *redactor
+	quotaDefaults    Quota
 	Written          atomic.Uint64
 	Deleted          atomic.Uint64
 	RetentionBacklog atomic.Int64
@@ -87,6 +99,19 @@ func New(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger, options ...c
 		policy = options[0]
 	}
 	s.enabled = policy.Enabled
+	if policy.MaxStoredMiB < 0 || policy.MaxStoredMiB > config.MaxTraceStoredMiB || policy.MaxStoredTraces < 0 || policy.MaxStoredTraces > config.MaxTraceStoredTraces {
+		return nil, ErrQuota
+	}
+	s.quotaDefaults = Quota{MaxBytes: MaxStoredBytes, MaxTraces: MaxStoredTraces}
+	if policy.MaxStoredMiB != 0 {
+		s.quotaDefaults.MaxBytes = policy.MaxStoredMiB << 20
+	}
+	if policy.MaxStoredTraces != 0 {
+		s.quotaDefaults.MaxTraces = policy.MaxStoredTraces
+	}
+	if err := validateQuota(QuotaOverride{MaxBytes: &s.quotaDefaults.MaxBytes, MaxTraces: &s.quotaDefaults.MaxTraces}); err != nil {
+		return nil, err
+	}
 	var err error
 	s.redactor, err = newRedactor(policy.RedactPatterns)
 	if err != nil {
@@ -192,8 +217,18 @@ func (s *Service) refresh(ctx context.Context) error {
 
 func (s *Service) Preferences(ctx context.Context, user string) (Preferences, error) {
 	var p Preferences
-	err := s.pool.QueryRow(ctx, `SELECT trace_enabled, trace_retention_days, trace_generation, trace_preferences_set_at FROM users WHERE id=$1`, user).Scan(&p.Enabled, &p.RetentionDays, &p.Generation, &p.UpdatedAt)
+	var storage Storage
+	err := s.pool.QueryRow(ctx, `SELECT u.trace_enabled,u.trace_retention_days,u.trace_generation,u.trace_preferences_set_at,
+		t.traces,t.bytes,t.next_expiry,COALESCE(o.max_bytes,d.max_bytes,$2),COALESCE(o.max_traces,d.max_traces,$3)
+		FROM users u CROSS JOIN trace_quota_defaults d LEFT JOIN trace_quota_overrides o ON o.user_id=u.id
+		CROSS JOIN LATERAL (
+			SELECT count(*) AS traces,COALESCE(sum(stored_bytes),0)::bigint AS bytes,min(expires_at) AS next_expiry
+			FROM request_traces WHERE user_id=u.id
+		) t WHERE u.id=$1 AND d.singleton`, user, s.quotaDefaults.MaxBytes, s.quotaDefaults.MaxTraces).Scan(&p.Enabled, &p.RetentionDays, &p.Generation, &p.UpdatedAt, &storage.Traces, &storage.Bytes, &storage.NextExpiry, &storage.MaxBytes, &storage.MaxTraces)
 	p.Available = s.Enabled()
+	if err == nil {
+		p.Storage = &storage
+	}
 	return p, err
 }
 
@@ -506,6 +541,13 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 	// completed while this one waited. Other replicas cannot overspend the cap.
 	var stored bool
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		// Share-lock the global row before the account lock. A saved quota takes
+		// effect across replicas on subsequent writes without a preference refresh.
+		var quota Quota
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(max_bytes,$1),COALESCE(max_traces,$2)
+			FROM trace_quota_defaults WHERE singleton FOR SHARE`, s.quotaDefaults.MaxBytes, s.quotaDefaults.MaxTraces).Scan(&quota.MaxBytes, &quota.MaxTraces); err != nil {
+			return err
+		}
 		var retention int
 		err := tx.QueryRow(ctx, `SELECT trace_retention_days FROM users WHERE id=$1 AND trace_enabled AND trace_generation=$2 FOR UPDATE`, c.record.UserID, c.generation).Scan(&retention)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -514,13 +556,17 @@ func (s *Service) persist(ctx context.Context, c *Capture) error {
 		if err != nil {
 			return err
 		}
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT max_bytes FROM trace_quota_overrides WHERE user_id=$1),$2),
+			COALESCE((SELECT max_traces FROM trace_quota_overrides WHERE user_id=$1),$3)`, c.record.UserID, quota.MaxBytes, quota.MaxTraces).Scan(&quota.MaxBytes, &quota.MaxTraces); err != nil {
+			return err
+		}
 		// stored_bytes is generated from PostgreSQL's JSON representation. Use
 		// that same representation for this row, including its fixed overhead.
 		tag, err := tx.Exec(ctx, `INSERT INTO request_traces(request_id,user_id,started_at,expires_at,detail,summary,conversation_key)
 		SELECT $1,$2,$3,$3::timestamptz+make_interval(days=>$8),$4::jsonb,$6::jsonb,$7
 		WHERE $3::timestamptz+make_interval(days=>$8)>now()
 		AND (SELECT count(*)<$9 AND COALESCE(sum(stored_bytes),0)+octet_length($4::jsonb::text)::bigint+octet_length($6::jsonb::text)::bigint+256<=$5 FROM request_traces WHERE user_id=$2)
-		ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, MaxStoredBytes, summary, conversation, retention, MaxStoredTraces)
+		ON CONFLICT(request_id) DO NOTHING`, c.record.RequestID, c.record.UserID, c.record.StartedAt, data, quota.MaxBytes, summary, conversation, retention, quota.MaxTraces)
 		stored = err == nil && tag.RowsAffected() == 1
 		return err
 	})

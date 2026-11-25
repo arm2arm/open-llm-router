@@ -3,7 +3,11 @@
 The portal is served at the configured `PORTAL_BASE_URL` origin. `/portal/*` uses an
 opaque eight-hour session cookie; `/v1/*` continues to require API keys and ignores cookies.
 The initial local password-change session is restricted and lasts ten minutes.
-All portal responses use `Cache-Control: no-store`. Errors are JSON:
+All portal API and page responses use `Cache-Control: no-store`. The static
+bundle is the exception: content-hashed files below `/portal/assets/` are
+`public, max-age=31536000, immutable`, other static files revalidate with
+`no-cache` and an `ETag`, and text assets are sent gzip-compressed when the
+browser accepts it. Errors are JSON:
 `{"error":{"type":"authentication_error","message":"authentication required"}}`.
 Unauthenticated API calls return 401; forbidden origins/disabled logins return 403;
 invalid input returns 400, unknown or other users' keys return 404, and unavailable
@@ -17,6 +21,7 @@ fields relevant to that operation rather than an exhaustive response schema.
 
 - `GET /portal/api/auth`: public authentication metadata,
   with `default` (`oidc` or `local`: the primary sign-in option),
+  `privacy_notice_url` (the site's public notice, or empty when unconfigured),
   `local: {available, login_url, password_url}` and
   `oidc: {configured, available, login_url}`. No secret or account-existence information
   is returned. The OIDC `login_url` points to the browser entry below.
@@ -210,6 +215,33 @@ untouched. See [PRIVACY.md](PRIVACY.md).
   "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
   oldest first, from the daily totals (unaffected by deleting activity).
 
+## Administrator trace quotas
+
+Full administrator sessions can use:
+
+- `GET` / `PUT /portal/api/admin/trace-quotas` for global per-user defaults.
+- `GET` / `PUT /portal/api/admin/users/{id}/trace-quota` for one account's overrides
+  and storage usage. These routes never return private trace content.
+
+Both PUT routes require the configured Origin and JSON content type. Send
+`{"version":0,"max_bytes":268435456,"max_traces":4096}`. `version` is required;
+use the latest GET value. A stale edit returns 409 and must be reloaded. Each
+nullable limit inherits independently: account → global → deployment YAML.
+Omitted fields also inherit. Bytes must be a whole MiB from 1,048,576 to
+1,099,511,627,776; trace counts must be integers from 1 to 1,000,000.
+
+Responses include `version`, `updated_at`, `overrides` (nullable saved fields),
+`defaults` (inherited values), `effective` (resolved `max_bytes` / `max_traces`),
+and `bounds` (`max_mib` / `max_traces`). Per-user responses also include `storage`
+with `bytes`, `traces`, `max_bytes`, `max_traces` and `next_expiry`.
+User-facing trace preferences report the same effective limits. Invalid values
+return 400, unknown users 404, non-admins 403, and audit/storage failures 503.
+
+Changes are atomically audited as `trace.quota.defaults` or `trace.quota.user`
+and take effect across replicas on new writes without a restart. They preserve
+stored content, retention, consent and inference limits. Both stored bytes and
+trace count must have room for a new trace; existing over-quota logs remain.
+
 ## Personal trace settings and content
 
 These routes require a full session. Mutations require the configured Origin and JSON
@@ -341,8 +373,26 @@ authorization remains enforced on the server regardless of browser navigation.
   requires a fresh browser login and restores only unrevoked, unexpired keys. Cached OIDC access-token
   principals are refused on their next request. Admins cannot disable themselves.
   Disabling the protected local administrator returns 403, including for another admin.
-- `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
-  and tokens this month. A user in several groups counts in each.
+- `POST /portal/api/admin/groups/sync` with `{}`: run the current router's Keycloak
+  group-sync job immediately. Requires an administrator session and same-origin
+  JSON, including for SSO administrators; no recent local sign-in is required.
+  Uses the running authentication configuration, never a draft. Returns 200 with
+  `result: {checked, updated, disabled, failed, remaining, skipped}` and `problem`
+  (empty on success). An incomplete/failed run includes a safe problem message and
+  any partial progress. `skipped: true` means another scan or settings switch is
+  in progress; retry later. Returns 409 `sync_disabled` if no sync job is configured,
+  or 503 `sync_unavailable` while it is initializing. The portal request deadline
+  bounds the run; incomplete scans resume using the scheduled job's cursor.
+  Existing disable limits, issuer scope and account/cache invalidation apply.
+  This refreshes existing users' memberships and enabled state; it does not import
+  all realm users or create group policies.
+- `GET /portal/api/admin/groups`: configured groups and groups received for known users,
+  with enabled members, requests and tokens today and tokens this month. `configured`
+  distinguishes a group with an active access policy from a received membership with
+  no policy. Discovery grants no access. A user in several groups counts in each.
+  `sync_enabled` reports whether this router has group sync configured.
+  The administration `get_usage` tool retains configured groups only unless its key
+  also has `users:read`; `list_groups` requires `users:read`.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
   `max_inflight` and weight.
 
@@ -565,15 +615,38 @@ checks; drafts accept up to 256 KiB.
 {
   "router_url":"http://localhost:8080",
   "base_url":"http://localhost:8080/v1",
+  "privacy_notice_url":"https://site.example/privacy",
   "models":[
-    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"]},
-    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"]}
+    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true},
+    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true}
   ]
 }
 ```
 
 Models and aliases are sorted by ID and filtered by the user's effective model policy.
+Each model and alias includes the sorted, distinct public recipient labels of
+all replicas permitted for the user, including possible retries. A true
+`has_unlisted_recipients` means one or more eligible replicas lack a label.
+This is a list of possible destinations, not a prediction of the selected replica.
 The origin is configured, never derived from untrusted Host or forwarding headers.
+`privacy_notice_url` is `portal.privacy_notice_url` (overridden by a nonempty
+`PORTAL_PRIVACY_URL`), or an empty string if unconfigured; public
+`GET /portal/api/auth` also returns it for sign-in. See the [site notice setup](PRIVACY.md#for-operators).
+
+Each model/alias lists distinct `(organization, privacy_url)` pairs in
+`recipient_details` from **all**
+permitted replicas in the active routing snapshot, regardless of health or capacity.
+Model policy and backend group restrictions are both applied. Aliases disclose the
+same recipients as their canonical model. `recipients_complete` is false if any
+permitted replica lacks either field (or there are no destinations). Empty fields
+are preserved explicitly; internal names, connection URLs, paths and credentials
+are never substituted. Duplicate public pairs are collapsed, so this is not a
+replica inventory. Values are operator declarations, not verification of provider
+practices. Refresh when models or routing change; the snapshot is not a routing lock.
+
+Authenticated `GET /v1/models` includes the same additive `recipient_details` and
+`recipients_complete` fields on each OpenAI-style model entry. Client owners can
+use these before the first prompt; see the [session notice example](CLIENTS.md#first-session-ai-notice).
 
 ## Deployment settings
 

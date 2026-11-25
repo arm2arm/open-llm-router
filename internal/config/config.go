@@ -58,7 +58,7 @@ type Config struct {
 	Limits         Limits                   `yaml:"limits"`
 	Retention      Retention                `yaml:"retention"`
 	OIDC           *OIDC                    `yaml:"oidc"` // nil: local portal login only
-	Portal         Portal                   `yaml:"-"`
+	Portal         Portal                   `yaml:"portal"`
 	Models         map[string]Model         `yaml:"models"`
 	Groups         map[string]Group         `yaml:"groups"`
 	Aliases        map[string]string        `yaml:"aliases"` // client model name -> model
@@ -108,9 +108,18 @@ type Security struct {
 
 // ContentTracing is a site-wide content-capture gate. User consent is also required.
 type ContentTracing struct {
-	Enabled        bool     `yaml:"enabled"`
-	RedactPatterns []string `yaml:"redact_patterns"`
+	Enabled         bool     `yaml:"enabled"`
+	RedactPatterns  []string `yaml:"redact_patterns"`
+	MaxStoredMiB    int64    `yaml:"max_stored_mib"`
+	MaxStoredTraces int64    `yaml:"max_stored_traces"`
 }
+
+const (
+	DefaultTraceStoredMiB    = 64
+	DefaultTraceStoredTraces = 512
+	MaxTraceStoredMiB        = 1 << 20 // 1 TiB per account
+	MaxTraceStoredTraces     = 1_000_000
+)
 
 // Auth controls the lifetime of newly issued API keys.
 type Auth struct {
@@ -189,8 +198,10 @@ type RequiredClaim struct {
 }
 
 type Portal struct {
-	BaseURL      string
-	CookieSecure bool
+	BaseURL          string            `yaml:"-"`
+	CookieSecure     bool              `yaml:"-"`
+	PrivacyNoticeURL string            `yaml:"privacy_notice_url"`
+	RecipientLabels  map[string]string `yaml:"recipient_labels" json:"-"`
 }
 
 // Model is one model name served to clients and the replicas behind it.
@@ -223,14 +234,16 @@ type Priorities struct {
 
 // Replica is one backend server of a model.
 type Replica struct {
-	Backend        string  `yaml:"-" json:"backend,omitempty"` // managed backend reference
-	PrivateNetwork bool    `yaml:"private_network" json:"private_network,omitempty"`
-	URL            string  `yaml:"url" json:"url"`
-	HealthPath     string  `yaml:"health_path" json:"health_path"` // default /health; Ollama uses /
-	Weight         float64 `yaml:"weight" json:"weight"`           // relative throughput
-	MaxInflight    int     `yaml:"max_inflight" json:"max_inflight"`
-	BearerTokenEnv string  `yaml:"bearer_token_env" json:"bearer_token_env"`
-	BearerToken    string  `yaml:"-" json:"-"` // resolved from BearerTokenEnv, never written to YAML
+	PublicOrganization string  `yaml:"public_organization" json:"public_organization,omitempty"`
+	PrivacyURL         string  `yaml:"privacy_url" json:"privacy_url,omitempty"`
+	Backend            string  `yaml:"-" json:"backend,omitempty"` // managed backend reference
+	PrivateNetwork     bool    `yaml:"private_network" json:"private_network,omitempty"`
+	URL                string  `yaml:"url" json:"url"`
+	HealthPath         string  `yaml:"health_path" json:"health_path"` // default /health; Ollama uses /
+	Weight             float64 `yaml:"weight" json:"weight"`           // relative throughput
+	MaxInflight        int     `yaml:"max_inflight" json:"max_inflight"`
+	BearerTokenEnv     string  `yaml:"bearer_token_env" json:"bearer_token_env"`
+	BearerToken        string  `yaml:"-" json:"-"` // resolved from BearerTokenEnv, never written to YAML
 }
 
 // Group is the policy for the members of one identity-provider group. A limit
@@ -316,7 +329,27 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 	if err := doc.Load(&cfg, yaml.WithKnownFields()); err != nil {
 		return nil, yamlProblems(err, data)
 	}
-	cfg.Portal = Portal{BaseURL: "http://localhost:8080", CookieSecure: true}
+	cfg.Portal.BaseURL = "http://localhost:8080"
+	cfg.Portal.CookieSecure = true
+	// Origins in routing snapshots use the same canonical form for file and
+	// managed replicas. Labels can be declared in advance for a managed pool.
+	labels := make(map[string]string, len(cfg.Portal.RecipientLabels))
+	for _, raw := range slices.Sorted(maps.Keys(cfg.Portal.RecipientLabels)) {
+		origin, err := NormalizeBackendURL(raw)
+		if !isBackendURL(raw) || err != nil {
+			problems = append(problems, "portal.recipient_labels: keys must be HTTP(S) origins without credentials, path, query or fragment")
+			continue
+		}
+		if _, exists := labels[origin]; exists {
+			problems = append(problems, "portal.recipient_labels: duplicate normalized origin")
+		}
+		label := strings.TrimSpace(cfg.Portal.RecipientLabels[raw])
+		if label == "" || len(label) > 160 || strings.Contains(label, "://") || strings.ContainsFunc(label, func(r rune) bool { return !unicode.IsPrint(r) }) {
+			problems = append(problems, "portal.recipient_labels: use a printable organization or site name of 1–160 bytes")
+		}
+		labels[origin] = label
+	}
+	cfg.Portal.RecipientLabels = labels
 	if issuer, ok := lookup("OIDC_ISSUER"); ok && (issuer != "" || cfg.OIDC != nil) {
 		if cfg.OIDC == nil {
 			cfg.OIDC = &OIDC{PortalClientID: "olr-portal"}
@@ -355,6 +388,9 @@ func Parse(data []byte, lookup func(string) (string, bool)) (*Config, error) {
 				cfg.Portal.BaseURL = origin
 			}
 		}
+	}
+	if value, ok := lookup("PORTAL_PRIVACY_URL"); ok && value != "" {
+		cfg.Portal.PrivacyNoticeURL = value
 	}
 	if value, ok := lookup("PORTAL_COOKIE_SECURE"); ok {
 		secure, err := strconv.ParseBool(value)
@@ -582,6 +618,18 @@ func (c *Config) validate() Problems {
 	}
 
 	add := func(format string, args ...any) { p = append(p, fmt.Sprintf(format, args...)) }
+	if c.ContentTracing.MaxStoredMiB == 0 {
+		c.ContentTracing.MaxStoredMiB = DefaultTraceStoredMiB
+	}
+	if c.ContentTracing.MaxStoredTraces == 0 {
+		c.ContentTracing.MaxStoredTraces = DefaultTraceStoredTraces
+	}
+	if c.ContentTracing.MaxStoredMiB < 1 || c.ContentTracing.MaxStoredMiB > MaxTraceStoredMiB {
+		add("content_tracing.max_stored_mib: must be between 1 and %d", MaxTraceStoredMiB)
+	}
+	if c.ContentTracing.MaxStoredTraces < 1 || c.ContentTracing.MaxStoredTraces > MaxTraceStoredTraces {
+		add("content_tracing.max_stored_traces: must be between 1 and %d", MaxTraceStoredTraces)
+	}
 	if len(c.ContentTracing.RedactPatterns) > 32 {
 		add("content_tracing.redact_patterns: at most 32 patterns")
 	}
@@ -682,6 +730,12 @@ func (c *Config) validate() Problems {
 			add("oidc.group_names: must be leaf or path")
 		}
 	}
+	if raw := c.Portal.PrivacyNoticeURL; raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.RawQuery != "" || u.ForceQuery || !ValidPrivacyURL(raw) {
+			add("portal.privacy_notice_url / PORTAL_PRIVACY_URL: use an absolute HTTPS notice URL without credentials or query parameters")
+		}
+	}
 	if !isBackendURL(c.Portal.BaseURL) {
 		add("PORTAL_BASE_URL: must be an http or https origin without credentials, path, query or fragment")
 	}
@@ -723,6 +777,12 @@ func (c *Config) validate() Problems {
 		seen := make(map[string]bool)
 		for i, r := range m.Pool {
 			at := fmt.Sprintf("%s.pool[%d]", at, i)
+			if !ValidPublicOrganization(r.PublicOrganization) {
+				add("%s.public_organization: use at most 128 bytes of text without control characters", at)
+			}
+			if !ValidPrivacyURL(r.PrivacyURL) {
+				add("%s.privacy_url: use an absolute HTTP(S) URL without credentials, or leave empty", at)
+			}
 			switch {
 			case !isBackendURL(r.URL):
 				add("%s.url: must be an HTTP(S) origin without credentials, path, query or fragment", at)
