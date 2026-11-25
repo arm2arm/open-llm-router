@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -132,5 +134,91 @@ func BenchmarkSessionReservation(b *testing.B) {
 				l.Release()
 			}
 		})
+	}
+}
+
+// BenchmarkQueuedChurn measures acquire/release cycles while far more callers
+// queue than the replicas admit, as during a burst against busy GPU servers.
+func BenchmarkQueuedChurn(b *testing.B) {
+	type key struct{}
+	cfg := &config.Config{Models: map[string]config.Model{"m": {Pool: []config.Replica{
+		{URL: "http://a", Weight: 1, MaxInflight: 8}, {URL: "http://b", Weight: 1, MaxInflight: 8}}}}}
+	m := New(cfg, nil)
+	p := m.Pools["m"]
+	for i := range p.replicas {
+		p.replicas[i].healthy = true
+	}
+	// Like the proxy's filter: a context lookup per eligibility check.
+	ctx := context.WithValue(b.Context(), key{}, "principal")
+	allowed := func(config.Replica) bool { return ctx.Value(key{}) != nil }
+	var remaining atomic.Int64
+	remaining.Store(int64(b.N))
+	b.ResetTimer()
+	var wg sync.WaitGroup
+	for range 256 {
+		wg.Go(func() {
+			for remaining.Add(-1) >= 0 {
+				l := p.AcquireRequest(ctx, Request{Wait: time.Minute, Allowed: allowed})
+				if l == nil {
+					b.Error("queued caller timed out")
+					return
+				}
+				l.Release()
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// Only the queue head redispatches on a notification. A release in another
+// revision must still reach a serviceable caller behind an unserviceable head.
+func TestDrainingReleaseServesWaiterBehindUnserviceableHead(t *testing.T) {
+	configuration := func(weight float64) *config.Config {
+		return &config.Config{Models: map[string]config.Model{"m": {Pool: []config.Replica{{URL: "http://a", Weight: weight, MaxInflight: 1}}}}}
+	}
+	draining := New(configuration(1), nil)
+	draining.Pools["m"].replicas[0].healthy = true
+	held := draining.Pools["m"].Acquire(nil)
+	active := Replace(configuration(2), nil, draining)
+	p := active.Pools["m"]
+	p.replicas[0].healthy = true
+	head := make(chan *Lease, 1)
+	go func() {
+		head <- p.AcquireRequest(t.Context(), Request{Wait: 2 * time.Second, Allowed: func(config.Replica) bool { return false }})
+	}()
+	waitQueued(t, p, 1)
+	next := make(chan *Lease, 1)
+	go func() { next <- p.AcquireRequest(t.Context(), Request{Wait: 2 * time.Second}) }()
+	waitQueued(t, p, 2)
+	held.Release() // frees shared capacity without a release in p itself
+	select {
+	case l := <-next:
+		if l == nil {
+			t.Fatal("serviceable waiter got no lease")
+		}
+		l.Release()
+	case <-time.After(time.Second):
+		t.Fatal("capacity freed by a draining revision stayed behind the head")
+	}
+	if l := <-head; l != nil {
+		t.Fatal("unserviceable head received a lease")
+	}
+	if p.Queued() != 0 {
+		t.Fatal("waiters leaked", p.Queued())
+	}
+}
+
+func TestCapacityEventsArePerModelAndSurviveRemoval(t *testing.T) {
+	two := &config.Config{Models: map[string]config.Model{
+		"a": {Pool: []config.Replica{{URL: "http://a", Weight: 1, MaxInflight: 1}}},
+		"b": {Pool: []config.Replica{{URL: "http://b", Weight: 1, MaxInflight: 1}}}}}
+	first := New(two, nil)
+	if first.Pools["a"].events == first.Pools["b"].events || first.Pools["a"].events == nil {
+		t.Fatal("models share wakeups")
+	}
+	onlyB := &config.Config{Models: map[string]config.Model{"b": two.Models["b"]}}
+	restored := Replace(two, nil, Replace(onlyB, nil, first))
+	if restored.Pools["a"] == first.Pools["a"] || restored.Pools["a"].events != first.Pools["a"].events {
+		t.Fatal("a restored model must observe releases of its draining revision")
 	}
 }
