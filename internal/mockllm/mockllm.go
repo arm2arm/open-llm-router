@@ -16,10 +16,13 @@
 //   - An Anthropic answer starts with a thinking block of ThinkingTokens
 //     tokens when the request enables thinking or Options.Thinking is set.
 //
+// GET /v1/models lists the served models and, as vLLM does, reports each
+// one's context length as max_model_len (Options.MaxModelLen).
+//
 // Options are the server's defaults; a request can override them with the
-// headers X-Mock-Tokens, X-Mock-Token-Delay, X-Mock-Fail and X-Mock-Thinking.
-// GET /_mock/stats reports what the server has received, POST /_mock/reset
-// clears that.
+// headers X-Mock-Tokens, X-Mock-Token-Delay, X-Mock-Fail, X-Mock-Thinking and
+// X-Mock-Max-Model-Len. GET /_mock/stats reports what the server has received,
+// POST /_mock/reset clears that.
 //
 // The mock keeps the last request, body included. It is a test tool and must
 // not be put in front of real users.
@@ -49,6 +52,7 @@ const (
 	ThinkingText = "Considering the request."
 
 	defaultTokens          = 16
+	defaultMaxModelLen     = 32768
 	defaultModel           = "chat-model"
 	maxBody                = 64 << 20
 	maxRequestedTokens     = 8192
@@ -74,6 +78,9 @@ type Options struct {
 	TokenDelay time.Duration // pause before each output token; 1/TokenDelay is the tokens per second
 	Fail       Fail
 	Thinking   bool // start every Anthropic answer with a thinking block
+	// MaxModelLen is the context length GET /v1/models reports for every
+	// model. Default: 32768; X-Mock-Max-Model-Len: 0 leaves it out.
+	MaxModelLen int
 }
 
 // set changes one option from its text form. The keys are those of the
@@ -101,6 +108,11 @@ func (o *Options) set(key, value string) error {
 		}
 	case "thinking":
 		o.Thinking, err = strconv.ParseBool(value)
+	case "max-model-len":
+		o.MaxModelLen, err = strconv.Atoi(value)
+		if err == nil && o.MaxModelLen < 0 {
+			err = errors.New("must not be negative")
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("%q: %w", value, err)
@@ -108,11 +120,11 @@ func (o *Options) set(key, value string) error {
 	return nil
 }
 
-var optionKeys = []string{"tokens", "token-delay", "fail", "thinking"}
+var optionKeys = []string{"tokens", "token-delay", "fail", "thinking", "max-model-len"}
 
 // OptionsFromEnv reads MOCK_MODELS (comma-separated), MOCK_TOKENS,
-// MOCK_TOKEN_DELAY (such as "20ms"), MOCK_FAIL and MOCK_THINKING. getenv has
-// the signature of os.Getenv.
+// MOCK_TOKEN_DELAY (such as "20ms"), MOCK_FAIL, MOCK_THINKING and
+// MOCK_MAX_MODEL_LEN. getenv has the signature of os.Getenv.
 func OptionsFromEnv(getenv func(string) string) (Options, error) {
 	var o Options
 	for _, model := range strings.Split(getenv("MOCK_MODELS"), ",") {
@@ -132,12 +144,15 @@ func OptionsFromEnv(getenv func(string) string) (Options, error) {
 }
 
 // Stats is what the mock has seen since it started or was last reset.
+// Model catalog reads (GET /v1/models), which the router makes during health
+// checks, are counted apart, so they do not show up as forwarded requests.
 type Stats struct {
-	Requests       int      `json:"requests"`        // requests to /v1/...
-	StreamsAborted int      `json:"streams_aborted"` // streams whose client went away before the end
-	Inflight       int      `json:"inflight"`        // requests to /v1/... being answered right now
-	PeakInflight   int      `json:"peak_inflight"`   // the highest value Inflight has had
-	Last           *Request `json:"last"`            // the most recent request to /v1/...
+	CatalogRequests int      `json:"catalog_requests"` // GET /v1/models
+	Requests        int      `json:"requests"`         // other requests to /v1/...
+	StreamsAborted  int      `json:"streams_aborted"`  // streams whose client went away before the end
+	Inflight        int      `json:"inflight"`         // requests to /v1/... being answered right now
+	PeakInflight    int      `json:"peak_inflight"`    // the highest value Inflight has had
+	Last            *Request `json:"last"`             // the most recent request to /v1/...
 }
 
 // Request is a request as the mock received it.
@@ -173,7 +188,7 @@ func New(opts Options) *Server {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	s.mux.HandleFunc("GET /v1/models", s.api(openAI, s.models))
+	s.mux.HandleFunc("GET /v1/models", s.catalog)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.api(openAI, s.chatCompletions))
 	s.mux.HandleFunc("POST /v1/responses", s.api(openAI, s.responses))
 	s.mux.HandleFunc("POST /v1/completions", s.api(openAI, s.completions))
@@ -195,6 +210,9 @@ func (s *Server) SetOptions(opts Options) {
 	}
 	if opts.Tokens == 0 {
 		opts.Tokens = defaultTokens
+	}
+	if opts.MaxModelLen == 0 {
+		opts.MaxModelLen = defaultMaxModelLen
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -253,6 +271,27 @@ func (o *Options) fromHeader(h http.Header) error {
 		}
 	}
 	return nil
+}
+
+// catalog answers GET /v1/models. It applies the X-Mock-* headers and the
+// failure modes of API requests, but is counted as a catalog read only.
+func (s *Server) catalog(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.stats.CatalogRequests++
+	c := &call{Options: s.opts, proto: openAI}
+	s.mu.Unlock()
+	if err := c.fromHeader(r.Header); err != nil {
+		openAI.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch c.Fail {
+	case FailDrop:
+		panic(http.ErrAbortHandler) // net/http closes the connection without a response
+	case FailError:
+		openAI.writeError(w, http.StatusInternalServerError, "mock failure (failure mode \"error\")")
+		return
+	}
+	s.models(w, r, c)
 }
 
 // call is one API request being answered.

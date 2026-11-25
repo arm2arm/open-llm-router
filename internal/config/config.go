@@ -43,6 +43,14 @@ const (
 	MaxUserKeyLabelPrefixBytes = 50
 )
 
+// Model types reported to clients, and the largest context length accepted
+// from the configuration or a backend's model catalog.
+const (
+	ModelTypeChat      = "chat"
+	ModelTypeEmbedding = "embedding"
+	MaxContextLength   = math.MaxInt32
+)
+
 // Environment variables that carry secrets. Secrets have no key in the config
 // file, so they cannot end up in a file that is committed or shared.
 const (
@@ -228,8 +236,14 @@ const MaxModelTimeoutS = 86400
 type Model struct {
 	Protocols     []string `yaml:"protocols" json:"protocols"`
 	UpstreamModel string   `yaml:"upstream_model" json:"upstream_model"`
-	TimeoutS      int      `yaml:"timeout_s" json:"timeout_s"`
-	IdleTimeoutS  int      `yaml:"idle_timeout_s" json:"idle_timeout_s"` // default 30; between response chunks
+	// ContextLength, if set, is the context window reported to clients in
+	// place of the one detected from the backends' model catalogs.
+	ContextLength *int `yaml:"context_length" json:"context_length,omitempty"`
+	// Type is "chat" or "embedding"; empty means chat. It is reported to
+	// clients so they do not pick an embedding model as a chat default.
+	Type         string `yaml:"type" json:"type,omitempty"`
+	TimeoutS     int    `yaml:"timeout_s" json:"timeout_s"`
+	IdleTimeoutS int    `yaml:"idle_timeout_s" json:"idle_timeout_s"` // default 30; between response chunks
 	// QueueTimeoutS lets a call wait this long for a free replica when
 	// every replica is at max_inflight; 0 answers 503 at once.
 	QueueTimeoutS int `yaml:"queue_timeout_s" json:"queue_timeout_s"`
@@ -240,6 +254,14 @@ type Model struct {
 	// "priority" (vLLM with --scheduling-policy priority; lower is sooner).
 	Priority *Priorities `yaml:"priority" json:"priority"`
 	Pool     []Replica   `yaml:"pool" json:"pool"`
+}
+
+// ModelType is the configured type, with the default "chat" for none.
+func (m Model) ModelType() string {
+	if m.Type == "" {
+		return ModelTypeChat
+	}
+	return m.Type
 }
 
 // Priorities maps key classes to backend priorities; a group's priority is
@@ -793,6 +815,12 @@ func (c *Config) validate() Problems {
 			if proto != ProtocolOpenAI && proto != ProtocolAnthropic {
 				add("%s.protocols: unknown protocol %q (known: %q, %q)", at, proto, ProtocolOpenAI, ProtocolAnthropic)
 			}
+		}
+		if m.ContextLength != nil && (*m.ContextLength <= 0 || *m.ContextLength > MaxContextLength) {
+			add("%s.context_length: must be between 1 and %d; leave it out to use the backends' reported value", at, MaxContextLength)
+		}
+		if m.Type != "" && m.Type != ModelTypeChat && m.Type != ModelTypeEmbedding {
+			add("%s.type: unknown type %q (known: %q, %q)", at, m.Type, ModelTypeChat, ModelTypeEmbedding)
 		}
 		if m.TimeoutS <= 0 {
 			add("%s.timeout_s: must be greater than 0", at)

@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/pool"
 )
 
 // ModelSource deliberately accepts credential references, never credentials.
@@ -33,11 +34,17 @@ type Catalog struct {
 	Error      string   `json:"error,omitempty"`
 	Provider   string   `json:"provider,omitempty"`
 	HealthPath string   `json:"health_path,omitempty"`
+	// ContextLengths are the context lengths the catalog reports, such as
+	// vLLM's max_model_len, by model; models without one are absent.
+	ContextLengths map[string]int `json:"context_lengths,omitempty"`
 }
 type Discovery struct {
 	Models   []string  `json:"models"`
 	Complete bool      `json:"complete"`
 	Replicas []Catalog `json:"replicas"`
+	// ContextLengths are, for the shared models, the smallest context
+	// length any replica reports, as health checks use it.
+	ContextLengths map[string]int `json:"context_lengths,omitempty"`
 }
 
 // Discover never publishes configuration or touches inference admission/health.
@@ -113,6 +120,16 @@ func (s *Service) Discover(ctx context.Context, name string, sources []ModelSour
 	if !result.Complete {
 		result.Models = []string{}
 	}
+	for _, model := range result.Models {
+		for _, replica := range result.Replicas {
+			if n := replica.ContextLengths[model]; n > 0 && (result.ContextLengths[model] == 0 || n < result.ContextLengths[model]) {
+				if result.ContextLengths == nil {
+					result.ContextLengths = map[string]int{}
+				}
+				result.ContextLengths[model] = n
+			}
+		}
+	}
 	return result, nil
 }
 
@@ -146,10 +163,7 @@ func catalogPaths(ctx context.Context, client catalogGetter, origin, token strin
 			return result
 		}
 		var body struct {
-			Data *[]struct {
-				ID      string `json:"id"`
-				OwnedBy string `json:"owned_by"`
-			} `json:"data"`
+			Data   *[]pool.CatalogEntry `json:"data"`
 			Models *[]struct {
 				Name  string `json:"name"`
 				Model string `json:"model"`
@@ -160,11 +174,14 @@ func catalogPaths(ctx context.Context, client catalogGetter, origin, token strin
 			result.Error = "unsupported or paginated model catalog; enter the model name manually"
 			return result
 		}
-		ids := []string{}
+		ids, contextLengths := []string{}, map[string]int{}
 		if path == "/v1/models" {
 			result.Provider = "OpenAI-compatible"
 			for _, model := range *body.Data {
 				ids = append(ids, model.ID)
+				if n := model.ReportedContextLength(); n > 0 && (contextLengths[model.ID] == 0 || n < contextLengths[model.ID]) {
+					contextLengths[model.ID] = n
+				}
 				switch strings.ToLower(model.OwnedBy) {
 				case "vllm":
 					result.Provider = "vLLM"
@@ -195,6 +212,9 @@ func catalogPaths(ctx context.Context, client catalogGetter, origin, token strin
 		slices.Sort(ids)
 		result.Models, result.Source = slices.Compact(ids), path
 		result.HealthPath = path
+		if len(contextLengths) > 0 {
+			result.ContextLengths = contextLengths
+		}
 		return result
 	}
 	return result

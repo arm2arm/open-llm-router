@@ -29,7 +29,7 @@ func TestStreamingMultimodalCapabilities(t *testing.T) {
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				body, _ := io.ReadAll(r.Body)

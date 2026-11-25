@@ -93,7 +93,7 @@ func TestResponsesStreamFailureAndIncomplete(t *testing.T) {
 				wire += "data: {\"type\":\"" + terminal + "\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":20}}}\n\n"
 			}
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")

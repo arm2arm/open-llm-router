@@ -397,7 +397,7 @@ authorization remains enforced on the server regardless of browser navigation.
   The administration `get_usage` tool retains configured groups only unless its key
   also has `users:read`; `list_groups` requires `users:read`.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
-  `max_inflight` and weight.
+  `max_inflight`, weight and, when its model catalog reports one, `context_length`.
 
 ## Backend management and shared presets
 
@@ -417,7 +417,8 @@ shared per backend across users and router instances. Older documents without th
 map receive built-in presets. The reserved unlimited preset must have no caps.
 
 POST /portal/api/admin/backends/detect accepts an identity, backend connection fields,
-and an optional transient API key. Bare IP/service names use HTTP. Stored documents
+and an optional transient API key. Its catalog result adds `context_lengths` (served model →
+reported `max_model_len` or `context_length`) when the catalog reports any. Bare IP/service names use HTTP. Stored documents
 use canonical HTTP(S) origins. Replacement keys are submitted separately in the
 routing draft's secrets map; documents and responses carry encrypted references only.
 The workspace saves a draft and activates it, and refuses to replace an unrelated
@@ -444,9 +445,12 @@ Resolved backend secrets are excluded from all responses and revisions.
   failures return 400. A passing probe does not prove the upstream model exists.
 - `POST /portal/api/admin/endpoints/models` accepts
   `{"model":"chat-model","replicas":[{"url":"http://ollama:11434","bearer_token_env":""}]}`.
-  Returns `{models, complete, replicas:[{url, models, source?, provider?, health_path?, error?}]}`. `models`
+  Returns `{models, complete, context_lengths?, replicas:[{url, models, source?, provider?, health_path?, context_lengths?, error?}]}`. `models`
   is the sorted intersection across every replica, empty if any catalog failed;
-  per-replica lists are diagnostic. Uses `GET /v1/models`, with `/api/tags` fallback
+  per-replica lists are diagnostic. `context_lengths` maps a model to the context
+  length its catalog reports (vLLM/SGLang `max_model_len`, else `context_length`);
+  the top-level map has the smallest value across replicas for the shared models,
+  which is what `/v1/models` reports once the model's health checks read it. Uses `GET /v1/models`, with `/api/tags` fallback
   only on 404/405/501. Destinations and credential references use the same policy
   as inference, without browser credentials, environment proxies or redirects.
   Credential references are bound to their deployment-approved origins (file
@@ -480,6 +484,8 @@ Example configuration for an existing logical `chat-model`:
   "configuration":{
     "upstream_model":"qwen3.8:27b-mlx",
     "protocols":["openai"],
+    "context_length":32768,
+    "type":"chat",
     "timeout_s":900,
     "idle_timeout_s":120,
     "queue_timeout_s":0,
@@ -600,8 +606,9 @@ checks; drafts accept up to 256 KiB.
   (group → granted models, `*` for all; active routing policy).
 - `POST …/import` with `{}`; afterwards `PUT /portal/api/admin/endpoints` returns 409.
 - `PUT …/draft` with `{"version":N,"document":{"models":{…},"aliases":{…},"groups":{…}}}`. Model
-  objects use the YAML field names (`protocols`, `upstream_model`, `timeout_s`, `pool`
-  with `url`, `health_path`, `weight`, `max_inflight`, `bearer_token_env`, …).
+  objects use the YAML field names (`protocols`, `upstream_model`, optional `context_length`
+  and `type`, `timeout_s`, `pool` with `url`, `health_path`, `weight`, `max_inflight`,
+  `bearer_token_env`, …). Omitted `context_length` and `type` mean detected and `chat`.
 - `POST …/discard` with `{"version":N}`.
 - `POST …/checks` with `{"revision":R}` (0: the current routing) returns `{revision,
   results}` with one `models.<name>.pool[<i>]` result per probed replica, or
@@ -620,13 +627,16 @@ checks; drafts accept up to 256 KiB.
   "base_url":"http://localhost:8080/v1",
   "privacy_notice_url":"https://site.example/privacy",
   "models":[
-    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true},
-    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true}
+    {"id":"chat-model","canonical_model":"chat-model","context_length":131072,"type":"chat","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true},
+    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","context_length":131072,"type":"chat","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true}
   ]
 }
 ```
 
 Models and aliases are sorted by ID and filtered by the user's effective model policy.
+`context_length`, `type` and `protocols` are described in
+[model list metadata](REFERENCE.md#model-list-metadata); `context_length` is omitted while
+unknown, and an alias reports its canonical model's values.
 Each model and alias includes the sorted, distinct public recipient labels of
 all replicas permitted for the user, including possible retries. A true
 `has_unlisted_recipients` means one or more eligible replicas lack a label.
@@ -647,8 +657,9 @@ are never substituted. Duplicate public pairs are collapsed, so this is not a
 replica inventory. Values are operator declarations, not verification of provider
 practices. Refresh when models or routing change; the snapshot is not a routing lock.
 
-Authenticated `GET /v1/models` includes the same additive `recipient_details` and
-`recipients_complete` fields on each OpenAI-style model entry. Client owners can
+Authenticated `GET /v1/models` includes the same additive `context_length`, `type`,
+`protocols`, `recipient_details` and `recipients_complete` fields on each OpenAI-style
+model entry. Client owners can
 use these before the first prompt; see the [session notice example](CLIENTS.md#first-session-ai-notice).
 
 ## Deployment settings

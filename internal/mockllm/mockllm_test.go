@@ -311,3 +311,53 @@ func eventNames(stream string) []string {
 	}
 	return events
 }
+
+func TestCatalogReportsMaxModelLenApartFromRequestStats(t *testing.T) {
+	type catalog struct {
+		Data []map[string]any `json:"data"`
+	}
+	s := httptest.NewServer(New(Options{Models: []string{"chat-model", "embed-model"}}))
+	defer s.Close()
+	var models catalog
+	getJSON(t, s.URL+"/v1/models", http.StatusOK, &models)
+	if len(models.Data) != 2 || models.Data[0]["max_model_len"] != float64(32768) || models.Data[1]["max_model_len"] != float64(32768) {
+		t.Fatalf("default catalog = %v", models.Data)
+	}
+	req, _ := http.NewRequest(http.MethodGet, s.URL+"/v1/models", nil)
+	req.Header.Set("X-Mock-Max-Model-Len", "0")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var omitted catalog
+	err = json.NewDecoder(res.Body).Decode(&omitted)
+	res.Body.Close()
+	if _, ok := omitted.Data[0]["max_model_len"]; err != nil || ok {
+		t.Fatalf("X-Mock-Max-Model-Len: 0 did not omit it: %v %v", omitted.Data, err)
+	}
+	req.Header.Set("X-Mock-Max-Model-Len", "-1")
+	if res, err = http.DefaultClient.Do(req); err != nil || res.StatusCode != http.StatusBadRequest {
+		t.Fatal("negative max_model_len accepted", err)
+	}
+	res.Body.Close()
+
+	// Catalog reads are what the router's health checks make; they are
+	// counted apart from the requests it forwards.
+	var stats Stats
+	getJSON(t, s.URL+"/_mock/stats", http.StatusOK, &stats)
+	if stats.CatalogRequests != 3 || stats.Requests != 0 || stats.Last != nil || stats.PeakInflight != 0 {
+		t.Fatalf("stats = %#v", stats)
+	}
+
+	failing := httptest.NewServer(New(Options{MaxModelLen: 4096, Fail: FailError}))
+	defer failing.Close()
+	res, err = http.Get(failing.URL + "/v1/models")
+	if err != nil || res.StatusCode != http.StatusInternalServerError {
+		t.Fatal("failure mode not applied to the catalog", err)
+	}
+	res.Body.Close()
+	opts, err := OptionsFromEnv(func(key string) string { return map[string]string{"MOCK_MAX_MODEL_LEN": "131072"}[key] })
+	if err != nil || opts.MaxModelLen != 131072 {
+		t.Fatal("MOCK_MAX_MODEL_LEN not read", opts, err)
+	}
+}

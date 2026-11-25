@@ -12,7 +12,7 @@ import (
 
 func TestBackendCannotOverrideRouterCORS(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		for _, key := range []string{"Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"} {

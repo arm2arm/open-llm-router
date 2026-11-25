@@ -125,7 +125,7 @@ func TestSharedBackendBudgetsAcrossRouterInstances(t *testing.T) {
 
 func TestBackendConcurrencyReleasedOnStreamDisconnect(t *testing.T) {
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

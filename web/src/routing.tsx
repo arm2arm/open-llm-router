@@ -393,6 +393,47 @@ function ModelEditor({
         {number('idle_timeout_s')}
         {number('queue_timeout_s')}
       </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <label className="grid gap-1 text-sm">
+          Context length (tokens)
+          <Input
+            aria-label={`${name} context length`}
+            type="number"
+            min={1}
+            step={1}
+            value={model.context_length ?? ''}
+            placeholder="Detected"
+            onChange={(event) => {
+              const next = { ...model }
+              if (event.target.value === '') delete next.context_length
+              else next.context_length = Number(event.target.value)
+              onChange(next)
+            }}
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          Model type
+          <select
+            className="select"
+            aria-label={`${name} model type`}
+            value={model.type ?? 'chat'}
+            onChange={(event) => {
+              const next = { ...model }
+              if (event.target.value === 'embedding') next.type = 'embedding'
+              else delete next.type
+              onChange(next)
+            }}
+          >
+            <option value="chat">Chat</option>
+            <option value="embedding">Embedding</option>
+          </select>
+        </label>
+        <p className="subtitle text-sm sm:col-span-2">
+          Reported to clients in the model list. Leave the context length empty
+          to report the smallest value the backends' model catalogs give, such
+          as vLLM&apos;s max_model_len.
+        </p>
+      </div>
       <div className="flex flex-wrap gap-4 text-sm">
         {(['openai', 'anthropic'] as const).map((protocol) => (
           <label key={protocol} className="flex gap-2 items-center">

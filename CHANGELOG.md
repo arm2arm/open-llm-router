@@ -22,6 +22,21 @@ The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATI
   sensitive and warns about it. **Upgrade:** migration 0036 adds the issuing
   administration key to inference keys; existing keys are unchanged.
 
+- `GET /v1/models` and the portal's `/portal/api/models` report each model's
+  `context_length`, `type` (`chat` or `embedding`) and `protocols`, so agents can
+  size their context and portals never pick an embedding model as a chat
+  default. Aliases report their target's values. Models accept two optional
+  settings: `context_length` (a positive integer) and `type` (default `chat`).
+  Without a configured `context_length`, health checks read it from the
+  replicas' `/v1/models` catalogs (vLLM's and SGLang's `max_model_len`) on the
+  first successful check, on recovery and every 10 minutes, and report the
+  smallest value across the replicas; the field is omitted while unknown.
+  Backends that serve no catalog, such as Ollama, see one extra
+  `GET /v1/models` per replica every 10 minutes. Endpoint discovery shows the
+  reported values, and the routing editor can set both settings. Existing
+  configurations and clients work unchanged. mock-llm reports `max_model_len`
+  (`MOCK_MAX_MODEL_LEN`, default 32768) and counts catalog reads apart from
+  forwarded requests in `/_mock/stats` (`catalog_requests`).
 - Admin-added backends can no longer reach blocked destinations through IPv6
   forms that a translator delivers to IPv4: NAT64 (`64:ff9b::/96`) and
   IPv4-compatible addresses get the verdict of their embedded IPv4 address,

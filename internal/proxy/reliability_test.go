@@ -20,7 +20,7 @@ func TestEarlyHeadersFirstByteBudget(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/timeout=%v", protocol, timeout), func(t *testing.T) {
 				var calls atomic.Int32
 				serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/health" {
+					if backendProbe(r) {
 						return
 					}
 					calls.Add(1)
@@ -81,7 +81,7 @@ func TestEarlyHeadersFirstByteBudget(t *testing.T) {
 func TestSingleReplicaFailureDoesNotQueueRetry(t *testing.T) {
 	var calls atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		calls.Add(1)
@@ -118,7 +118,7 @@ func TestStreamTerminationAgreesWithUsage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -148,7 +148,7 @@ func TestStreamTerminationAgreesWithUsage(t *testing.T) {
 func TestInferenceStatusDoesNotChangeProbeHealth(t *testing.T) {
 	var calls atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if !backendProbe(r) {
 			calls.Add(1)
 			http.Error(w, "model runner unavailable", http.StatusServiceUnavailable)
 		}
@@ -169,7 +169,7 @@ func TestInferenceStatusDoesNotChangeProbeHealth(t *testing.T) {
 func TestOverlongSessionIsRejectedBeforeBackend(t *testing.T) {
 	var calls atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if !backendProbe(r) {
 			calls.Add(1)
 		}
 	}))

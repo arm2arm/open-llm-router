@@ -29,6 +29,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/jsonobject"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
+	"github.com/arm2arm/open-llm-router/internal/modelinfo"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
@@ -127,12 +128,12 @@ func (h *Handler) callerPolicy(r *http.Request, cfg *config.Config) policy.Polic
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := h.Snapshot()
+	cfg, pools := h.Snapshot()
 	access := h.callerPolicy(r, cfg)
 	principal, _ := auth.FromContext(r.Context())
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
-	data := make([]map[string]any, 0, len(names))
+	data := make([]modelinfo.Entry, 0, len(names))
 	for _, name := range names {
 		target := name
 		if model, ok := cfg.Aliases[name]; ok {
@@ -141,8 +142,9 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 		if !policy.ModelAllowed(cfg, access, target, principal.Groups, principal.ProtectedAdmin) {
 			continue
 		}
-		recipients, complete := policy.ModelRecipients(cfg, target, principal.Groups, principal.ProtectedAdmin)
-		data = append(data, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router", "recipient_details": recipients, "recipients_complete": complete})
+		if entry, ok := modelinfo.NewEntry(cfg, pools, name, principal.Groups, principal.ProtectedAdmin); ok {
+			data = append(data, entry)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
