@@ -104,6 +104,7 @@ export type Session = {
   must_change_password: boolean
 }
 export type AuthMethods = {
+  privacy_notice_url?: string
   default?: 'oidc' | 'local'
   local: { available: boolean; login_url: string; password_url: string }
   oidc: { configured: boolean; available: boolean; login_url: string }
@@ -118,8 +119,14 @@ export type Limits = {
   max_concurrent_batch: number | null
   strict_quota: boolean
 }
+export type IdentityProfile = {
+  full_name?: string
+  given_name?: string
+  family_name?: string
+  institution?: string
+}
 export type Me = {
-  user: {
+  user: IdentityProfile & {
     id: string
     username: string
     email: string
@@ -177,7 +184,16 @@ export type Usage = {
 export type Models = {
   router_url: string
   base_url: string
-  models: { id: string; canonical_model: string; protocols: string[] }[]
+  privacy_notice_url?: string
+  models: {
+    id: string
+    canonical_model: string
+    protocols: string[]
+    recipients?: string[]
+    has_unlisted_recipients?: boolean
+    recipient_details?: { organization: string; privacy_url: string }[]
+    recipients_complete?: boolean
+  }[]
 }
 export type RequestRecord = {
   request_id: string | null
@@ -201,7 +217,7 @@ export type DailyTotal = {
   input_tokens: number
   output_tokens: number
 }
-export type AdminUser = {
+export type AdminUser = IdentityProfile & {
   id: string
   issuer: string
   username: string
@@ -224,7 +240,7 @@ export type Override = {
   set_at: string
 }
 export type AdminUserDetail = {
-  user: {
+  user: IdentityProfile & {
     id: string
     username: string
     email: string
@@ -243,6 +259,7 @@ export type AdminUserDetail = {
 }
 export type GroupTotals = {
   group: string
+  configured?: boolean
   members: number
   requests_today: number
   tokens_today: number
@@ -259,6 +276,8 @@ export type Replica = {
 }
 
 export type EndpointReplica = {
+  public_organization?: string
+  privacy_url?: string
   backend?: string
   private_network?: boolean
   url: string
@@ -309,6 +328,7 @@ export type AuthenticationDocument = {
   groups_claim: string
   group_names: 'leaf' | 'path'
   username_claim: string
+  institution_claim?: string
   required_claim: { name: string; value: string } | null
   sync_client_id: string
   sync_client_secret: SecretRef
@@ -372,6 +392,7 @@ export type AuthenticationView = {
     problem?: string
     sso_configured: boolean
     sso_available: boolean
+    group_sync_enabled?: boolean
   }
   other_issuers: {
     issuer: string
@@ -437,6 +458,8 @@ export type RoutingView = {
 }
 
 export type Backend = {
+  public_organization?: string
+  privacy_url?: string
   name?: string
   provider?: string
   groups?: string[] | null

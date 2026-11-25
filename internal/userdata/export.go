@@ -26,7 +26,7 @@ func Export(ctx context.Context, pool *pgxpool.Pool, id string, output io.Writer
 	}
 	defer tx.Rollback(ctx)
 	var profile json.RawMessage
-	err = tx.QueryRow(ctx, `SELECT to_jsonb(record) FROM (SELECT id,issuer,sub,username,email,groups,enabled,protected_admin,email_verified,synced_at,disabled_at,trace_enabled,trace_retention_days,trace_preferences_set_at FROM users WHERE id=$1) record`, id).Scan(&profile)
+	err = tx.QueryRow(ctx, `SELECT to_jsonb(record) FROM (SELECT id,issuer,sub,username,email,full_name,given_name,family_name,institution,groups,enabled,protected_admin,email_verified,synced_at,disabled_at,trace_enabled,trace_retention_days,trace_preferences_set_at FROM users WHERE id=$1) record`, id).Scan(&profile)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

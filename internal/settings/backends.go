@@ -13,14 +13,16 @@ import (
 // Backend is a reusable origin. Only encrypted credential references are stored
 // in routing documents; resolved API keys exist only in the runtime config.
 type Backend struct {
-	Name           string    `json:"name,omitempty"`
-	Provider       string    `json:"provider,omitempty"`
-	Groups         []string  `json:"groups"`
-	Preset         string    `json:"preset,omitempty"`
-	URL            string    `json:"url"`
-	APIKey         SecretRef `json:"api_key"`
-	PrivateNetwork bool      `json:"private_network"`
-	HealthPath     string    `json:"health_path"`
+	PublicOrganization string    `json:"public_organization,omitempty"`
+	PrivacyURL         string    `json:"privacy_url,omitempty"`
+	Name               string    `json:"name,omitempty"`
+	Provider           string    `json:"provider,omitempty"`
+	Groups             []string  `json:"groups"`
+	Preset             string    `json:"preset,omitempty"`
+	URL                string    `json:"url"`
+	APIKey             SecretRef `json:"api_key"`
+	PrivateNetwork     bool      `json:"private_network"`
+	HealthPath         string    `json:"health_path"`
 }
 
 var backendID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -57,6 +59,12 @@ func (r *Routing) backendProblems() []string {
 		}
 		if backend.Name != "" && !plainText(backend.Name, 128) {
 			problems = append(problems, "backends."+id+": choose a name up to 128 bytes")
+		}
+		if !config.ValidPublicOrganization(backend.PublicOrganization) {
+			problems = append(problems, "backends."+id+": public organization must be at most 128 bytes of text without control characters")
+		}
+		if !config.ValidPrivacyURL(backend.PrivacyURL) {
+			problems = append(problems, "backends."+id+": privacy URL must be an absolute HTTP(S) URL without credentials, or empty")
 		}
 		if backend.Provider != "" && !plainText(backend.Provider, 64) {
 			problems = append(problems, "backends."+id+": invalid detected provider")

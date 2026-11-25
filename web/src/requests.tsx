@@ -35,7 +35,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { api } from '@/lib/api'
+import { api, type Me } from '@/lib/api'
 import {
   date,
   label,
@@ -60,6 +60,13 @@ type Preferences = {
   retention_days: number
   updated_at?: string | null
   available: boolean
+  storage?: {
+    traces: number
+    bytes: number
+    max_traces: number
+    max_bytes: number
+    next_expiry: string | null
+  }
 }
 type Filter = 'all' | 'stream' | 'errors' | 'traces' | 'tools' | 'truncated'
 const ranges = {
@@ -129,7 +136,9 @@ export function RequestsPage() {
   const prefs = useQuery({
     queryKey: ['trace-preferences'],
     queryFn: () => api<Preferences>('trace-preferences'),
+    refetchInterval: liveOn ? 30_000 : false,
   })
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('me') })
   const search = params.get('q') ?? ''
   const filter = (params.get('filter') ?? 'all') as Filter
   const range = (params.get('range') ?? 'any') as keyof typeof ranges
@@ -150,6 +159,7 @@ export function RequestsPage() {
       setConfirmClear(false)
       client.removeQueries({ queryKey: ['request-trace'] })
       void client.invalidateQueries({ queryKey: ['requests'] })
+      void client.invalidateQueries({ queryKey: ['trace-preferences'] })
     },
   })
   const all = useMemo(() => query.data?.requests ?? [], [query.data])
@@ -246,8 +256,11 @@ export function RequestsPage() {
           />
           <Button
             variant="outline"
-            onClick={() => void query.refetch()}
-            disabled={query.isFetching}
+            onClick={() => {
+              void query.refetch()
+              void prefs.refetch()
+            }}
+            disabled={query.isFetching || prefs.isFetching}
           >
             <RefreshCw size={15} />
             Refresh
@@ -255,7 +268,13 @@ export function RequestsPage() {
         </div>
       </div>
       <ErrorNotice error={query.error ?? prefs.error} />
-      {prefs.data && <TraceSettings preferences={prefs.data} />}
+      {prefs.data && (
+        <TraceSettings
+          preferences={prefs.data}
+          account={me.data?.user.username}
+          manageStorage={() => setConfirmClear(true)}
+        />
+      )}
       <div
         role="group"
         className="trace-metrics"
@@ -811,7 +830,15 @@ function RequestRow({
   )
 }
 
-function TraceSettings({ preferences }: { preferences: Preferences }) {
+function TraceSettings({
+  preferences,
+  account,
+  manageStorage,
+}: {
+  preferences: Preferences
+  account?: string
+  manageStorage: () => void
+}) {
   const client = useQueryClient()
   const controls = useRef<HTMLFormElement>(null)
   const restoreFocus = useRef(false)
@@ -845,6 +872,14 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
     Number(days) !== preferences.retention_days
   const valid =
     Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 30
+  const storage = preferences.storage
+  const full =
+    !!storage &&
+    (storage.traces >= storage.max_traces || storage.bytes >= storage.max_bytes)
+  const nearFull =
+    !!storage &&
+    (storage.traces >= storage.max_traces * 0.9 ||
+      storage.bytes >= storage.max_bytes * 0.9)
   function submit(e: FormEvent) {
     e.preventDefault()
     if (dirty && valid) {
@@ -871,6 +906,16 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
             Requires your opt-in · 7-day default retention · Images and file
             payloads omitted
           </p>
+          <p>
+            {account ? (
+              <>
+                Logging for <strong>{account}</strong>.{' '}
+              </>
+            ) : null}
+            Only new requests attributed to this account can be captured.
+            Earlier requests cannot be backfilled. Use this account’s API key in
+            your client; a shared key may record requests under another account.
+          </p>
         </div>
       </div>
       <form
@@ -889,9 +934,13 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
           <span>
             {!preferences.available
               ? 'Disabled by site policy'
-              : enabled
-                ? 'Capture enabled'
-                : 'Capture disabled'}
+              : enabled !== preferences.enabled
+                ? enabled
+                  ? 'Enable capture (not saved)'
+                  : 'Disable capture (not saved)'
+                : enabled
+                  ? 'Capture enabled'
+                  : 'Capture disabled'}
           </span>
         </label>
         <label className="trace-days">
@@ -916,8 +965,48 @@ function TraceSettings({ preferences }: { preferences: Preferences }) {
         aria-label="Logging settings result"
         className="trace-footnote"
       >
-        {saved}
+        {dirty ? 'Unsaved changes. Select Save settings to apply them.' : saved}
       </p>
+      {storage && (
+        <div
+          className={`trace-storage ${nearFull ? 'trace-storage-warning' : ''}`}
+          role="status"
+          aria-label="Trace storage status"
+        >
+          <p>
+            <strong>Stored details:</strong> {n(storage.traces)} /{' '}
+            {n(storage.max_traces)} traces ·{' '}
+            {(storage.bytes / 2 ** 20).toFixed(1)} /{' '}
+            {(storage.max_bytes / 2 ** 20).toFixed(0)} MiB
+          </p>
+          {nearFull && (
+            <>
+              <p>
+                <strong>
+                  {full
+                    ? 'Trace storage limit reached.'
+                    : 'Trace storage is almost full.'}
+                </strong>{' '}
+                {full
+                  ? 'New request details are skipped until space is available.'
+                  : 'New request details may be skipped when they do not fit.'}{' '}
+                Delete saved traces or shorten retention to free space. Request
+                metadata and token totals are still recorded.
+              </p>
+              {storage.next_expiry && (
+                <p>
+                  Next scheduled expiry: {date(storage.next_expiry)}. Expired
+                  traces are removed automatically.
+                </p>
+              )}
+              <Button variant="outline" size="sm" onClick={manageStorage}>
+                <Trash2 size={14} />
+                Free trace storage…
+              </Button>
+            </>
+          )}
+        </div>
+      )}
       <p className="trace-footnote">
         Choose 1–30 days. Disabling stops new captures; existing traces expire
         on schedule. Shorter retention also applies to stored traces.

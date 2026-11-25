@@ -4,8 +4,18 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
+
+	"github.com/arm2arm/open-llm-router/internal/jsonobject"
+)
+
+var (
+	errResponsesControls  = errors.New("responses control fields must be unique and spelled in lower case")
+	errResponsesItems     = errors.New("responses input items must be JSON objects")
+	errResponsesBooleans  = errors.New("responses store and background must be booleans")
+	errResponsesState     = errors.New("OLR supports stateless Responses: use store:false and background:false")
+	errResponsesHistory   = errors.New("OLR supports stateless Responses: send the full input history instead of previous_response_id or conversation")
+	errResponsesReference = errors.New("OLR supports stateless Responses: include complete input items instead of stored item references")
 )
 
 // Stateless Responses is the mode Open WebUI uses by default. Backend storage
@@ -14,39 +24,47 @@ import (
 // by the router, do not let callers read someone else's provider-side state or
 // start background work outside the request's quota/concurrency lease.
 func statelessResponses(body []byte) ([]byte, bool, error) {
-	fields, err := responseFields(body, []string{"store", "background", "previous_response_id", "conversation", "input"})
+	object, err := jsonobject.Parse(body)
+	if err != nil {
+		return nil, false, errResponsesItems
+	}
+	fields, err := responseFields(object, "store", "background", "previous_response_id", "conversation", "input")
 	if err != nil {
 		return nil, false, err
 	}
 	for _, key := range []string{"store", "background"} {
 		if raw := fields[key]; raw != nil {
 			var value bool
-			if json.Unmarshal(raw, &value) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-				return nil, false, errors.New("responses store and background must be booleans")
+			if json.Unmarshal(raw, &value) != nil || bytes.Equal(raw, []byte("null")) {
+				return nil, false, errResponsesBooleans
 			}
 			if value {
-				return nil, false, errors.New("OLR supports stateless Responses: use store:false and background:false")
+				return nil, false, errResponsesState
 			}
 		}
 	}
 	for _, key := range []string{"previous_response_id", "conversation"} {
-		if raw := bytes.TrimSpace(fields[key]); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) && !bytes.Equal(raw, []byte(`""`)) {
-			return nil, false, errors.New("OLR supports stateless Responses: send the full input history instead of previous_response_id or conversation")
+		if raw := fields[key]; len(raw) > 0 && !bytes.Equal(raw, []byte("null")) && !bytes.Equal(raw, []byte(`""`)) {
+			return nil, false, errResponsesHistory
 		}
 	}
-	var items []json.RawMessage
-	if json.Unmarshal(fields["input"], &items) == nil {
-		for _, raw := range items {
-			item, err := responseFields(raw, []string{"type", "id", "content", "role"})
-			if err != nil {
+	if input, present, _ := object.Unique("input"); present {
+		for item := range input.Elements() {
+			entry, ok := item.Object()
+			if !ok {
+				return nil, false, errResponsesItems
+			}
+			if _, err := responseFields(entry, "type", "id", "content", "role"); err != nil {
 				return nil, false, err
 			}
+			// Lower-casing also maps keys that case folding keeps apart,
+			// such as "İd": treat those as present too.
 			var kind string
 			hasID, hasContent := false, false
-			for key, raw := range item {
-				switch strings.ToLower(key) {
+			for member := range entry.Members() {
+				switch strings.ToLower(member.Name()) {
 				case "type":
-					_ = json.Unmarshal(raw, &kind)
+					_ = json.Unmarshal(member.Value(), &kind)
 				case "id":
 					hasID = true
 				case "content":
@@ -54,52 +72,30 @@ func statelessResponses(body []byte) ([]byte, bool, error) {
 				}
 			}
 			if kind == "item_reference" || kind == "" && hasID && !hasContent {
-				return nil, false, errors.New("OLR supports stateless Responses: include complete input items instead of stored item references")
+				return nil, false, errResponsesReference
 			}
 		}
 	}
 	if fields["store"] != nil {
 		return body, false, nil
 	}
-	fields["store"] = json.RawMessage("false")
-	out, err := json.Marshal(fields)
-	return out, true, err
+	return object.With(jsonobject.Field{Name: "store", Value: []byte("false")}), true, nil
 }
 
-// Reject case variants and duplicate state-control keys before JSON maps or a
-// backend decoder can interpret them differently. Unknown fields stay opaque.
-func responseFields(body []byte, protected []string) (map[string]json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-		return nil, errors.New("responses input items must be JSON objects")
-	}
-	fields := map[string]json.RawMessage{}
-	seen := map[string]bool{}
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return nil, err
-		}
-		key, _ := token.(string)
+// responseFields returns the values of the protected state-control keys. It
+// refuses their case variants and duplicates before a backend decoder can
+// interpret them differently. Unknown fields stay opaque.
+func responseFields(object jsonobject.Object, protected ...string) (map[string][]byte, error) {
+	fields := make(map[string][]byte, len(protected))
+	for member := range object.Members() {
 		for _, name := range protected {
-			if strings.EqualFold(key, name) {
-				if key != name || seen[name] {
-					return nil, errors.New("responses control fields must be unique and spelled in lower case")
+			if member.Folds(name) {
+				if _, seen := fields[name]; seen || !member.Is(name) {
+					return nil, errResponsesControls
 				}
-				seen[name] = true
+				fields[name] = member.Value()
 			}
 		}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
-		}
-		fields[key] = value
-	}
-	if _, err := decoder.Token(); err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return nil, errors.New("invalid Responses object")
 	}
 	return fields, nil
 }

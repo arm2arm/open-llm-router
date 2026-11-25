@@ -34,6 +34,7 @@ func (h *Handler) admin(next func(http.ResponseWriter, *http.Request, user)) htt
 }
 
 type adminUser struct {
+	auth.Profile
 	ID                 string            `json:"id"`
 	Issuer             string            `json:"issuer"`
 	Username           string            `json:"username"`
@@ -56,10 +57,10 @@ func (h *Handler) calendar() (day, month time.Time) {
 	return day, time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 }
 
-// adminUsers lists users (optionally matching part of a username or email)
+// adminUsers lists users (optionally matching username, name, email or institution)
 // with key counts, this day's and month's tokens and overrides.
 // AdminUsersQuery is shared with the seeded query-plan regression.
-const AdminUsersQuery = `SELECT u.id, u.issuer, u.username, u.email, u.groups, u.enabled, u.synced_at,u.protected_admin,
+const AdminUsersQuery = `SELECT u.id, u.issuer, u.username, u.email, u.groups, u.enabled, u.synced_at,u.protected_admin,u.full_name,u.given_name,u.family_name,u.institution,
 		(SELECT count(*) FROM api_keys k WHERE k.user_id = u.id AND NOT k.revoked AND (k.expires IS NULL OR k.expires > clock_timestamp())),
 		COALESCE((SELECT sum(d.input_tokens + d.output_tokens) FROM usage_daily d WHERE d.user_id = u.id AND d.day = $2::date), 0)::bigint,
 		COALESCE((SELECT sum(d.input_tokens + d.output_tokens) FROM usage_daily d WHERE d.user_id = u.id AND d.day >= $3::date), 0)::bigint,
@@ -67,7 +68,7 @@ const AdminUsersQuery = `SELECT u.id, u.issuer, u.username, u.email, u.groups, u
 		EXISTS(SELECT 1 FROM local_credentials c WHERE c.user_id=u.id),
 		COALESCE((SELECT must_change_password FROM local_credentials c WHERE c.user_id=u.id),false)
 		FROM users u
-		WHERE $1 = '' OR strpos(lower(u.username), lower($1)) > 0 OR strpos(lower(u.email), lower($1)) > 0
+		WHERE $1 = '' OR strpos(lower(u.username), lower($1)) > 0 OR strpos(lower(u.email), lower($1)) > 0 OR strpos(lower(u.full_name), lower($1)) > 0 OR strpos(lower(u.institution), lower($1)) > 0
 		ORDER BY u.username, u.issuer, u.id LIMIT 501`
 
 func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
@@ -82,7 +83,7 @@ func (h *Handler) adminUsers(w http.ResponseWriter, r *http.Request, _ user) {
 	users := make([]adminUser, 0)
 	for rows.Next() {
 		var u adminUser
-		if err := rows.Scan(&u.ID, &u.Issuer, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin,
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin, &u.FullName, &u.GivenName, &u.FamilyName, &u.Institution,
 			&u.ActiveKeys, &u.TokensToday, &u.TokensMonth, &u.Overrides, &u.HasLocalPassword, &u.MustChangePassword); err != nil {
 			unavailable(w)
 			return
@@ -117,11 +118,11 @@ func (h *Handler) adminUser(w http.ResponseWriter, r *http.Request, _ user) {
 	var enabled bool
 	var issuer string
 	var hasPassword bool
-	err := h.pool.QueryRow(r.Context(), `SELECT id, username, email, groups, enabled,protected_admin,
+	err := h.pool.QueryRow(r.Context(), `SELECT id, username, email, groups, enabled,protected_admin,full_name,given_name,family_name,institution,
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = users.id),issuer,
 		EXISTS(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id),
 		COALESCE((SELECT must_change_password FROM local_credentials c WHERE c.user_id=users.id),false)
-		FROM users WHERE id = $1`, id).Scan(&target.ID, &target.Username, &target.Email, &target.Groups, &enabled, &target.ProtectedAdmin, &target.Overrides, &issuer, &hasPassword, &target.PasswordChangeRequired)
+		FROM users WHERE id = $1`, id).Scan(&target.ID, &target.Username, &target.Email, &target.Groups, &enabled, &target.ProtectedAdmin, &target.FullName, &target.GivenName, &target.FamilyName, &target.Institution, &target.Overrides, &issuer, &hasPassword, &target.PasswordChangeRequired)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "not_found_error", "user not found")
@@ -262,22 +263,28 @@ type groupTotals struct {
 	TokensToday int64  `json:"tokens_today"`
 	TokensMonth int64  `json:"tokens_this_month"`
 	Admin       bool   `json:"admin"`
+	Configured  bool   `json:"configured"`
 }
 
-// adminGroups totals usage by configured group. A user in several groups
-// counts in each of them.
+// adminGroups includes received memberships even before an operator creates a
+// policy for them. Discovery does not create a policy or grant model access.
+// A user in several groups counts in each of them.
 func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 	day, month := h.calendar()
-	names := slices.Sorted(maps.Keys(h.routingConfig().Groups))
-	rows, err := h.pool.Query(r.Context(), `SELECT g.name,
+	cfg := h.routingConfig()
+	names := slices.Sorted(maps.Keys(cfg.Groups))
+	// Match Go's string ordering regardless of the database locale.
+	rows, err := h.pool.Query(r.Context(), `WITH group_names AS (
+		SELECT unnest($1::text[]) AS name UNION SELECT unnest(groups) FROM users WHERE $4
+		) SELECT g.name,
 		(SELECT count(*) FROM users u WHERE g.name = ANY(u.groups) AND u.enabled),
 		COALESCE(sum(d.requests) FILTER (WHERE d.day = $2::date), 0)::bigint,
 		COALESCE(sum(d.input_tokens + d.output_tokens) FILTER (WHERE d.day = $2::date), 0)::bigint,
 		COALESCE(sum(d.input_tokens + d.output_tokens), 0)::bigint
-		FROM unnest($1::text[]) AS g(name)
+		FROM group_names g
 		LEFT JOIN users u ON g.name = ANY(u.groups)
 		LEFT JOIN usage_daily d ON d.user_id = u.id AND d.day >= $3::date
-		GROUP BY g.name ORDER BY g.name`, names, day.Format("2006-01-02"), month.Format("2006-01-02"))
+		GROUP BY g.name ORDER BY g.name COLLATE "C"`, names, day.Format("2006-01-02"), month.Format("2006-01-02"), agentCanReadUsers(r))
 	if err != nil {
 		unavailable(w)
 		return
@@ -290,14 +297,15 @@ func (h *Handler) adminGroups(w http.ResponseWriter, r *http.Request, _ user) {
 			unavailable(w)
 			return
 		}
-		g.Admin = h.routingConfig().Groups[g.Group].Admin
+		policy, configured := cfg.Groups[g.Group]
+		g.Admin, g.Configured = policy.Admin, configured
 		groups = append(groups, g)
 	}
 	if rows.Err() != nil {
 		unavailable(w)
 		return
 	}
-	respond(w, 200, map[string]any{"groups": groups})
+	respond(w, 200, map[string]any{"groups": groups, "sync_enabled": h.groupSyncEnabled()})
 }
 
 type modelReplicas struct {

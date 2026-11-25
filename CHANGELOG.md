@@ -5,6 +5,41 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- Admin-added backends can no longer reach blocked destinations through IPv6
+  forms that a translator delivers to IPv4: NAT64 (`64:ff9b::/96`) and
+  IPv4-compatible addresses get the verdict of their embedded IPv4 address,
+  local-use NAT64 needs an explicit `OLR_BACKEND_ALLOWED_CIDRS` grant, and
+  IPv6 zone identifiers are refused. A zone previously let a private-network
+  origin evade the AWS IPv6 metadata block. Grant translated private
+  backends by their IPv4 network. Identity-provider checks apply the same
+  rules to metadata addresses and now also refuse Alibaba's `100.100.100.200`.
+- Queued inference requests cost far less CPU: a release no longer makes every
+  caller queued for any model rescan the pool.
+- Forwarding large requests is cheaper: routing fields are read, and the
+  model, priority, `stream_options` and `store` fields rewritten, without
+  decoding and re-encoding the body. A 0.8 MB chat request takes 2.3x less
+  CPU and a tenth of the memory; a body of many small fields no longer
+  allocates per field. Other members are forwarded byte for byte (no key
+  re-sorting or HTML escaping). When a model sets `priority`, the router also
+  removes case variants such as `"Priority"`, which some decoders apply.
+- The portal loads faster: its content-hashed JavaScript and CSS bundles are
+  cached by the browser and sent gzip-compressed (about 705 KB down to 200 KB),
+  instead of being transferred again, uncompressed, on every page load.
+
+- The API-key creation dialog explains Interactive and Batch use, their separate
+  concurrency limits and shared quotas, and labels Interactive as the default
+  for most uses.
+- Backend editors can publish an organization name and recipient privacy URL.
+  Connect explains AI interaction, retries and backend processing, shows per-model
+  recipient privacy links, and identifies missing notices. Authenticated model
+  catalogues add `recipient_details` and `recipients_complete`; existing portal
+  recipient labels and privacy configuration remain supported.
+- Sign-in and Connect can link the operator’s privacy notice. Connect shows the
+  possible recipients of a request for each permitted model and alias, including
+  unlabelled destinations. Both portal settings are optional.
+- OpenAI streaming preserves supplemental metadata on final usage events.
+  Ordinary usage-only events can still be suppressed when the client omits usage.
+
 - Helm upgrades preserve an existing settings encryption key when values omit it
   or supply an empty entry, and reject accidental replacement with another key.
   Ordinary removed backend tokens are still removed from the managed Secret.

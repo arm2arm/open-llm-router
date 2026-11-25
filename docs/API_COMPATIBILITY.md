@@ -65,6 +65,38 @@ credentials require user ownership checks and replica affinity; background jobs
 also require asynchronous usage and concurrency reconciliation. Those lifecycles
 must be implemented together before exposing their endpoints.
 
+## Response transformations and provenance
+
+By default supported JSON response bodies and retained SSE events preserve
+upstream bytes, including supplemental provenance fields. The exception is an
+ordinary OpenAI Chat Completions/legacy Completions usage-only event requested
+by OLR: with empty `choices` and valid counts, it can be suppressed if the caller
+did not request usage. Only recognized envelope fields (`id`, `object`, `created`,
+`model`, `system_fingerprint`, `service_tier`, `choices`, `usage`) and standard
+token counts/details qualify;
+unknown fields, nested usage extensions, duplicate keys and additional SSE
+fields/comments prevent suppression (the default `event: message` is allowed). An event with supplemental information is
+forwarded whole, including its usage, even when the caller set `include_usage:false`.
+Responses and Anthropic events do not use this suppression.
+
+This is a body/event preservation guarantee, not a byte-for-byte HTTP exchange.
+Hop-by-hop headers and `Set-Cookie` are removed; request IDs, cache/buffering and
+CORS headers are controlled by OLR, and framing can change. Explicit
+`X-OLR-Usage-Timing:true` augments usage objects and removes affected integrity/length
+headers. Interrupted streams can be truncated or aborted. Requests may be rewritten
+for aliases, upstream model names, priority, Responses state defaults and usage
+collection. Personal traces omit/redact content and metadata and have size limits.
+Clients, reverse proxies and exports can make further transformations.
+
+A model name, site notice or header alone cannot establish that an integrated
+AI service meets Article 50(2). That provision concerns machine-readable marking
+and detectability of generated/manipulated outputs and the effectiveness,
+interoperability, robustness and reliability of the technical solution. OLR's
+transport tests do not establish those properties. Assess the deployed upstream
+mechanism and the complete client/export path using the
+[end-to-end checks](CLIENTS.md#upstream-provenance-checks), with the applicable
+scope and exceptions in [Article 50 of the AI Act](https://eur-lex.europa.eu/eli/reg/2024/1689).
+
 ## Verification and next gaps
 
 `make sdk` runs pinned official OpenAI and Anthropic SDKs against OLR and both

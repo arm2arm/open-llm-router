@@ -431,6 +431,21 @@
   margin: 16px 0 0;
   line-height: 1.6;
 }
+.trace-storage {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.trace-storage p {
+  margin: 0 0 6px;
+}
+.trace-storage-warning {
+  border-color: var(--primary);
+  background: var(--muted);
+}
 .trace-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1570,6 +1585,8 @@ progress::-moz-progress-bar {
 }
 @media (max-width: 767px) {
   .user-detail {
+    position: sticky;
+    left: 0;
     width: calc(100vw - 3rem);
     max-width: 100%;
   }

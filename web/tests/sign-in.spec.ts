@@ -20,6 +20,7 @@ for (const theme of ['light', 'dark'] as const) {
       route.fulfill({
         json: {
           default: 'oidc',
+          privacy_notice_url: 'https://example.org/privacy',
           local: { available: true },
           oidc: {
             configured: true,
@@ -38,6 +39,9 @@ for (const theme of ['light', 'dark'] as const) {
         'Use your institutional account to access Open LLM Router.',
       ),
     ).toBeVisible()
+    await expect(
+      page.getByRole('link', { name: 'Site privacy notice' }),
+    ).toHaveAttribute('href', 'https://example.org/privacy')
     await expect(
       page.getByText(/Your institution may keep you signed in in this browser/),
     ).toBeVisible()
@@ -101,6 +105,9 @@ test('direct local recovery and local-only sites show credentials immediately', 
   )
   await page.goto('/portal/sign-in')
   await expect(page.getByLabel('Local username', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Site privacy notice' }),
+  ).toHaveCount(0)
   await expect(page.locator('summary')).toHaveCount(0)
   await page.route('**/portal/api/auth', (route) =>
     route.fulfill({

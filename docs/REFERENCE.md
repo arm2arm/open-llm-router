@@ -208,7 +208,9 @@ login refuses an HTTP public origin with secure cookies. Local HTTP development 
 explicitly disable secure cookies. Local session APIs work without Keycloak; browser
 forms are tracked in #74. See [the admin guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak).
 `OIDC_GROUPS_CLAIM` and `OIDC_USERNAME_CLAIM`
-override the default `groups` and `preferred_username` claims. All five OIDC settings can
+override the default `groups` and `preferred_username` claims. `OIDC_INSTITUTION_CLAIM`
+selects an optional institution display claim; empty uses common institution claims
+([mapping guide](ADMIN_GUIDE.md#show-institutional-names-and-affiliation)). These OIDC settings can
 override the YAML or enable OIDC with no YAML section. Use the public issuer directly when
 reachable, or configure an internal backchannel without changing the expected issuer.
 No provider-specific endpoints are hardcoded.
@@ -241,11 +243,14 @@ For streaming calls, derive output tokens/second as
 this rate is not meaningful for non-stream responses that arrive all at once.
 
 OpenAI Chat Completions and legacy Completions streams request `stream_options.include_usage: true`. If the caller omitted it or
-set it to false, the router removes only the extra event with empty `choices` and numeric
-usage; all other events keep their original bytes. If the caller requested usage, that
+set it to false, the router removes only an ordinary extra event with empty `choices`, numeric
+usage and recognized envelope/accounting fields. Supplemental fields (including nested
+usage extensions), duplicate keys and extra SSE fields/comments keep the whole event,
+including its usage, unchanged. All retained events keep their original bytes. If the caller requested usage, that
 event is delivered unchanged unless usage timing is explicitly enabled below. Duplicate or case-variant `stream_options` or nested
 `include_usage` keys return 400 before forwarding; a backend cannot interpret another
 spelling as an override. Unknown request fields and stream options remain intact.
+See [provenance preservation and transformation limits](API_COMPATIBILITY.md#response-transformations-and-provenance).
 
 `X-OLR-Usage-Timing: true` opts Chat Completions and Responses into two additional
 numeric usage fields: `olr_observed_output_tokens_per_second` and

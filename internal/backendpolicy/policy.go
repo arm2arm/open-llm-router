@@ -146,8 +146,39 @@ func (p *Policy) Networks() []string {
 	return networks
 }
 
-func (p *Policy) allowed(ip netip.Addr) bool {
+var (
+	metadataV4 = netip.MustParseAddr("100.100.100.200")
+	metadataV6 = netip.MustParseAddr("fd00:ec2::254")
+	shared     = netip.MustParsePrefix("100.64.0.0/10")
+	// A translator delivers NAT64 (RFC 6052) and deprecated IPv4-compatible
+	// addresses to the IPv4 address in their last 32 bits.
+	nat64          = netip.MustParsePrefix("64:ff9b::/96")
+	ipv4Compatible = netip.MustParsePrefix("::/96")
+	// Local-use NAT64 (RFC 8215) embeds IPv4 where the site's translator
+	// chooses; it needs an operator grant like a private network.
+	localNAT64 = netip.MustParsePrefix("64:ff9b:1::/48")
+)
+
+// Reached returns the address that finally receives traffic sent to ip, so a
+// translated form of a private or metadata IPv4 address gets its verdict:
+// the IPv4 address of IPv4-mapped, NAT64 and IPv4-compatible forms. The
+// unspecified and loopback addresses are not IPv4-compatible (RFC 4291).
+func Reached(ip netip.Addr) netip.Addr {
 	ip = ip.Unmap()
+	if nat64.Contains(ip) || ipv4Compatible.Contains(ip) && ip != netip.IPv6Unspecified() && ip != netip.IPv6Loopback() {
+		b := ip.As16()
+		return netip.AddrFrom4([4]byte(b[12:]))
+	}
+	return ip
+}
+
+func (p *Policy) allowed(ip netip.Addr) bool {
+	// A zone scopes only link-local addresses, which are never permitted. On
+	// any other address it would defeat the exact comparisons below.
+	if ip.Zone() != "" {
+		return false
+	}
+	ip = Reached(ip)
 	if ip.Is4() {
 		v4 := ip.As4()
 		// Unspecified/reserved and protocol-assignment networks may expose
@@ -156,15 +187,14 @@ func (p *Policy) allowed(ip netip.Addr) bool {
 			return false
 		}
 	}
-	if ip == netip.MustParseAddr("100.100.100.200") || ip == netip.MustParseAddr("fd00:ec2::254") {
+	if ip == metadataV4 || ip == metadataV6 {
 		return false
 	}
 	// These remain forbidden even when an operator permits a broad CIDR.
 	if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return false
 	}
-	shared := netip.MustParsePrefix("100.64.0.0/10").Contains(ip)
-	if !ip.IsPrivate() && !shared {
+	if !ip.IsPrivate() && !shared.Contains(ip) && !localNAT64.Contains(ip) {
 		return true
 	}
 	for _, network := range p.networks {
@@ -184,6 +214,11 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 	if p.trusted[destination] {
 		return []string{destination}, nil
 	}
+	// Zones scope link-local addresses, which are never permitted. Resolvers
+	// keep or drop an unknown zone depending on the host's interfaces.
+	if strings.Contains(host, "%") {
+		return nil, errors.New("backend destination is not permitted; IPv6 zone identifiers are not supported")
+	}
 	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	if err != nil || len(ips) == 0 {
 		return nil, ErrUnresolved
@@ -196,10 +231,11 @@ func (p *Policy) addresses(ctx context.Context, destination string) ([]string, e
 		// addresses. The admin's HTTP opt-in is scoped to this origin; control
 		// destinations remain forbidden regardless of the address class.
 		permitted := p.allowed(ip)
-		if cluster {
-			ip = ip.Unmap()
-			permitted = permitted || ip.IsPrivate() && ip.IsGlobalUnicast() && ip != netip.MustParseAddr("fd00:ec2::254")
+		if cluster && ip.Zone() == "" {
+			target := Reached(ip)
+			permitted = permitted || target.IsPrivate() && target.IsGlobalUnicast() && target != metadataV6
 		}
+		ip = ip.Unmap()
 		if !permitted {
 			if cluster {
 				return nil, errors.New("internal backend destination is not permitted; loopback, link-local and metadata addresses are blocked")
