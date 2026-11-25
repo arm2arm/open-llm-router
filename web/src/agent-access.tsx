@@ -49,7 +49,10 @@ const sensitive = [
   'authentication:write',
   'users:credentials',
   'admin_keys:delegate',
+  'user_keys:issue',
 ]
+const userKeyWarning =
+  'This key can create inference keys for any eligible SSO user, including users who have never signed in. Give it only to an application that verifies who its users are.'
 const permissionHelp: Record<string, string> = {
   'authentication:write': 'Change how administrators and users sign in.',
   'users:credentials': 'Reset user passwords and revoke inference keys.',
@@ -57,6 +60,8 @@ const permissionHelp: Record<string, string> = {
     'Issue child keys and grant administrative roles through users and routing policies.',
   'admin_keys:write':
     'Revoke or narrow administration keys; issuance also needs delegation permission.',
+  'user_keys:issue':
+    'Issue inference keys for SSO users on their behalf, and revoke or inspect the keys this key issued. Grants no access to the user list.',
 }
 export function AgentAccessPage() {
   const cache = useQueryClient()
@@ -471,6 +476,11 @@ export function AgentAccessPage() {
                       </label>
                     ))}
                 </fieldset>
+                {permissions.includes('user_keys:issue') && (
+                  <p role="status" className="notice">
+                    {userKeyWarning}
+                  </p>
+                )}
               </>
             )}
             {step === 1 && (
@@ -533,6 +543,11 @@ export function AgentAccessPage() {
                 </p>
                 <p>Permissions: {permissions.join(', ')}</p>
                 <p>Approved networks: {entries.join(', ')}</p>
+                {permissions.includes('user_keys:issue') && (
+                  <p role="status" className="notice">
+                    {userKeyWarning}
+                  </p>
+                )}
                 <p className="text-sm">
                   Issuance requires a sign-in within the last 15 minutes.
                   {permissions.some((p) => sensitive.includes(p)) &&

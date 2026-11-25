@@ -43,6 +43,7 @@ func (h *Handler) operations() []agentOperation {
 	document := objectSchema(map[string]any{"version": field("integer"), "document": field("object")}, "version", "document")
 	// Rich configuration documents remain validated by the existing configuration services.
 	endpoint := objectSchema(map[string]any{"model": field("string"), "revision": field("integer"), "configuration": field("object")}, "model", "revision", "configuration")
+	userKeySchema := objectSchema(map[string]any{"issuer": field("string"), "subject": field("string"), "label": field("string"), "expires_in_days": field("integer"), "class": map[string]any{"type": "string", "enum": []string{"interactive", "batch"}}}, "issuer", "subject", "label")
 	keySchema := objectSchema(map[string]any{"label": field("string"), "permissions": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": adminaccess.Permissions}}, "allowed_networks": map[string]any{"type": "array", "items": field("string")}, "expires_in_days": field("integer")}, "label", "permissions", "allowed_networks")
 	op := func(name, permission, description string, write bool, params []string, schema map[string]any, fn func(http.ResponseWriter, *http.Request, user)) agentOperation {
 		return agentOperation{Name: name, Permission: permission, Description: description, Write: write, Params: params, BodySchema: schema, handler: fn}
@@ -66,6 +67,7 @@ func (h *Handler) operations() []agentOperation {
 			}
 			respond(w, 200, map[string]any{"keys": keys})
 		}),
+		op("get_issued_key_summary", "user_keys:issue", "Read expiry, revocation, last use, models and today's usage of an inference key this administration key issued", false, []string{"key_id"}, empty, h.issuedKeySummary),
 		op("create_user", "users:write", "Create a local user with a temporary password", true, nil, objectSchema(map[string]any{"username": field("string"), "email": field("string"), "groups": map[string]any{"type": "array", "items": field("string")}, "password": field("string")}, "username", "groups", "password"), h.createLocalUser),
 		op("set_user_groups", "users:write", "Assign local group memberships", true, []string{"id"}, objectSchema(map[string]any{"groups": map[string]any{"type": "array", "items": field("string")}}, "groups"), h.setLocalGroups),
 		op("set_user_enabled", "users:write", "Enable or disable a user", true, []string{"id"}, objectSchema(map[string]any{"enabled": field("boolean")}, "enabled"), h.setEnabled),
@@ -76,6 +78,8 @@ func (h *Handler) operations() []agentOperation {
 		}),
 		op("reset_user_password", "users:credentials", "Replace a local user's temporary password", true, []string{"id"}, objectSchema(map[string]any{"password": field("string")}, "password"), h.resetLocalPassword),
 		op("revoke_user_key", "users:credentials", "Revoke an inference key", true, []string{"id", "key"}, empty, h.revokeUserKey),
+		op("issue_user_key", "user_keys:issue", "Issue an inference key for an SSO user of the configured OIDC issuer; the key is returned once", true, nil, userKeySchema, h.issueUserKey),
+		op("revoke_issued_key", "user_keys:issue", "Revoke an inference key this administration key issued", true, []string{"key_id"}, empty, h.revokeIssuedKey),
 		op("save_endpoint", "routing:write", "Save and apply endpoint configuration", true, nil, endpoint, h.endpointSave),
 		op("restore_endpoint", "routing:write", "Restore endpoint configuration from file", true, nil, objectSchema(map[string]any{"model": field("string"), "revision": field("integer"), "target_revision": field("integer")}, "model", "revision", "target_revision"), h.endpointRestore),
 		op("test_endpoint", "routing:write", "Probe a candidate endpoint; validates destination policy", true, nil, objectSchema(map[string]any{"model": field("string"), "configuration": field("object")}, "model", "configuration"), h.endpointTest),

@@ -38,6 +38,11 @@ type remoteUser struct {
 	groups  []string
 	status  int
 	delay   time.Duration
+	// username and email are reported when set, as Keycloak's admin API does.
+	username, email string
+	// id overrides the reported user ID, as a resource other than the
+	// requested user would.
+	id string
 }
 
 // sign returns a JWT signed with the provider's key.
@@ -113,7 +118,17 @@ func (p *identityProvider) admin(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(list)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": sub, "enabled": u.enabled})
+	representation := map[string]any{"id": sub, "enabled": u.enabled}
+	if u.id != "" {
+		representation["id"] = u.id
+	}
+	if u.username != "" {
+		representation["username"] = u.username
+	}
+	if u.email != "" {
+		representation["email"], representation["emailVerified"] = u.email, true
+	}
+	_ = json.NewEncoder(w).Encode(representation)
 }
 
 func newIdentityProvider(t *testing.T) *identityProvider {

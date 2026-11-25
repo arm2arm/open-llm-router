@@ -310,6 +310,80 @@ func (s *Syncer) sync(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
+// Identity is one identity-provider user as the router would record it at
+// their first sign-in.
+type Identity struct {
+	Username      string
+	Email         string
+	EmailVerified bool
+	Enabled       bool
+	Groups        []string
+}
+
+// ErrUserNotFound means the identity provider has no user with that subject.
+var ErrUserNotFound = errors.New("user not found in the identity provider")
+
+// ErrLookupUnavailable means the identity provider could not answer.
+var ErrLookupUnavailable = errors.New("identity provider lookup unavailable")
+
+// Issuer is the OIDC issuer whose realm this service account reads.
+func (s *Syncer) Issuer() string { return s.cfg.Issuer }
+
+// Lookup reads one user through the read-only service account, so a user can
+// be recorded before their first portal sign-in. Groups use the same
+// name mapping as Sync. It neither writes nor caches anything.
+func (s *Syncer) Lookup(ctx context.Context, sub string) (Identity, error) {
+	var remote struct {
+		ID            string `json:"id"`
+		Username      string `json:"username"`
+		Email         string `json:"email"`
+		EmailVerified bool   `json:"emailVerified"`
+		Enabled       *bool  `json:"enabled"`
+	}
+	path := "/users/" + url.PathEscape(sub)
+	if err := s.get(ctx, path, &remote); errors.Is(err, errGone) {
+		return Identity{}, ErrUserNotFound
+	} else if err != nil {
+		return Identity{}, fmt.Errorf("%w: %w", ErrLookupUnavailable, err)
+	}
+	// The subject is caller-supplied: only an exact user representation for
+	// it counts, never another resource reached through path normalization.
+	if remote.ID != sub {
+		return Identity{}, ErrUserNotFound
+	}
+	if remote.Enabled == nil {
+		return Identity{}, fmt.Errorf("%w: user enabled state omitted", ErrLookupUnavailable)
+	}
+	identity := Identity{Username: remote.Username, Email: remote.Email, EmailVerified: remote.EmailVerified, Enabled: *remote.Enabled}
+	if s.cfg.UsernameClaim == "email" && remote.Email != "" {
+		identity.Username = remote.Email
+	}
+	if identity.Username == "" {
+		identity.Username = sub
+	}
+	if !identity.Enabled {
+		return identity, nil
+	}
+	var memberships []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := s.get(ctx, path+"/groups?briefRepresentation=true&max=1000", &memberships); errors.Is(err, errGone) {
+		return Identity{}, ErrUserNotFound
+	} else if err != nil || memberships == nil {
+		return Identity{}, fmt.Errorf("%w: memberships unavailable", ErrLookupUnavailable)
+	}
+	paths := make([]string, 0, len(memberships))
+	for _, m := range memberships {
+		if m.Path == "" {
+			m.Path = "/" + m.Name
+		}
+		paths = append(paths, m.Path)
+	}
+	identity.Groups = auth.GroupNames(paths, s.cfg.GroupNames)
+	return identity, nil
+}
+
 // RunOnce shares the scheduled job's locking, metrics and logs. A manual
 // request never waits behind a scheduled run or starts an overlapping scan.
 func (s *Syncer) RunOnce(ctx context.Context) (Result, error) {

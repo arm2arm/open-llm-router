@@ -36,6 +36,11 @@ const (
 	DefaultKeyLifetimeDays      = 90
 	DefaultMaxKeyLifetimeDays   = 90
 	DefaultMaxActiveKeysPerUser = 10
+	// DefaultUserKeyLabelPrefix starts the label of every inference key an
+	// integration issues through the administration API.
+	DefaultUserKeyLabelPrefix = "Integration · "
+	// MaxUserKeyLabelPrefixBytes leaves room for the caller's own label.
+	MaxUserKeyLabelPrefixBytes = 50
 )
 
 // Environment variables that carry secrets. Secrets have no key in the config
@@ -100,6 +105,18 @@ type AdminAPI struct {
 	MaxActiveKeys       int      `yaml:"max_active_keys"`
 	RequestsPerMinute   int      `yaml:"requests_per_minute"`
 	MaxConcurrent       int      `yaml:"max_concurrent"`
+	// UserKeyIssuance restricts inference keys issued for SSO users through
+	// the user_keys:issue permission.
+	UserKeyIssuance UserKeyIssuance `yaml:"user_key_issuance"`
+}
+
+// UserKeyIssuance bounds what an integration may issue. Empty AllowedGroups
+// permits any enabled user of the configured OIDC issuer; MaxLifetimeDays 0
+// keeps auth.max_key_lifetime_days as the only cap.
+type UserKeyIssuance struct {
+	AllowedGroups   []string `yaml:"allowed_groups"`
+	MaxLifetimeDays int      `yaml:"max_lifetime_days"`
+	LabelPrefix     string   `yaml:"label_prefix"`
 }
 
 type Security struct {
@@ -604,10 +621,29 @@ func (c *Config) validate() Problems {
 	if c.AdminAPI.MaxConcurrent == 0 {
 		c.AdminAPI.MaxConcurrent = 4
 	}
+	if c.AdminAPI.UserKeyIssuance.LabelPrefix == "" {
+		c.AdminAPI.UserKeyIssuance.LabelPrefix = DefaultUserKeyLabelPrefix
+	}
 	var p Problems
 	p = append(p, c.CORS.validate(c.Security.RequireTLS)...)
 	if c.AdminAPI.DefaultLifetimeDays < 1 || c.AdminAPI.MaxLifetimeDays < c.AdminAPI.DefaultLifetimeDays || c.AdminAPI.MaxLifetimeDays > 365 || c.AdminAPI.MaxActiveKeys < 1 || c.AdminAPI.RequestsPerMinute < 1 || c.AdminAPI.MaxConcurrent < 1 {
 		p = append(p, "admin_api: invalid lifetime, key limit or request limit")
+	}
+	issuance := &c.AdminAPI.UserKeyIssuance
+	if issuance.MaxLifetimeDays < 0 || issuance.MaxLifetimeDays > 36500 {
+		p = append(p, "admin_api.user_key_issuance.max_lifetime_days: must be between 1 and 36500, or omitted")
+	}
+	if prefix := issuance.LabelPrefix; len(prefix) > MaxUserKeyLabelPrefixBytes || !utf8.ValidString(prefix) || strings.ContainsFunc(prefix, unicode.IsControl) || strings.TrimSpace(prefix) == "" {
+		p = append(p, fmt.Sprintf("admin_api.user_key_issuance.label_prefix: must be printable text of at most %d bytes", MaxUserKeyLabelPrefixBytes))
+	}
+	if len(issuance.AllowedGroups) > 1000 {
+		p = append(p, "admin_api.user_key_issuance.allowed_groups: at most 1000 groups")
+	}
+	for _, group := range issuance.AllowedGroups {
+		if group == "" || len(group) > 256 || !utf8.ValidString(group) || strings.ContainsFunc(group, unicode.IsControl) {
+			p = append(p, "admin_api.user_key_issuance.allowed_groups: names must be nonempty printable text of at most 256 bytes")
+			break
+		}
 	}
 	if len(c.AdminAPI.TrustedProxyCIDRs) > 0 {
 		if networks, err := adminaccess.Networks(c.AdminAPI.TrustedProxyCIDRs); err != nil {

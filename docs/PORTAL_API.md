@@ -146,6 +146,9 @@ draft. Loading the latest settings explicitly discards local edits.
   "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}],
   "policy":{"default_lifetime_days":90,"max_lifetime_days":90}}`.
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
+  Keys an integration issued for the user through the administration API
+  (`user_keys:issue`) are listed too, under their integration label prefix, and
+  the user can revoke them like any other key.
   Policy metadata uses the same effective default and maximum as key creation. The
   portal labels the default duration and offers only lifetimes this policy allows.
 - `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7,"class":"batch"}` (label: 1–100 bytes after trimming).
@@ -741,7 +744,8 @@ admin sessions and the existing same-origin JSON protections:
   detected/peer IP, proxy status and site lifetime defaults.
 - `POST /portal/api/admin/agent-keys`: `{label, permissions, allowed_networks,
   expires_in_days}`; returns `{key, metadata}` once. Requires a recent sign-in;
-  sensitive scopes require a recent local administrator.
+  sensitive scopes (`authentication:write`, `users:credentials`,
+  `admin_keys:delegate`, `user_keys:issue`) require a recent local administrator.
   Optional `replaces_key_id` creates a replacement with equal or reduced
   permissions/networks, checked against the current owned key. It renews the
   configured lifetime without coupling the replacement to the old key's revocation.

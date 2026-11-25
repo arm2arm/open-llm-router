@@ -134,6 +134,22 @@ func (s *oidcServices) SyncGroups(ctx context.Context) (groupsync.Result, error)
 	return syncer.RunOnce(ctx)
 }
 
+// LookupIdentity reads one user through the running group-sync service
+// account. It never uses an unactivated draft or another realm's account.
+func (s *oidcServices) LookupIdentity(ctx context.Context, issuer, subject string) (groupsync.Identity, error) {
+	if !s.GroupSyncEnabled() {
+		return groupsync.Identity{}, groupsync.ErrDisabled
+	}
+	syncer := s.groupSync.Load()
+	if syncer == nil {
+		return groupsync.Identity{}, groupsync.ErrUnavailable
+	}
+	if syncer.Issuer() != issuer {
+		return groupsync.Identity{}, groupsync.ErrDisabled
+	}
+	return syncer.Lookup(ctx, subject)
+}
+
 // Close stops the services.
 func (s *oidcServices) Close() {
 	s.mu.Lock()
