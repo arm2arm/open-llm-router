@@ -37,14 +37,14 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/mock-llm ./cmd/mock-llm \
  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/olr-loadtest ./cmd/olr-loadtest
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS loadtest
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5 AS loadtest
 COPY --from=build /out/olr-loadtest /usr/local/bin/olr-loadtest
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/olr-loadtest"]
 
 # Build with `docker build --target mock-llm -t olr-mock-llm .` when only
 # the deterministic test backend is needed.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS mock-llm
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5 AS mock-llm
 COPY --from=build /out/mock-llm /usr/local/bin/mock-llm
 EXPOSE 8000
 USER nonroot:nonroot
