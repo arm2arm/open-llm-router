@@ -22,7 +22,8 @@ The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATI
   sensitive and warns about it. **Upgrade:** migration 0036 adds the issuing
   administration key to inference keys; existing keys are unchanged.
 
-- `GET /v1/models` and the portal's `/portal/api/models` report each model's
+- `GET /v1/models`, the portal's `/portal/api/models` and the `issue_user_key` and
+  `get_issued_key_summary` responses report each model's
   `context_length`, `type` (`chat` or `embedding`) and `protocols`, so agents can
   size their context and portals never pick an embedding model as a chat
   default. Aliases report their target's values. Models accept two optional

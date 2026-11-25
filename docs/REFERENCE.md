@@ -178,7 +178,8 @@ themselves up from. The fields are additive; existing fields are unchanged:
   an embedding model as its chat default.
 - `protocols` are the model's configured protocols, `openai`, `anthropic` or both.
 
-An alias reports its target's values. The portal's `/portal/api/models` returns the same
+An alias reports its target's values. The portal's `/portal/api/models` and the
+administration API's `issue_user_key` and `get_issued_key_summary` responses return the same
 fields. Health checks read a replica's catalog on its first successful check, when it recovers
 from being unhealthy, and every 10 minutes; a replica whose `health_path` is `/v1/models` is
 read from the probe itself. A failed or unreadable catalog keeps the last value; a readable
