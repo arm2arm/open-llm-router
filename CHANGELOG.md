@@ -5,6 +5,23 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- A trusted application that signs users in through the router's Keycloak realm
+  can issue each user an inference key, without sending them to the portal. The
+  new administration-key permission `user_keys:issue` (grantable alone; it does
+  not include `users:read`) adds `issue_user_key`, `revoke_issued_key` and
+  `get_issued_key_summary`. Issuance works only for the configured OIDC issuer,
+  never for local accounts or the protected administrator. A user who has never
+  signed in is recorded from Keycloak when the group-sync service account is
+  configured. Disabled users and users without model access get no key. Issued
+  keys carry a label prefix, respect `auth.max_key_lifetime_days` and
+  `auth.max_active_keys_per_user`, and appear in the user's portal key list.
+  Only the issuing administration key can revoke or summarize them through the
+  API. Each issue and revocation is in history, without the key. The optional
+  `admin_api.user_key_issuance` setting limits issuance by group and lifetime and
+  sets the label prefix. The Agent access wizard marks the permission as
+  sensitive and warns about it. **Upgrade:** migration 0036 adds the issuing
+  administration key to inference keys; existing keys are unchanged.
+
 - Admin-added backends can no longer reach blocked destinations through IPv6
   forms that a translator delivers to IPv4: NAT64 (`64:ff9b::/96`) and
   IPv4-compatible addresses get the verdict of their embedded IPv4 address,

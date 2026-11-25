@@ -64,7 +64,8 @@ encoded as 43 base62 characters after `olr-`. The SHA-256 hash and a 12-characte
 prefix are stored. Keys cannot be recovered; replace a lost key and revoke the old one.
 Listing returns metadata only. Request logs contain neither credentials nor
 hashes. Keys default to `auth.default_key_lifetime_days` (90), and every issuance path,
-including trusted forwarders and CLI `-lifetime`, enforces `auth.max_key_lifetime_days`
+including trusted forwarders, CLI `-lifetime` and administration-API issuance
+(`user_keys:issue`), enforces `auth.max_key_lifetime_days`
 (default 90; range 1–36500) and `auth.max_active_keys_per_user` (default 10; range 1–1000).
 The default lifetime cannot exceed the maximum. Active means unrevoked and unexpired;
 legacy keys without expiry also consume capacity. Concurrent issuance is serialized per user. The CLI reads this setting from

@@ -102,7 +102,8 @@ class HelmChart(unittest.TestCase):
         self.assertFalse(disabled_config["admin_api"]["enabled"])
         policy = {"enabled": True, "trusted_proxy_cidrs": ["10.0.0.0/24", "2001:db8::/64"],
                   "default_lifetime_days": 3, "max_lifetime_days": 30,
-                  "max_active_keys": 5, "requests_per_minute": 20, "max_concurrent": 2}
+                  "max_active_keys": 5, "requests_per_minute": 20, "max_concurrent": 2,
+                  "user_key_issuance": {"allowed_groups": ["staff"], "max_lifetime_days": 30, "label_prefix": "Hub · "}}
         rendered = self.render({"config": {"admin_api": policy}})
         config = yaml.safe_load(rendered["ConfigMap", NAME + "-config"]["data"]["config.yaml"])
         self.assertEqual(config["admin_api"], policy)
@@ -485,6 +486,9 @@ class HelmChart(unittest.TestCase):
                    {"config": {"admin_api": {"max_lifetime_days": 366}}},
                    {"config": {"admin_api": {"max_concurrent": -1}}},
                    {"config": {"admin_api": {"trust_all_proxies": True}}},
+                   {"config": {"admin_api": {"user_key_issuance": {"max_lifetime_days": 0}}}},
+                   {"config": {"admin_api": {"user_key_issuance": {"allowed_groups": [""]}}}},
+                   {"config": {"admin_api": {"user_key_issuance": {"issue_for_everyone": True}}}},
                    {"replicaCount": 2}, {"postgresql": {"enabled": False}},
                    {"env": {"PORTAL_BASE_URL": "https://wrong.invalid"}},
                    {"env": {"OLR_TRACE_USER_ID": True}}, {"env": {"OIDC_ISSUER": "https://wrong.invalid"}},

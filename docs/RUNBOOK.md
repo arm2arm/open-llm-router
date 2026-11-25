@@ -818,6 +818,12 @@ a safe error cause. Deadline-limited scans reserve time to apply completed reads
 and resume after the last attempted user on the next run; this cursor is local
 to the running syncer and resets on restart.
 
+The same read-only account lets an administration key with `user_keys:issue`
+record a user who has never signed in before issuing them an inference key: it
+reads that one user's username, email, groups and enabled state. Without the
+account, issuance works only for users who have signed in. See
+[Issue inference keys for SSO users](AGENT_ADMINISTRATION.md#issue-inference-keys-for-sso-users).
+
 ## Open WebUI and other trusted forwarders
 
 An application that serves many users with one key can attribute each call to its user:

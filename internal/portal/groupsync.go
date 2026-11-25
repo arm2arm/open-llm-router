@@ -40,3 +40,9 @@ func (h *Handler) syncGroups(w http.ResponseWriter, r *http.Request, _ user) {
 	// lookup failure. Include its counts rather than hiding partial progress.
 	respond(w, 200, map[string]any{"result": result, "problem": problem})
 }
+
+// IdentityDirectory reads a user from the identity provider through the
+// group-sync service account. A GroupSync may implement it.
+type IdentityDirectory interface {
+	LookupIdentity(ctx context.Context, issuer, subject string) (groupsync.Identity, error)
+}

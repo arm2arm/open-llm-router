@@ -813,3 +813,27 @@ func TestPortalDisclosureConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestUserKeyIssuanceSettings(t *testing.T) {
+	cfg, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil || cfg.AdminAPI.UserKeyIssuance.LabelPrefix != DefaultUserKeyLabelPrefix || cfg.AdminAPI.UserKeyIssuance.MaxLifetimeDays != 0 || len(cfg.AdminAPI.UserKeyIssuance.AllowedGroups) != 0 {
+		t.Fatalf("defaults: %+v %v", cfg.AdminAPI.UserKeyIssuance, err)
+	}
+	cfg, err = Parse([]byte("admin_api: {user_key_issuance: {allowed_groups: [staff], max_lifetime_days: 30, label_prefix: \"Hub · \"}}\n"+valid), lookupIn(validEnv))
+	if err != nil || cfg.AdminAPI.UserKeyIssuance.LabelPrefix != "Hub · " || cfg.AdminAPI.UserKeyIssuance.MaxLifetimeDays != 30 || cfg.AdminAPI.UserKeyIssuance.AllowedGroups[0] != "staff" {
+		t.Fatalf("configured: %+v %v", cfg.AdminAPI.UserKeyIssuance, err)
+	}
+	for _, input := range []string{
+		"admin_api: {user_key_issuance: {max_lifetime_days: -1}}",
+		"admin_api: {user_key_issuance: {max_lifetime_days: 36501}}",
+		"admin_api: {user_key_issuance: {label_prefix: \"   \"}}",
+		"admin_api: {user_key_issuance: {label_prefix: \"" + strings.Repeat("x", MaxUserKeyLabelPrefixBytes+1) + "\"}}",
+		"admin_api: {user_key_issuance: {label_prefix: \"bad\\nprefix\"}}",
+		"admin_api: {user_key_issuance: {allowed_groups: [\"\"]}}",
+		"admin_api: {user_key_issuance: {unknown: true}}",
+	} {
+		if _, err := Parse([]byte(input+"\n"+valid), lookupIn(validEnv)); err == nil {
+			t.Errorf("accepted %s", input)
+		}
+	}
+}

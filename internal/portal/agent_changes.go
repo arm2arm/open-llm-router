@@ -105,6 +105,8 @@ func (h *Handler) agentPreview(w http.ResponseWriter, r *http.Request, a agentId
 	var before any
 	readName := ""
 	switch {
+	case op.Name == "revoke_issued_key":
+		readName = "get_issued_key_summary"
 	case strings.Contains(op.Name, "user"):
 		if body.Arguments.Parameters["id"] != "" {
 			readName = "get_user"
@@ -122,6 +124,9 @@ func (h *Handler) agentPreview(w http.ResponseWriter, r *http.Request, a agentId
 		args := agentArguments{Parameters: map[string]string{}}
 		if readName == "get_user" {
 			args.Parameters["id"] = body.Arguments.Parameters["id"]
+		}
+		if readName == "get_issued_key_summary" {
+			args.Parameters["key_id"] = body.Arguments.Parameters["key_id"]
 		}
 		response := h.captureAgent(r, a, read, args)
 		if response.Code < 400 {

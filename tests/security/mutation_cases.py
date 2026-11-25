@@ -60,6 +60,27 @@ integration("active-key-cap", key_test, (store, "if count >= maxActive {", "if f
 case("key-lifetime-bounds", "./internal/adminaccess", "TestAdministrationKeyLifetimeBounds",
      (store, " || c.Days < 1 || c.Days > maxDays", ""))
 
+issuance = "internal/portal/user_keys.go"
+issuance_test = "TestUserKeyIssuanceForExistingAndKeycloakUsers"
+integration("issued-key-revoke-issuer", issuance_test,
+            ("internal/auth/store.go", "WHERE id=$1 AND issued_by_admin_key=$2 RETURNING", "WHERE id=$1 AND $2<>'' RETURNING"))
+integration("issued-key-summary-issuer", issuance_test,
+            (issuance, "WHERE k.id=$1 AND k.issued_by_admin_key=$2`", "WHERE k.id=$1 AND $2<>''`"))
+integration("issued-key-oidc-issuer-only", issuance_test,
+            (issuance, 'if issuer == "" || issuer == "local" || body.Issuer != issuer {', 'if issuer == "" {'))
+integration("issued-key-disabled-user", issuance_test,
+            (issuance, "if !t.Enabled {", "if false && !t.Enabled {"))
+integration("issued-key-no-model-access", issuance_test,
+            (issuance, "if len(userModelEntries(", "if false && len(userModelEntries("))
+integration("issued-key-keycloak-subject", issuance_test,
+            ("internal/groupsync/groupsync.go", "if remote.ID != sub {", "if false && remote.ID != sub {"))
+integration("issued-key-allowed-groups", "TestUserKeyIssuanceSiteLimits",
+            (issuance, "len(allowed) > 0 && ", "false && "))
+integration("issued-key-site-lifetime", "TestUserKeyIssuanceSiteLimits",
+            (issuance, "limit > 0 && limit < maximum {", "false && limit < maximum {"))
+integration("issued-key-permission-filtering", "TestUserKeyIssuanceDiscoveryIsPermissionFiltered",
+            ("internal/portal/agent_operations.go", "func (op agentOperation) allowed(a agentIdentity) bool {", "func (op agentOperation) allowed(a agentIdentity) bool {\n\tif op.Permission == \"user_keys:issue\" {\n\t\treturn true\n\t}"))
+
 audit_tests = {
     "key.create": "TestExpiredKeyDeletionOwnerAndHistory",
     "key.delete": "TestExpiredKeyDeletionOwnerAndHistory",
@@ -72,6 +93,8 @@ audit_tests = {
     "settings.apply": "TestAdminRoutingRevisions",
     "settings.validate": "TestAdminRoutingRevisions",
     "endpoints.activate": "TestEndpointConfigurationLifecyclePersistenceAndGuards",
+    "user_key.issue": issuance_test,
+    "user_key.revoke": issuance_test,
 }
 for action, test in audit_tests.items():
     signature = "func Record(ctx context.Context, db executor, e Event) error {"

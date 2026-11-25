@@ -34,6 +34,12 @@ cors:
 admin_api:
   enabled: false
   trusted_proxy_cidrs: []
+  # Optional limits for inference keys an integration issues for SSO users
+  # (user_keys:issue); see docs/AGENT_ADMINISTRATION.md.
+  # user_key_issuance:
+  #   allowed_groups: [staff]
+  #   max_lifetime_days: 30
+  #   label_prefix: "Integration · "
 
 # Quota calendar and upload admission (per router process).
 limits:

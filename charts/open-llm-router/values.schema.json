@@ -152,6 +152,31 @@
             "max_concurrent": {
               "type": "integer",
               "minimum": 1
+            },
+            "user_key_issuance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "allowed_groups": {
+                  "type": "array",
+                  "maxItems": 1000,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "max_lifetime_days": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 36500
+                },
+                "label_prefix": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                }
+              }
             }
           }
         }
