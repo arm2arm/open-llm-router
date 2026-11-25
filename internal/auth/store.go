@@ -20,11 +20,14 @@ type postgresStore struct{ pool *pgxpool.Pool }
 
 func (s postgresStore) lookup(ctx context.Context, hash [32]byte) (keyRecord, error) {
 	var r keyRecord
-	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.trusted_forwarder, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,u.protected_admin,
+	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.prefix, k.label, k.trusted_forwarder,
+		u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,u.protected_admin,
 		EXISTS(SELECT 1 FROM local_credentials c WHERE c.user_id=u.id AND c.must_change_password),
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = u.id)
 		FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.hash = $1`, hash[:]).
-		Scan(&r.KeyID, &r.KeyClass, &r.TrustedForwarder, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.ProtectedAdmin, &r.passwordChangeRequired, &r.Overrides)
+		Scan(&r.KeyID, &r.KeyClass, &r.KeyPrefix, &r.KeyLabel, &r.TrustedForwarder,
+			&r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked,
+			&r.enabled, &r.ProtectedAdmin, &r.passwordChangeRequired, &r.Overrides)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrInvalidKey
 	}

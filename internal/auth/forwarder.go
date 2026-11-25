@@ -153,5 +153,6 @@ func (a *Authenticator) forward(r *http.Request, p Principal) (Principal, error)
 		return p, nil
 	}
 	end.KeyID, end.KeyClass, end.ForwardedBy = p.KeyID, p.KeyClass, p.UserID
+	end.KeyPrefix, end.KeyLabel, end.KeyExpiresAt = p.KeyPrefix, p.KeyLabel, p.KeyExpiresAt
 	return end, nil
 }

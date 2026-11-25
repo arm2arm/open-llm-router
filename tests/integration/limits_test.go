@@ -60,6 +60,51 @@ func (f *usageRouter) currentUsage(t *testing.T) limits.Snapshot {
 	return s
 }
 
+func TestUsageReturnsOnlyCallingKeyMetadata(t *testing.T) {
+	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), usageOptions{})
+	admin := auth.Admin{Pool: f.pool}
+	batch, err := admin.CreateKeyOfClass(t.Context(), f.owner, "batch runner", "batch", 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := admin.ListKeys(t.Context(), f.owner)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("list keys: %d keys, err=%v", len(keys), err)
+	}
+	for _, secret := range []string{f.key, batch} {
+		var want auth.KeyInfo
+		for _, key := range keys {
+			if key.Prefix == secret[:12] {
+				want = key
+			}
+		}
+		resp := f.call(t, secret, "GET", "/v1/me/usage", "")
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("usage response: status=%d err=%v", resp.StatusCode, err)
+		}
+		if strings.Contains(string(body), f.key) || strings.Contains(string(body), batch) {
+			t.Fatal("usage endpoint exposed an API key")
+		}
+		var payload struct {
+			limits.Snapshot
+			Key map[string]string `json:"key"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		expires, err := time.Parse(time.RFC3339, payload.Key["expires"])
+		if len(payload.Key) != 5 || want.Expires == nil || err != nil || !want.Expires.Equal(expires) ||
+			payload.Key["id"] != want.ID || payload.Key["prefix"] != want.Prefix ||
+			payload.Key["label"] != want.Label || payload.Key["class"] != want.Class || payload.Timezone != "UTC" {
+			t.Fatal("usage endpoint did not return the calling key's exact metadata alongside the quota snapshot")
+		}
+	}
+}
+
 func requireLimit(t *testing.T, resp *http.Response, name string, anthropic bool) {
 	t.Helper()
 	defer resp.Body.Close()
