@@ -1,12 +1,13 @@
 // Command mock-llm runs the mock backend of package mockllm as a server, for
 // the Compose stack. It is configured through the environment:
 //
-//	MOCK_LISTEN       address to listen on (default ":8000")
-//	MOCK_MODELS       served model names, comma-separated (default "chat-model")
-//	MOCK_TOKENS       output tokens of a text answer (default 16)
-//	MOCK_TOKEN_DELAY  pause before each output token, such as "20ms" (default none)
-//	MOCK_FAIL         error, unhealthy, drop or drop-mid-stream (default none)
-//	MOCK_THINKING     true to start every Anthropic answer with a thinking block
+//	MOCK_LISTEN         address to listen on (default ":8000")
+//	MOCK_MODELS         served model names, comma-separated (default "chat-model")
+//	MOCK_TOKENS         output tokens of a text answer (default 16)
+//	MOCK_TOKEN_DELAY    pause before each output token, such as "20ms" (default none)
+//	MOCK_FAIL           error, unhealthy, drop or drop-mid-stream (default none)
+//	MOCK_THINKING       true to start every Anthropic answer with a thinking block
+//	MOCK_MAX_MODEL_LEN  context length /v1/models reports as max_model_len (default 32768)
 package main
 
 import (

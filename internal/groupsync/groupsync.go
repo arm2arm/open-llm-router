@@ -43,9 +43,19 @@ type Syncer struct {
 
 // Result counts what one run did.
 type Result struct {
-	Checked, Updated, Disabled, Failed, Remaining int
-	Skipped                                       bool
+	Checked   int  `json:"checked"`
+	Updated   int  `json:"updated"`
+	Disabled  int  `json:"disabled"`
+	Failed    int  `json:"failed"`
+	Remaining int  `json:"remaining"`
+	Skipped   bool `json:"skipped"`
 }
+
+// ErrDisabled means the running configuration has no group-sync job.
+var ErrDisabled = errors.New("group sync is not configured")
+
+// ErrUnavailable means the configured job is still discovering its provider.
+var ErrUnavailable = errors.New("group sync is not ready")
 
 // New discovers the provider and derives the admin API from the issuer,
 // which must have the Keycloak form <base>/realms/<realm>.
@@ -126,6 +136,10 @@ func (s *Syncer) get(ctx context.Context, path string, value any) error {
 func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.sync(ctx)
+}
+
+func (s *Syncer) sync(ctx context.Context) (Result, error) {
 	var result Result
 	conn, err := s.pool.Acquire(ctx)
 	if err != nil {
@@ -296,20 +310,108 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
+// Identity is one identity-provider user as the router would record it at
+// their first sign-in.
+type Identity struct {
+	Username      string
+	Email         string
+	EmailVerified bool
+	Enabled       bool
+	Groups        []string
+}
+
+// ErrUserNotFound means the identity provider has no user with that subject.
+var ErrUserNotFound = errors.New("user not found in the identity provider")
+
+// ErrLookupUnavailable means the identity provider could not answer.
+var ErrLookupUnavailable = errors.New("identity provider lookup unavailable")
+
+// Issuer is the OIDC issuer whose realm this service account reads.
+func (s *Syncer) Issuer() string { return s.cfg.Issuer }
+
+// Lookup reads one user through the read-only service account, so a user can
+// be recorded before their first portal sign-in. Groups use the same
+// name mapping as Sync. It neither writes nor caches anything.
+func (s *Syncer) Lookup(ctx context.Context, sub string) (Identity, error) {
+	var remote struct {
+		ID            string `json:"id"`
+		Username      string `json:"username"`
+		Email         string `json:"email"`
+		EmailVerified bool   `json:"emailVerified"`
+		Enabled       *bool  `json:"enabled"`
+	}
+	path := "/users/" + url.PathEscape(sub)
+	if err := s.get(ctx, path, &remote); errors.Is(err, errGone) {
+		return Identity{}, ErrUserNotFound
+	} else if err != nil {
+		return Identity{}, fmt.Errorf("%w: %w", ErrLookupUnavailable, err)
+	}
+	// The subject is caller-supplied: only an exact user representation for
+	// it counts, never another resource reached through path normalization.
+	if remote.ID != sub {
+		return Identity{}, ErrUserNotFound
+	}
+	if remote.Enabled == nil {
+		return Identity{}, fmt.Errorf("%w: user enabled state omitted", ErrLookupUnavailable)
+	}
+	identity := Identity{Username: remote.Username, Email: remote.Email, EmailVerified: remote.EmailVerified, Enabled: *remote.Enabled}
+	if s.cfg.UsernameClaim == "email" && remote.Email != "" {
+		identity.Username = remote.Email
+	}
+	if identity.Username == "" {
+		identity.Username = sub
+	}
+	if !identity.Enabled {
+		return identity, nil
+	}
+	var memberships []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := s.get(ctx, path+"/groups?briefRepresentation=true&max=1000", &memberships); errors.Is(err, errGone) {
+		return Identity{}, ErrUserNotFound
+	} else if err != nil || memberships == nil {
+		return Identity{}, fmt.Errorf("%w: memberships unavailable", ErrLookupUnavailable)
+	}
+	paths := make([]string, 0, len(memberships))
+	for _, m := range memberships {
+		if m.Path == "" {
+			m.Path = "/" + m.Name
+		}
+		paths = append(paths, m.Path)
+	}
+	identity.Groups = auth.GroupNames(paths, s.cfg.GroupNames)
+	return identity, nil
+}
+
+// RunOnce shares the scheduled job's locking, metrics and logs. A manual
+// request never waits behind a scheduled run or starts an overlapping scan.
+func (s *Syncer) RunOnce(ctx context.Context) (Result, error) {
+	if !s.mu.TryLock() {
+		result := Result{Skipped: true}
+		s.Stats.Record(result, nil)
+		return result, nil
+	}
+	defer s.mu.Unlock()
+	result, err := s.sync(ctx)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return result, err
+	}
+	s.Stats.Record(result, err)
+	if err != nil {
+		s.log.Error("group sync failed", "error", err, "checked", result.Checked, "updated", result.Updated, "disabled", result.Disabled, "failed", result.Failed, "remaining", result.Remaining)
+	} else {
+		s.log.Info("group sync", "checked", result.Checked, "updated", result.Updated, "disabled", result.Disabled, "failed", result.Failed, "remaining", result.Remaining, "skipped", result.Skipped)
+	}
+	return result, err
+}
+
 // Run syncs at start and then every interval until ctx ends.
 func (s *Syncer) Run(ctx context.Context, interval time.Duration) {
 	for {
 		runCtx, cancel := context.WithTimeout(ctx, interval)
-		result, err := s.Sync(runCtx)
+		_, _ = s.RunOnce(runCtx)
 		cancel()
-		if ctx.Err() == nil {
-			s.Stats.Record(result, err)
-		}
-		if err != nil && ctx.Err() == nil {
-			s.log.Error("group sync failed", "error", err, "checked", result.Checked, "updated", result.Updated, "disabled", result.Disabled, "failed", result.Failed, "remaining", result.Remaining)
-		} else if err == nil {
-			s.log.Info("group sync", "checked", result.Checked, "updated", result.Updated, "disabled", result.Disabled, "failed", result.Failed, "remaining", result.Remaining)
-		}
 		select {
 		case <-ctx.Done():
 			return

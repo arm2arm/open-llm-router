@@ -19,6 +19,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/mockllm"
+	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/server"
 )
 
@@ -317,7 +318,7 @@ func TestUpstreamResponsesUnchanged(t *testing.T) {
 			payload := "exact bytes\n\x00unknown-event: preserved\n\n"
 			var requests atomic.Int32
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				requests.Add(1)
@@ -353,7 +354,7 @@ func TestPassiveRetryAndNoRetryAfterBytes(t *testing.T) {
 			var backends []*httptest.Server
 			for i := range 2 {
 				b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/health" {
+					if backendProbe(r) {
 						return
 					}
 					calls[i].Add(1)
@@ -478,7 +479,7 @@ func TestHeaderAndIdleTimeouts(t *testing.T) {
 		idle := tc.idle
 		t.Run(tc.path+"/"+map[bool]string{false: "headers", true: "idle"}[idle], func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				io.Copy(io.Discard, r.Body)
@@ -614,4 +615,10 @@ func TestStoppedReplicaFailsOver(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// backendProbe reports a request the router makes on its own: a health probe
+// or a model catalog read for the context length.
+func backendProbe(r *http.Request) bool {
+	return r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == pool.CatalogPath)
 }

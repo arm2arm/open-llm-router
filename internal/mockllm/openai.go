@@ -30,6 +30,9 @@ func (s *Server) models(w http.ResponseWriter, _ *http.Request, c *call) {
 	data := make([]obj, len(c.Models))
 	for i, model := range c.Models {
 		data[i] = obj{"id": model, "object": "model", "created": time.Now().Unix(), "owned_by": "mock-llm"}
+		if c.MaxModelLen > 0 {
+			data[i]["max_model_len"] = c.MaxModelLen
+		}
 	}
 	writeJSON(w, http.StatusOK, obj{"object": "list", "data": data})
 }

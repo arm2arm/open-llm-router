@@ -193,8 +193,9 @@ func (h *Handler) authMethods(w http.ResponseWriter, _ *http.Request) {
 		primary = "oidc"
 	}
 	respond(w, 200, map[string]any{
-		"default": primary,
-		"local":   map[string]any{"available": h.safeCookies(), "login_url": "/portal/login/local", "password_url": "/portal/password"},
-		"oidc":    map[string]any{"configured": state.oidc != nil, "available": h.safeCookies() && state.available.Load(), "login_url": "/portal/sign-in/keycloak"},
+		"default":            primary,
+		"privacy_notice_url": h.cfg.Portal.PrivacyNoticeURL,
+		"local":              map[string]any{"available": h.safeCookies(), "login_url": "/portal/login/local", "password_url": "/portal/password"},
+		"oidc":               map[string]any{"configured": state.oidc != nil, "available": h.safeCookies() && state.available.Load(), "login_url": "/portal/sign-in/keycloak"},
 	})
 }

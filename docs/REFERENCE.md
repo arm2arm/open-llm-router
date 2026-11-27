@@ -28,7 +28,8 @@ names match exactly. Allowed models are the union of all matching groups; `model
 grants every configured model. A user with no matching configured group has no model access,
 including when the config has no groups. Ordinary CLI users need `user add -groups staff`
 or another configured group. The protected local administrator has all model grants,
-unlimited limits and admin authority independently of editable groups or overrides. `GET /v1/models` returns only allowed models and their aliases;
+unlimited limits and admin authority independently of editable groups or overrides. `GET /v1/models` returns only allowed models and their aliases, with
+[their context length, type and protocols](#model-list-metadata);
 callers with no access receive `{"object":"list","data":[]}`.
 
 Model checks run after alias resolution and before upstream-name rewriting or replica selection.
@@ -64,7 +65,8 @@ encoded as 43 base62 characters after `olr-`. The SHA-256 hash and a 12-characte
 prefix are stored. Keys cannot be recovered; replace a lost key and revoke the old one.
 Listing returns metadata only. Request logs contain neither credentials nor
 hashes. Keys default to `auth.default_key_lifetime_days` (90), and every issuance path,
-including trusted forwarders and CLI `-lifetime`, enforces `auth.max_key_lifetime_days`
+including trusted forwarders, CLI `-lifetime` and administration-API issuance
+(`user_keys:issue`), enforces `auth.max_key_lifetime_days`
 (default 90; range 1–36500) and `auth.max_active_keys_per_user` (default 10; range 1–1000).
 The default lifetime cannot exceed the maximum. Active means unrevoked and unexpired;
 legacy keys without expiry also consume capacity. Concurrent issuance is serialized per user. The CLI reads this setting from
@@ -154,6 +156,36 @@ results, Claude Code/OpenCode tool sessions, backend cancellation evidence and `
 and Claude Code and OpenCode complete a tool session with Qwen3 8B. The same checks on the
 deployed GPU backend remain pending.
 
+### Model list metadata
+
+Each `GET /v1/models` entry also reports what clients such as agents and portals set
+themselves up from. The fields are additive; existing fields are unchanged:
+
+```json
+{"id":"aip-best","object":"model","created":0,"owned_by":"open-llm-router",
+ "context_length":131072,"type":"chat","protocols":["openai","anthropic"],
+ "recipient_details":[...],"recipients_complete":true}
+```
+
+- `context_length` is the model's configured `context_length`. Without one, it is detected
+  from the backends' OpenAI-compatible model catalogs (`GET /v1/models` on each replica):
+  vLLM's and SGLang's `max_model_len`, or `context_length` where a catalog reports that. The
+  router looks up the model's `upstream_model` (or its name) and reports the smallest value
+  across the replicas that report one, so a request fits whichever replica serves it. The field
+  is omitted while no value is known, for example for Ollama replicas, before a replica's first
+  successful health check, or when the catalog lacks the model.
+- `type` is the model's `type`, `chat` (the default) or `embedding`, so a client never picks
+  an embedding model as its chat default.
+- `protocols` are the model's configured protocols, `openai`, `anthropic` or both.
+
+An alias reports its target's values. The portal's `/portal/api/models` and the
+administration API's `issue_user_key` and `get_issued_key_summary` responses return the same
+fields. Health checks read a replica's catalog on its first successful check, when it recovers
+from being unhealthy, and every 10 minutes; a replica whose `health_path` is `/v1/models` is
+read from the probe itself. A failed or unreadable catalog keeps the last value; a readable
+catalog without the model clears it. The catalog read uses the replica's credential and the
+same outbound policy as health checks, and is limited to 1 MiB.
+
 ## Keycloak and portal login
 
 Open [the portal](http://localhost:8080/portal/) after `make up`. Compose pins
@@ -208,7 +240,9 @@ login refuses an HTTP public origin with secure cookies. Local HTTP development 
 explicitly disable secure cookies. Local session APIs work without Keycloak; browser
 forms are tracked in #74. See [the admin guide](ADMIN_GUIDE.md#use-local-authentication-without-keycloak).
 `OIDC_GROUPS_CLAIM` and `OIDC_USERNAME_CLAIM`
-override the default `groups` and `preferred_username` claims. All five OIDC settings can
+override the default `groups` and `preferred_username` claims. `OIDC_INSTITUTION_CLAIM`
+selects an optional institution display claim; empty uses common institution claims
+([mapping guide](ADMIN_GUIDE.md#show-institutional-names-and-affiliation)). These OIDC settings can
 override the YAML or enable OIDC with no YAML section. Use the public issuer directly when
 reachable, or configure an internal backchannel without changing the expected issuer.
 No provider-specific endpoints are hardcoded.
@@ -241,11 +275,14 @@ For streaming calls, derive output tokens/second as
 this rate is not meaningful for non-stream responses that arrive all at once.
 
 OpenAI Chat Completions and legacy Completions streams request `stream_options.include_usage: true`. If the caller omitted it or
-set it to false, the router removes only the extra event with empty `choices` and numeric
-usage; all other events keep their original bytes. If the caller requested usage, that
+set it to false, the router removes only an ordinary extra event with empty `choices`, numeric
+usage and recognized envelope/accounting fields. Supplemental fields (including nested
+usage extensions), duplicate keys and extra SSE fields/comments keep the whole event,
+including its usage, unchanged. All retained events keep their original bytes. If the caller requested usage, that
 event is delivered unchanged unless usage timing is explicitly enabled below. Duplicate or case-variant `stream_options` or nested
 `include_usage` keys return 400 before forwarding; a backend cannot interpret another
 spelling as an override. Unknown request fields and stream options remain intact.
+See [provenance preservation and transformation limits](API_COMPATIBILITY.md#response-transformations-and-provenance).
 
 `X-OLR-Usage-Timing: true` opts Chat Completions and Responses into two additional
 numeric usage fields: `olr_observed_output_tokens_per_second` and
@@ -428,6 +465,10 @@ curl --fail http://localhost:8080/v1/me/usage \
 | `in_flight`, `in_flight_batch` | Currently reserved user slots, and those of batch keys |
 | `reserved_tokens` | Strict-quota reservations of calls in flight |
 | `models` | Today's per-model `input_tokens`, `output_tokens`, `average_ttfb_ms`, `average_tokens_per_second`, sorted by `model`; empty array without usage |
+| `key` | The authenticating API key's `id`, display `prefix`, `label`, workload `class` (`interactive` or `batch`), and `expires` (an RFC 3339 timestamp or null for a key without an expiry). Omitted for OIDC bearer tokens. |
+
+A trusted forwarder receives the metadata for the key it used and the usage
+snapshot of the end user it named.
 
 Model averages are arithmetic means of measured requests. TTFB excludes missing values;
 tokens/second includes only streams with positive output and generation duration. Missing
@@ -470,9 +511,12 @@ OLR_BASE_URL=http://127.0.0.1:8000 OLR_EMBEDDING_MODEL=chat-model uv run tests/c
 OLR_BASE_URL=http://127.0.0.1:8000 OLR_CHECK_THINKING=1 uv run tests/clients/check_anthropic.py
 ```
 
-Configure it with `MOCK_MODELS`, `MOCK_TOKENS`, `MOCK_TOKEN_DELAY`, `MOCK_FAIL`, and
-`MOCK_THINKING`; the equivalent `X-Mock-*` headers override one request. `GET /_mock/stats`
-reports requests and cancelled streams, and `POST /_mock/reset` clears the counters.
+Configure it with `MOCK_MODELS`, `MOCK_TOKENS`, `MOCK_TOKEN_DELAY`, `MOCK_FAIL`,
+`MOCK_THINKING` and `MOCK_MAX_MODEL_LEN` (the `max_model_len` its `GET /v1/models` reports
+for every model, default 32768); the equivalent `X-Mock-*` headers override one request, and
+`X-Mock-Max-Model-Len: 0` leaves the field out. `GET /_mock/stats` reports requests and
+cancelled streams, counting model catalog reads (the router's health checks make them)
+separately as `catalog_requests`, and `POST /_mock/reset` clears the counters.
 
 The router reads one YAML file, named by `OLR_CONFIG` or `-config`;
 [config.example.yaml](../config.example.yaml) explains the format. It refuses to start on an unknown

@@ -1427,6 +1427,8 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   await draft.getByRole('button', { name: 'Add model', exact: true }).click()
   const added = draft.getByRole('article', { name: 'Model added-model' })
   await added.getByLabel('added-model upstream model').fill('chat-model')
+  await expect(added.getByLabel('added-model model type')).toHaveValue('chat')
+  await added.getByLabel('added-model context length').fill('65536')
   await added
     .getByLabel('added-model replica 1 origin')
     .fill('http://mock-llm-b:8000')
@@ -1473,6 +1475,16 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   const routed = await complete('quick')
   expect(routed.status()).toBe(200)
   expect((await routed.json()).model).toBe('chat-model')
+  // The model list reports the configured context length through the alias.
+  const listed = await context.request.get(`${routing}/v1/models`, {
+    headers: { Authorization: `Bearer ${key}` },
+  })
+  const catalog: { data: { id: string }[] } = await listed.json()
+  expect(catalog.data.find((model) => model.id === 'quick')).toMatchObject({
+    context_length: 65536,
+    type: 'chat',
+    protocols: ['openai'],
+  })
   await expect(models.getByRole('row', { name: /^added-model/ })).toContainText(
     'quick',
   )

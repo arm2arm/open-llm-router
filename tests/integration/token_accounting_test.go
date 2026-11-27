@@ -29,7 +29,7 @@ func TestInterruptedOpenAIInputChargesQuotaAndTPM(t *testing.T) {
 				count = 1
 			}
 			f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				raw, _ := io.ReadAll(r.Body)
@@ -93,7 +93,7 @@ func TestCachedInputProtocolParity(t *testing.T) {
 	} {
 		t.Run(wire.path+wire.kind, func(t *testing.T) {
 			f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/health" {
+				if backendProbe(r) {
 					return
 				}
 				w.Header().Set("Content-Type", wire.kind)

@@ -7,6 +7,71 @@ The exact supported endpoints and known gaps are listed in
 [API_COMPATIBILITY.md](API_COMPATIBILITY.md); SDK success does not mean complete
 OpenAI or Anthropic platform compatibility.
 
+## First-session AI notice
+
+The portal configures credentials and clients. People can first encounter the
+model in DRPHub, Hermes, an IDE or Open WebUI without visiting the portal. Client
+owners should show an accessible notice at the first interaction in a session,
+before the first prompt can be sent, and keep a way to reopen it. For a new model
+or changed routing configuration, refresh the possible recipients before sending.
+Use visible text, real links and keyboard-operable controls; do not rely on a
+hover tooltip, model name, response header or a portal-only banner.
+
+Example to adapt with the site's actual names and links:
+
+> You are interacting with an AI model. Responses can be inaccurate; check
+> important information. Your prompts, conversation history, tool information
+> and included attachments are sent through `<site router>` to `<all possible
+> recipient organizations>` for this model, including on retries. Read
+> `<site privacy notice>` and `<recipient privacy notices>` for logging,
+> retention and your rights. Disabling personal router traces does not prevent
+> backend processing or logging.
+
+Fetch `recipient_details` and `recipients_complete` for each permitted model or alias
+from authenticated `GET /v1/models`; portal integrations can use
+`GET /portal/api/models`, which also returns `privacy_notice_url`. Public sign-in metadata
+at `GET /portal/api/auth` returns the site `privacy_notice_url`. These are current
+configuration snapshots, not a promise that routing cannot change before a call.
+Do not substitute `owned_by`, internal backend IDs, or a single healthy replica
+for the recipient list. If information is incomplete, state that visibly and
+provide the site's operator contact. Keep this notice separate from any personal
+trace opt-in and from the backend's machine-readable provenance mechanism.
+
+## Upstream provenance checks
+
+OLR relays upstream response bodies; it does not generate a watermark, validate
+provenance, or provide a detector. Its Chat Completions/legacy Completions usage
+filter retains a whole empty-choices event when it carries unknown top-level
+fields, nested usage extensions or additional SSE fields/comments. Ordinary
+usage-only events are still suppressed when the caller did not request usage.
+Retained events keep their original bytes and their token counts still contribute
+to accounting. See [response transformation limits](API_COMPATIBILITY.md#response-transformations-and-provenance).
+
+For each deployed backend/model version and client/export path:
+
+1. Obtain the upstream provider's marking specification, supported formats and
+   detector/version. Record what the detector can verify and any unsupported
+   outputs. Use synthetic, non-sensitive test input.
+2. Capture the **same upstream output** directly and through OLR, using a replay
+   fixture if needed; independently generated outputs need not be identical.
+   Check non-stream JSON and raw SSE, with usage omitted, `false` and `true`.
+   Compare marker fields and exact bytes where the mechanism requires them;
+   include primary and retry backends, aliases and optional usage timing if used.
+3. Pass the relayed output to the upstream detector and record its result.
+   A synthetic marker proves transport preservation only, not detection of AI
+   authorship. A missing upstream mark cannot be supplied by this router test.
+4. Repeat after SDK parsing, client display/copy and each actual export format
+   (for example JSON, Markdown, HTML or PDF). Clients may discard extension fields,
+   reconstruct text or remove metadata. Run the upstream detector on the resulting
+   artifacts and record any loss or unsupported format.
+5. Keep the provider/model, router and client versions, transformation options,
+   sample hashes, detector results and limitations with deployment evidence.
+   Recheck after changes. Personal trace views/exports are sanitized and bounded;
+   they are not a byte-preserving copy for this check.
+
+The regression tests use `synthetic-test-only` as an opaque test marker. They
+check pass-through and token accounting, not a production marking scheme.
+
 ## Browser integration and CORS
 
 OLR supports Open WebUI **Direct Connections**, where each user's browser calls
@@ -482,23 +547,49 @@ Quirks found with vLLM:
 
 The supported and tested baseline for this integration is **Open WebUI 0.13.3**.
 Earlier clients may preserve usage extensions, but are not verified here.
-In **Admin → Settings → Connections**, edit the OLR OpenAI connection and add
-this JSON to its **Headers** field (merge it with any existing custom headers):
+In the Open WebUI **Admin Panel → Settings → Connections**, find the OLR
+connection under **OpenAI API** and click its **⚙ Configure** button. In the
+**Edit Connection** dialog, expand **Advanced**, then add this JSON to the
+**Headers** field (merge it with any existing custom headers):
 
 ```json
 {"X-OLR-Usage-Timing":"true"}
 ```
 
+Save the connection and the Connections settings page. **Headers** is inside
+the collapsed **Advanced** section, not on the connection list. Open WebUI
+0.13.3 hides this field in personal **Settings → Connections → Direct
+Connections**, even for an administrator. Use the connection managed in the
+**Admin Panel** for this setup; local and institutional admin accounts use the
+same editor.
+
 In **Workspace → Models**, edit the model/preset and enable **Capabilities →
 Usage**. This asks Chat Completions streams for `stream_options.include_usage:true`.
 Keep the usage/Info control visible in chat. Generate a **new response** and hover
-or tap **ⓘ**. Existing messages are not recalculated. The tooltip includes numeric
-fields such as:
+or tap **ⓘ**. Existing messages are not recalculated. The tooltip shows the
+provider's input/output token counts alongside the OLR timing fields. For example:
 
 ```text
+input_tokens: 100
+output_tokens: 193
+total_tokens: 293
 olr_observed_output_tokens_per_second: 48.25
 olr_observed_elapsed_seconds: 4
 ```
+
+| Tooltip field | Meaning |
+| --- | --- |
+| `input_tokens` / `prompt_tokens` | Input tokens reported by the provider |
+| `output_tokens` / `completion_tokens` | Output tokens reported by the provider |
+| `total_tokens` | Input and output tokens combined |
+| `olr_observed_output_tokens_per_second` | Output throughput in tokens per second (TPS) |
+| `olr_observed_elapsed_seconds` | Elapsed request time in seconds up to the usage snapshot |
+
+The setup works with both **Chat Completions** and **Responses** connections.
+Open WebUI 0.13.3 preserves the timing fields when converting Responses usage
+for the chat tooltip. If token counts appear without timing, check the header
+on the connection serving that model. If no usage appears, check the model's
+**Usage** capability and whether the backend returns token counts.
 
 This is **router-observed request throughput**, calculated as the provider's
 authoritative output-token count divided by elapsed time from OLR's inference
@@ -542,6 +633,10 @@ In **Admin → Settings → Connections**, add or edit an OpenAI connection:
 - **API Type:** **Responses**.
 - **Model:** a permitted OLR logical model or alias whose replicas all serve
   native `/v1/responses` under the `openai` protocol.
+
+For input/output token counts, TPS and elapsed time in the answer's **ⓘ**
+tooltip, follow [Open WebUI response throughput](#open-webui-response-throughput),
+including the connection's **Advanced → Headers** setting.
 
 Open WebUI sends complete history in its default stateless mode. Keep
 `ENABLE_RESPONSES_API_STATEFUL=false`; OLR sets `store:false` if omitted and

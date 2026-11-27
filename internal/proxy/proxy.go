@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,8 +26,10 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/backendlimits"
 	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
+	"github.com/arm2arm/open-llm-router/internal/jsonobject"
 	"github.com/arm2arm/open-llm-router/internal/limits"
 	"github.com/arm2arm/open-llm-router/internal/metrics"
+	"github.com/arm2arm/open-llm-router/internal/modelinfo"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/arm2arm/open-llm-router/internal/pool"
 	"github.com/arm2arm/open-llm-router/internal/reqid"
@@ -102,6 +105,25 @@ func (h *Handler) Register(handle func(string, http.Handler)) {
 	handle("GET /v1/me/usage", http.HandlerFunc(h.myUsage))
 }
 
+type usageKey struct {
+	ID      string     `json:"id"`
+	Prefix  string     `json:"prefix"`
+	Label   string     `json:"label"`
+	Class   string     `json:"class"`
+	Expires *time.Time `json:"expires"`
+}
+
+func callingUsageKey(p auth.Principal) *usageKey {
+	if p.KeyID == "" {
+		return nil
+	}
+	key := &usageKey{ID: p.KeyID, Prefix: p.KeyPrefix, Label: p.KeyLabel, Class: p.KeyClass}
+	if !p.KeyExpiresAt.IsZero() {
+		key.Expires = &p.KeyExpiresAt
+	}
+	return key
+}
+
 func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 	if h.Limits == nil {
 		limits.WriteError(w, config.ProtocolOpenAI, limits.ErrUnavailable)
@@ -114,7 +136,11 @@ func (h *Handler) myUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(snapshot)
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(struct {
+		limits.Snapshot
+		Key *usageKey `json:"key,omitempty"`
+	}{Snapshot: snapshot, Key: callingUsageKey(principal)})
 }
 
 func (h *Handler) currentConfig() *config.Config { cfg, _ := h.Snapshot(); return cfg }
@@ -125,21 +151,23 @@ func (h *Handler) callerPolicy(r *http.Request, cfg *config.Config) policy.Polic
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := h.Snapshot()
+	cfg, pools := h.Snapshot()
 	access := h.callerPolicy(r, cfg)
+	principal, _ := auth.FromContext(r.Context())
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
-	data := make([]map[string]any, 0, len(names))
+	data := make([]modelinfo.Entry, 0, len(names))
 	for _, name := range names {
 		target := name
 		if model, ok := cfg.Aliases[name]; ok {
 			target = model
 		}
-		principal, _ := auth.FromContext(r.Context())
 		if !policy.ModelAllowed(cfg, access, target, principal.Groups, principal.ProtectedAdmin) {
 			continue
 		}
-		data = append(data, map[string]any{"id": name, "object": "model", "created": 0, "owned_by": "open-llm-router"})
+		if entry, ok := modelinfo.NewEntry(cfg, pools, name, principal.Groups, principal.ProtectedAdmin); ok {
+			data = append(data, entry)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
@@ -295,16 +323,20 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, protocol strin
 		}
 	}
 	if upstreamName != meta.Model || model.Priority != nil {
-		// RawMessage retains unknown values, including large integers, while
-		// replacing only the model and the priority, which callers cannot
-		// choose. Otherwise forward the original bytes.
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(body, &fields)
-		fields["model"], _ = json.Marshal(upstreamName)
-		if model.Priority != nil {
-			fields["priority"], _ = json.Marshal(priority)
+		// Replace only the model and the priority, which callers cannot
+		// choose, including any case variant of priority a backend might
+		// read. Every other member keeps its bytes, including large integers.
+		object, err := jsonobject.Parse(body)
+		if err != nil {
+			apierr.Write(w, protocol, 400, "invalid_request_error", "a JSON object with a model and optional boolean stream is required")
+			return
 		}
-		body, _ = json.Marshal(fields)
+		name, _ := json.Marshal(upstreamName)
+		owned := []jsonobject.Field{{Name: "model", Value: name}}
+		if model.Priority != nil {
+			owned = append(owned, jsonobject.Field{Name: "priority", Value: strconv.AppendInt(nil, int64(priority), 10)})
+		}
+		body = object.With(owned...)
 	}
 
 	if access.StrictQuota && r.URL.Path != "/v1/messages/count_tokens" {

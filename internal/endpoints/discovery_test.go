@@ -250,3 +250,31 @@ func TestNewBackendDetection(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoveryReportsSmallestContextLength(t *testing.T) {
+	s, sources := discoveryService(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"a","owned_by":"vllm","max_model_len":131072},{"id":"z","context_length":4096},{"id":"only-here","max_model_len":2048},{"id":"none"}]}`))
+	}, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"a","owned_by":"vllm","max_model_len":32768},{"id":"z","max_model_len":"8192"},{"id":"none"}]}`))
+	})
+	result, err := s.Discover(t.Context(), "chat", sources)
+	if err != nil || !result.Complete || !reflect.DeepEqual(result.Models, []string{"a", "none", "z"}) {
+		t.Fatalf("unexpected catalog: %+v %v", result, err)
+	}
+	if want := map[string]int{"a": 131072, "z": 4096, "only-here": 2048}; !reflect.DeepEqual(result.Replicas[0].ContextLengths, want) {
+		t.Fatalf("replica context lengths = %v", result.Replicas[0].ContextLengths)
+	}
+	// Shared models only; the smallest reported value; unreported omitted.
+	if want := map[string]int{"a": 32768, "z": 4096}; !reflect.DeepEqual(result.ContextLengths, want) {
+		t.Fatalf("shared context lengths = %v", result.ContextLengths)
+	}
+
+	s, sources = discoveryService(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"a"}]}`))
+	})
+	result, err = s.Discover(t.Context(), "chat", sources)
+	encoded, _ := json.Marshal(result)
+	if err != nil || strings.Contains(string(encoded), "context_lengths") {
+		t.Fatalf("catalog without context lengths: %s %v", encoded, err)
+	}
+}

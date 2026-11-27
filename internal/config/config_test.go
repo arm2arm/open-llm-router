@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -681,6 +682,18 @@ func TestContentTracingPolicy(t *testing.T) {
 	if err != nil || cfg.ContentTracing.Enabled {
 		t.Fatal("content capture must default off", err)
 	}
+	if cfg.ContentTracing.MaxStoredMiB != 64 || cfg.ContentTracing.MaxStoredTraces != 512 {
+		t.Fatal("trace quota defaults", cfg.ContentTracing)
+	}
+	for _, policy := range []string{"max_stored_mib: -1", "max_stored_mib: 1048577", "max_stored_traces: -1", "max_stored_traces: 1000001"} {
+		if _, err := Parse([]byte("content_tracing: {"+policy+"}\n"+valid), lookupIn(validEnv)); err == nil {
+			t.Fatal("invalid trace quota accepted", policy)
+		}
+	}
+	custom, err := Parse([]byte("content_tracing: {max_stored_mib: 256, max_stored_traces: 4096}\n"+valid), lookupIn(validEnv))
+	if err != nil || custom.ContentTracing.MaxStoredMiB != 256 || custom.ContentTracing.MaxStoredTraces != 4096 {
+		t.Fatal("custom trace quota", custom, err)
+	}
 	if _, err := Parse([]byte("content_tracing: {enabled: true, redact_patterns: ['[']}\n"+valid), lookupIn(validEnv)); err == nil {
 		t.Fatal("invalid redaction accepted")
 	}
@@ -762,6 +775,135 @@ func TestPortalBaseURLCanonicalOrigin(t *testing.T) {
 		_, err := Parse([]byte("models: {}\ngroups: {}\n"), lookupIn(map[string]string{"PORTAL_BASE_URL": raw}))
 		if err == nil || !strings.Contains(err.Error(), "PORTAL_BASE_URL") || strings.Contains(err.Error(), "password") {
 			t.Fatal("unsafe portal origin accepted or disclosed", err)
+		}
+	}
+}
+
+func TestPortalDisclosureConfiguration(t *testing.T) {
+	const disclosure = `portal:
+  privacy_notice_url: https://institute.example/privacy#llm
+  recipient_labels:
+    "HTTPS://GPU-A.EXAMPLE:443/": "Institute A (DE)"
+`
+	cfg, err := Parse([]byte(valid+disclosure), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Portal.PrivacyNoticeURL != "https://institute.example/privacy#llm" ||
+		cfg.Portal.RecipientLabels["https://gpu-a.example"] != "Institute A (DE)" ||
+		cfg.Portal.BaseURL != "http://localhost:8080" || !cfg.Portal.CookieSecure {
+		t.Fatal("disclosures did not preserve the canonical upstream or existing portal defaults")
+	}
+	for _, invalid := range []string{
+		"privacy_notice_url: http://institute.example/privacy",
+		"privacy_notice_url: //institute.example/privacy",
+		"privacy_notice_url: https://password@institute.example/",
+		"privacy_notice_url: https://institute.example/private?token=value",
+		"recipient_labels: {'https://user:password@backend': 'Institute'}",
+		"recipient_labels: {'https://backend/v1': 'Institute'}",
+		"recipient_labels: {'https://backend': 'A', 'https://BACKEND:443/': 'B'}",
+		"recipient_labels: {'https://backend': ' '}",
+		"recipient_labels: {'https://backend': 'https://user:password@backend'}",
+		"base_url: https://override.example",
+		"cookie_secure: false",
+	} {
+		t.Run(invalid, func(t *testing.T) {
+			if _, err := Parse([]byte(valid+"portal:\n  "+invalid+"\n"), lookupIn(validEnv)); err == nil {
+				t.Fatal("accepted invalid portal configuration")
+			}
+		})
+	}
+}
+
+func TestUserKeyIssuanceSettings(t *testing.T) {
+	cfg, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil || cfg.AdminAPI.UserKeyIssuance.LabelPrefix != DefaultUserKeyLabelPrefix || cfg.AdminAPI.UserKeyIssuance.MaxLifetimeDays != 0 || len(cfg.AdminAPI.UserKeyIssuance.AllowedGroups) != 0 {
+		t.Fatalf("defaults: %+v %v", cfg.AdminAPI.UserKeyIssuance, err)
+	}
+	cfg, err = Parse([]byte("admin_api: {user_key_issuance: {allowed_groups: [staff], max_lifetime_days: 30, label_prefix: \"Hub · \"}}\n"+valid), lookupIn(validEnv))
+	if err != nil || cfg.AdminAPI.UserKeyIssuance.LabelPrefix != "Hub · " || cfg.AdminAPI.UserKeyIssuance.MaxLifetimeDays != 30 || cfg.AdminAPI.UserKeyIssuance.AllowedGroups[0] != "staff" {
+		t.Fatalf("configured: %+v %v", cfg.AdminAPI.UserKeyIssuance, err)
+	}
+	for _, input := range []string{
+		"admin_api: {user_key_issuance: {max_lifetime_days: -1}}",
+		"admin_api: {user_key_issuance: {max_lifetime_days: 36501}}",
+		"admin_api: {user_key_issuance: {label_prefix: \"   \"}}",
+		"admin_api: {user_key_issuance: {label_prefix: \"" + strings.Repeat("x", MaxUserKeyLabelPrefixBytes+1) + "\"}}",
+		"admin_api: {user_key_issuance: {label_prefix: \"bad\\nprefix\"}}",
+		"admin_api: {user_key_issuance: {allowed_groups: [\"\"]}}",
+		"admin_api: {user_key_issuance: {unknown: true}}",
+	} {
+		if _, err := Parse([]byte(input+"\n"+valid), lookupIn(validEnv)); err == nil {
+			t.Errorf("accepted %s", input)
+		}
+	}
+}
+
+func TestModelMetadataSettings(t *testing.T) {
+	yaml := change(t, "timeout_s: 900", "timeout_s: 900\n    context_length: 131072\n    type: embedding")
+	cfg, err := Parse([]byte(yaml), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := cfg.Models["chat-model"]
+	if model.ContextLength == nil || *model.ContextLength != 131072 || model.Type != ModelTypeEmbedding || model.ModelType() != ModelTypeEmbedding {
+		t.Fatalf("model metadata not loaded: %+v", model)
+	}
+	// Both settings are optional, and existing files encode as before.
+	cfg, err = Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model = cfg.Models["chat-model"]
+	if model.ContextLength != nil || model.Type != "" || model.ModelType() != ModelTypeChat {
+		t.Fatalf("defaults changed: %+v", model)
+	}
+	if encoded, _ := json.Marshal(model); strings.Contains(string(encoded), "context_length") || strings.Contains(string(encoded), `"type"`) {
+		t.Fatalf("unset metadata is stored: %s", encoded)
+	}
+	if _, err := Parse([]byte(change(t, "timeout_s: 900", "timeout_s: 900\n    type: chat\n    context_length: 2147483647")), lookupIn(validEnv)); err != nil {
+		t.Fatal("explicit chat type and the largest context length refused:", err)
+	}
+	for _, tc := range []struct{ setting, want string }{
+		{"context_length: 0", "context_length: must be between 1 and 2147483647"},
+		{"context_length: -4096", "context_length: must be between 1 and 2147483647"},
+		{"context_length: 2147483648", "context_length: must be between 1 and 2147483647"},
+		{"context_length: 1.5", "line 8:"},
+		{"context_length: large", "line 8:"},
+		{"type: rerank", `type: unknown type "rerank"`},
+		{"type: Chat", `type: unknown type "Chat"`},
+	} {
+		_, err := Parse([]byte(change(t, "timeout_s: 900", "timeout_s: 900\n    "+tc.setting)), lookupIn(validEnv))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error %v, want %q", tc.setting, err, tc.want)
+		}
+	}
+}
+
+func TestManagedModelMetadataIsValidated(t *testing.T) {
+	base, err := Parse([]byte(valid), lookupIn(validEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models map[string]Model
+	if err := json.Unmarshal([]byte(`{"chat-model":{"protocols":["openai"],"timeout_s":60,"context_length":8192,"type":"embedding","pool":[{"url":"http://backend-a:8000","weight":1,"max_inflight":1}]}}`), &models); err != nil {
+		t.Fatal(err)
+	}
+	next, err := WithModels(base, models, func(string, string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model := next.Models["chat-model"]; *model.ContextLength != 8192 || model.ModelType() != ModelTypeEmbedding {
+		t.Fatalf("managed metadata lost: %+v", model)
+	}
+	for _, change := range []func(*Model){
+		func(m *Model) { zero := 0; m.ContextLength = &zero },
+		func(m *Model) { m.Type = "image" },
+	} {
+		model := models["chat-model"]
+		change(&model)
+		if _, err := WithModels(base, map[string]Model{"chat-model": model}, func(string, string) (string, bool) { return "", false }); err == nil {
+			t.Fatalf("invalid managed metadata accepted: %+v", model)
 		}
 	}
 }

@@ -5,8 +5,9 @@
 //
 // Connections go only to the issuer (or its back-channel URL), never follow
 // redirects and refuse link-local, metadata, multicast and unspecified
-// addresses at dial time. Loopback and private networks are allowed because
-// identity providers commonly run on internal networks.
+// addresses at dial time, including their NAT64 and zoned forms. Loopback and
+// private networks are allowed because identity providers commonly run on
+// internal networks.
 package idpcheck
 
 import (
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arm2arm/open-llm-router/internal/backendpolicy"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/groupsync"
 	"github.com/arm2arm/open-llm-router/internal/oidcclient"
@@ -64,10 +66,17 @@ type Input struct {
 var errRefused = errors.New("refused destination")
 
 // metadata are cloud instance-metadata addresses outside link-local ranges.
-var metadata = []netip.Addr{netip.MustParseAddr("fd00:ec2::254")}
+var metadata = []netip.Addr{netip.MustParseAddr("fd00:ec2::254"), netip.MustParseAddr("100.100.100.200")}
 
-// Allow refuses addresses an identity provider never legitimately uses.
+// Allow refuses addresses an identity provider never legitimately uses. NAT64
+// and IPv4-compatible forms get the verdict of the IPv4 address they reach. A
+// zone is refused: it scopes only link-local addresses, and on any other
+// address it would defeat the metadata comparison.
 func Allow(addr netip.Addr) error {
+	if addr.Zone() != "" {
+		return errRefused
+	}
+	addr = backendpolicy.Reached(addr)
 	if !addr.IsValid() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() ||
 		addr.IsLinkLocalMulticast() || addr.IsInterfaceLocalMulticast() {
 		return errRefused

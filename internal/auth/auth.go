@@ -31,12 +31,15 @@ var errCacheChanged = errors.New("authentication cache changed during lookup")
 
 // Principal identifies the caller for authorization and usage accounting.
 type Principal struct {
-	UserID    string
-	Username  string
-	Groups    []string
-	KeyID     string
-	KeyClass  string            // "interactive" or "batch"
-	Overrides map[string]*int64 // per-user limits; treat as read-only
+	UserID       string
+	Username     string
+	Groups       []string
+	KeyID        string
+	KeyClass     string // "interactive" or "batch"
+	KeyPrefix    string
+	KeyLabel     string
+	KeyExpiresAt time.Time         // zero for a key without an expiry
+	Overrides    map[string]*int64 // per-user limits; treat as read-only
 	// ProtectedAdmin is read from the database, never from token claims or groups.
 	ProtectedAdmin bool
 	// TrustedForwarder marks a key that may name the end user of a call.
@@ -233,6 +236,9 @@ func (a *Authenticator) refresh(ctx context.Context, hash [32]byte, generation u
 		return Principal{}, err
 	}
 	until := now.Add(cacheTTL)
+	if record.expires != nil {
+		record.KeyExpiresAt = record.expires.UTC()
+	}
 	if record.expires != nil && record.expires.Before(until) {
 		until = *record.expires
 	}

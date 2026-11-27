@@ -12,6 +12,7 @@ import (
 	"github.com/arm2arm/open-llm-router/internal/auth"
 	"github.com/arm2arm/open-llm-router/internal/config"
 	"github.com/arm2arm/open-llm-router/internal/limits"
+	"github.com/arm2arm/open-llm-router/internal/modelinfo"
 	"github.com/arm2arm/open-llm-router/internal/policy"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -134,14 +135,18 @@ func (h *Handler) keyMutationBudget(w http.ResponseWriter, userID string) (func(
 }
 
 type model struct {
-	ID        string   `json:"id"`
-	Canonical string   `json:"canonical_model"`
-	Protocols []string `json:"protocols"`
+	ID        string `json:"id"`
+	Canonical string `json:"canonical_model"`
+	modelinfo.Metadata
+	Recipients            []string           `json:"recipients"`
+	HasUnlistedRecipients bool               `json:"has_unlisted_recipients"`
+	RecipientDetails      []policy.Recipient `json:"recipient_details"`
+	RecipientsComplete    bool               `json:"recipients_complete"`
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
-	cfg := h.routingConfig()
-	access := h.access(u)
+	cfg, pools := h.routingSnapshot()
+	access := policy.ForUser(cfg.Groups, u.Groups, u.Overrides, u.ProtectedAdmin)
 	names := slices.AppendSeq(slices.Collect(maps.Keys(cfg.Models)), maps.Keys(cfg.Aliases))
 	slices.Sort(names)
 	models := make([]model, 0, len(names))
@@ -151,10 +156,27 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request, u user) {
 			target = canonical
 		}
 		if policy.ModelAllowed(cfg, access, target, u.Groups, u.ProtectedAdmin) {
-			models = append(models, model{ID: name, Canonical: target, Protocols: cfg.Models[target].Protocols})
+			_, metadata, ok := modelinfo.Describe(cfg, pools, name)
+			if !ok {
+				continue
+			}
+			entry := model{ID: name, Canonical: target, Metadata: metadata, Recipients: []string{}}
+			entry.RecipientDetails, entry.RecipientsComplete = policy.ModelRecipients(cfg, target, u.Groups, u.ProtectedAdmin)
+			// Match the proxy's per-replica grants, including possible retry
+			// destinations. Temporary health or capacity cannot exclude a site.
+			for _, recipient := range entry.RecipientDetails {
+				if label := recipient.Organization; label != "" {
+					entry.Recipients = append(entry.Recipients, label)
+				} else {
+					entry.HasUnlistedRecipients = true
+				}
+			}
+			slices.Sort(entry.Recipients)
+			entry.Recipients = slices.Compact(entry.Recipients)
+			models = append(models, entry)
 		}
 	}
-	respond(w, 200, map[string]any{"router_url": h.cfg.Portal.BaseURL, "base_url": h.cfg.Portal.BaseURL + "/v1", "models": models})
+	respond(w, 200, map[string]any{"router_url": h.cfg.Portal.BaseURL, "base_url": h.cfg.Portal.BaseURL + "/v1", "privacy_notice_url": h.cfg.Portal.PrivacyNoticeURL, "models": models})
 }
 
 // deleteUsage erases the caller's per-request records. Daily totals stay, so

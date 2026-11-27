@@ -90,7 +90,7 @@ func TestRejectedFloodCannotDisplaceCompletedUsage(t *testing.T) {
 func TestCompletionSurvivesKeyDeletion(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			return
 		}
 		close(entered)

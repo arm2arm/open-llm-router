@@ -18,6 +18,11 @@ admin_api:
   requests_per_minute: 60
   max_concurrent: 4
   trusted_proxy_cidrs: []
+  # Optional limits for inference keys issued with user_keys:issue.
+  user_key_issuance:
+    allowed_groups: []            # empty: any eligible SSO user
+    max_lifetime_days: 30         # omitted: auth.max_key_lifetime_days only
+    label_prefix: "Integration · "
 ```
 
 The Helm chart enables this feature by default with
@@ -32,8 +37,8 @@ agents cannot change them through this API. Use HTTPS for remote connections.
 2. Create a named key. Start with Observer, select explicit permissions, enter the
    agent's egress IP/network, and choose an expiration.
 3. Review the permission and address summary. Issuance requires a sign-in within
-   15 minutes. Authentication writes, user credential operations and delegation
-   require a recent **local** administrator session.
+   15 minutes. Authentication writes, user credential operations, user key
+   issuance and delegation require a recent **local** administrator session.
 4. Copy the key once and store it in the agent profile's secret environment. Keys
    are never recoverable; configuration downloads contain placeholders only.
 5. From the agent host, call the identity endpoint and verify its reported source
@@ -89,6 +94,7 @@ its own egress address the source unless deployed as an explicitly trusted proxy
 | `authentication:read`, `authentication:write` | Masked settings, checks, draft/activate/rollback/apply |
 | `admin_keys:read`, `admin_keys:write` | Own administration-key metadata, narrowing and revocation |
 | `admin_keys:delegate` | Child issuance and operations capable of granting admin authority |
+| `user_keys:issue` | Inference keys for SSO users of the configured issuer, issued on their behalf; revoke and summarize only the keys this key issued. Grantable alone; it does not include `users:read`. See [Issue inference keys for SSO users](#issue-inference-keys-for-sso-users) |
 
 Routing access alone does not include stored user identities or per-user
 memberships and overrides. `get_routing` omits affected users and revision actor
@@ -209,6 +215,122 @@ permission denial with 403, stale previews/revisions with 409, and throttling wi
 429 and `Retry-After`. Responses carry `X-Request-Id`; applied changes also carry
 `X-Admin-Change-Id`. Credential responses use `Cache-Control: no-store`.
 
+## Issue inference keys for SSO users
+
+An application that signs users in through the router's Keycloak realm, such as
+a science platform that provisions each user's workspace, can give each user an
+inference key without sending them to the portal. Grant its administration key
+`user_keys:issue` only, from the application's egress address. The permission
+reveals no user directory: the caller names a subject it has verified itself and
+sees only that user's username, models and limits.
+
+| Operation | Kind | Arguments |
+|---|---|---|
+| `issue_user_key` | write | body `{issuer, subject, label, expires_in_days?, class?}` |
+| `revoke_issued_key` | write | parameters `{key_id}` |
+| `get_issued_key_summary` | read | parameters `{key_id}` |
+
+Writes go through preview and apply like every other change. Preview checks the
+argument shapes only; eligibility is decided at apply. To issue a key, preview:
+
+```json
+{
+  "operation": "issue_user_key",
+  "arguments": {"body": {"issuer": "https://sso.example.org/realms/research",
+    "subject": "KEYCLOAK_USER_ID", "label": "Workspace", "expires_in_days": 30}}
+}
+```
+
+Apply returns 201 once, with `Cache-Control: no-store`:
+
+```json
+{
+  "key": "olr-...", "id": "KEY_UUID", "prefix": "olr-abcdefgh",
+  "label": "Integration · Workspace", "class": "interactive",
+  "expires": "RFC3339", "base_url": "https://router.example.org/v1",
+  "user": {"username": "alice", "created": false},
+  "models": [{"id": "chat-model", "object": "model", "created": 0,
+    "owned_by": "open-llm-router", "context_length": 131072, "type": "chat",
+    "protocols": ["openai", "anthropic"],
+    "recipient_details": [], "recipients_complete": false}],
+  "limits": {"tokens_per_day": 100000, "rpm": 20, "...": "..."}
+}
+```
+
+Store the key at once: like every one-time credential it is not retained, and a
+retried apply returns only the change status. If the response is lost, read the
+change status, then revoke the key and issue another.
+
+- **Issuer and subject.** `issuer` must equal the router's active OIDC issuer.
+  Local accounts and the protected administrator never qualify (403
+  `issuer_not_allowed`). `subject` is the OIDC `sub` (the Keycloak user ID):
+  1–255 printable ASCII characters.
+- **Users who never signed in.** The user is looked up by issuer and subject.
+  When none is stored and the [Keycloak group-sync service account](RUNBOOK.md#service-tokens-and-group-sync-keycloak)
+  is configured, the router reads the user through that read-only account and
+  records their username, email, groups and enabled state, as a first sign-in
+  would. The created user is reported as `"created": true` and attributed to
+  the administration key in history. Without the account, or when Keycloak has
+  no such user, the result is 404 `user_not_found`. An unavailable provider
+  returns 503 `identity_provider_unavailable`; try again.
+- **Eligibility.** Disabled users (stored or in Keycloak) are refused with 403
+  `user_disabled`. Users in none of `admin_api.user_key_issuance.allowed_groups`
+  are refused with 403 `user_not_eligible`. When the effective policy grants no
+  models, the result is 409 `no_model_access`. No key is issued, and no user is
+  recorded from Keycloak, in any of these cases.
+- **Label and lifetime.** The stored label is `label_prefix` followed by the
+  trimmed label, at most 100 bytes in total. `expires_in_days` defaults to
+  `auth.default_key_lifetime_days` and is capped by
+  `auth.max_key_lifetime_days` and `user_key_issuance.max_lifetime_days`
+  (400 above the cap). `class` is `interactive` (default) or `batch`.
+- **Active keys.** Issued keys count against `auth.max_active_keys_per_user`;
+  over the cap, the result is 409 `key_limit_error`.
+- **Models.** `models` lists the models and aliases the user's effective policy
+  allows, exactly as `GET /v1/models` lists them for that user: with
+  `context_length` (omitted while unknown), `type` and `protocols`; see
+  [model list metadata](REFERENCE.md#model-list-metadata). `limits` lists the
+  effective quotas and concurrency.
+
+Each issued key records the administration key that issued it. The user sees it in
+the portal's API-key list under its label and can revoke it there.
+`revoke_issued_key` and `get_issued_key_summary` accept only keys that the
+calling administration key issued; every other key, including the user's own and
+another integration's, is 404 `not_found_error`. A replacement administration key
+is a new credential, so it cannot manage keys its predecessor issued. Users and
+administrators with `users:credentials` can still revoke those.
+
+The summary returns `id`, `prefix`, `label`, `class`, `created`, `expires`,
+`expired`, `revoked`, `last_used`, `active`, `user {username, enabled}`, `models`,
+`limits`, and `usage {timezone, used, remaining, reset_at}`. Quotas are per user,
+so usage covers all the user's keys. It reports totals only, with no per-model
+breakdown, prompts or request records. Previewing a revocation shows the summary
+as its before-image.
+
+Every issued key and every revocation writes a `user_key.issue` or
+`user_key.revoke` history event. It names the target key (`target_id`), the
+user (`details.user_id`) and the administration key (`details.issued_by_admin_key`
+and `details.agent.key_id`), and never the key. Refused issuance at the active-key
+cap is recorded as `refused`; other refusals appear as failed `agent.apply` events.
+
+Issuing a key changes administration state, so a preview made before another key
+was created anywhere becomes stale (409). Integrations that issue keys in
+parallel should prepare a new preview and apply again on 409.
+
+Security notes:
+
+- `user_keys:issue` can create inference credentials for any eligible SSO user,
+  including users who have never signed in. It is a sensitive permission: issuing
+  an administration key with it requires a recent local administrator sign-in.
+- The router cannot verify that the caller authenticated the subject it names.
+  The calling application must pass only subjects it has verified itself.
+- `oidc.required_claim` is checked at portal sign-in only. A user created through
+  issuance has not passed it; use `allowed_groups` to restrict issuance.
+- The usual controls apply: the IP allowlist, per-key request and concurrency
+  limits, key lifetimes, and history. Restrict issuance further with
+  `allowed_groups` and `max_lifetime_days`.
+- Revoking the administration key stops further issuance; keys it already issued
+  stay valid until revoked or expired.
+
 ## Hermes and other MCP agents
 
 Hermes supports remote MCP URLs, HTTP headers and environment references. Store
@@ -235,7 +357,8 @@ revision or stop. The router does not advertise `2025-03-26`, whose required bat
 transport is not implemented. JSON-RPC batching was removed in
 [the 2025-06-18 revision](https://modelcontextprotocol.io/specification/2025-06-18/changelog).
 
-Read tools include identity, service status, users, routing and history. Write
+Read tools include identity, service status, users, routing, history and issued
+key summaries. Write
 operations are offered through a `preview_change` tool with a plain object root,
 an operation-name enum and nested, titled argument alternatives,
 followed by `apply_change` and `get_change_status`. Observer keys do not advertise
@@ -271,6 +394,9 @@ https://hermes-agent.nousresearch.com/docs/reference/mcp-config-reference
 
 Schema migration 0016 adds independent credential, preview and administration-state
 tables and invalidation triggers. Existing inference credentials remain unchanged.
+Migration 0036 adds the issuing administration key to inference keys; existing
+keys have none. Erasing an administration key's owner keeps the keys it issued
+but removes the attribution.
 Database changes retain their transactional audit events. Agent events include
 owner, key ID, coarse source network (IPv4 `/24` or IPv6 `/48`),
 request/transport/change IDs. Network restrictions evaluate the full source IP

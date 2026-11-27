@@ -20,11 +20,14 @@ type postgresStore struct{ pool *pgxpool.Pool }
 
 func (s postgresStore) lookup(ctx context.Context, hash [32]byte) (keyRecord, error) {
 	var r keyRecord
-	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.trusted_forwarder, u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,u.protected_admin,
+	err := s.pool.QueryRow(ctx, `SELECT k.id, k.class, k.prefix, k.label, k.trusted_forwarder,
+		u.id, u.username, u.groups, k.hash, k.expires, k.revoked, u.enabled,u.protected_admin,
 		EXISTS(SELECT 1 FROM local_credentials c WHERE c.user_id=u.id AND c.must_change_password),
 		(SELECT jsonb_object_agg(o.field, o.value) FROM quota_overrides o WHERE o.user_id = u.id)
 		FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.hash = $1`, hash[:]).
-		Scan(&r.KeyID, &r.KeyClass, &r.TrustedForwarder, &r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked, &r.enabled, &r.ProtectedAdmin, &r.passwordChangeRequired, &r.Overrides)
+		Scan(&r.KeyID, &r.KeyClass, &r.KeyPrefix, &r.KeyLabel, &r.TrustedForwarder,
+			&r.UserID, &r.Username, &r.Groups, &r.hash, &r.expires, &r.revoked,
+			&r.enabled, &r.ProtectedAdmin, &r.passwordChangeRequired, &r.Overrides)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrInvalidKey
 	}
@@ -143,8 +146,42 @@ func (a Admin) CreateKeyOfClass(ctx context.Context, userID, label, class string
 	return a.createKey(ctx, userID, label, class, lifetime, false)
 }
 
-func (a Admin) createKey(ctx context.Context, userID, label, class string, lifetime time.Duration, trusted bool) (issued string, err error) {
-	a, finish := a.auditOperation(ctx, "key.create", "user", userID)
+func (a Admin) createKey(ctx context.Context, userID, label, class string, lifetime time.Duration, trusted bool) (string, error) {
+	key, err := a.issueKey(ctx, "key.create", keyRequest{userID: userID, label: label, class: class, lifetime: lifetime, trusted: trusted})
+	return key.Secret, err
+}
+
+// IssuedKey is a newly created inference key. Secret is shown once and is
+// never stored; the database keeps its SHA-256 hash only.
+type IssuedKey struct {
+	ID      string
+	Prefix  string
+	Label   string
+	Class   string
+	Expires time.Time
+	Secret  string
+}
+
+type keyRequest struct {
+	userID, label, class string
+	lifetime             time.Duration
+	trusted              bool
+	issuedBy             string // administration key ID; empty for portal and CLI keys
+}
+
+// CreateIssuedKey creates an inference key on behalf of an administration key
+// with user_keys:issue. The key records its issuer; site lifetime and
+// active-key limits apply as for every other issuance path.
+func (a Admin) CreateIssuedKey(ctx context.Context, userID, label, class string, lifetime time.Duration, adminKeyID string) (IssuedKey, error) {
+	if adminKeyID == "" {
+		return IssuedKey{}, errors.New("issuing administration key is required")
+	}
+	return a.issueKey(ctx, "user_key.issue", keyRequest{userID: userID, label: label, class: class, lifetime: lifetime, issuedBy: adminKeyID})
+}
+
+func (a Admin) issueKey(ctx context.Context, action string, request keyRequest) (issued IssuedKey, err error) {
+	userID, label, class, lifetime, trusted := request.userID, request.label, request.class, request.lifetime, request.trusted
+	a, finish := a.auditOperation(ctx, action, "user", userID)
 	defer func() { finish(err) }()
 	maximum := a.KeyPolicy.MaxKeyLifetimeDays
 	if maximum == 0 {
@@ -155,22 +192,23 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		cap = config.DefaultMaxActiveKeysPerUser
 	}
 	if maximum < 1 || maximum > 36500 || cap < 1 || cap > 1000 {
-		return "", errors.New("invalid key issuance policy")
+		return IssuedKey{}, errors.New("invalid key issuance policy")
 	}
 	if lifetime > time.Duration(maximum)*24*time.Hour {
-		return "", ErrKeyLifetime
+		return IssuedKey{}, ErrKeyLifetime
 	}
 	if lifetime < time.Microsecond {
-		return "", errors.New("key lifetime must be positive")
+		return IssuedKey{}, errors.New("key lifetime must be positive")
 	}
 	if class != "interactive" && class != "batch" {
-		return "", errors.New("key class must be interactive or batch")
+		return IssuedKey{}, errors.New("key class must be interactive or batch")
 	}
 	key, err := Generate()
 	if err != nil {
-		return "", err
+		return IssuedKey{}, err
 	}
 	hash := sha256.Sum256([]byte(key))
+	issued = IssuedKey{Prefix: key[:12], Label: label, Class: class, Secret: key}
 	err = a.transaction(ctx, func(tx pgx.Tx) error {
 		var id string
 		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND enabled FOR UPDATE`, userID).Scan(&id); err != nil {
@@ -183,25 +221,48 @@ func (a Admin) createKey(ctx context.Context, userID, label, class string, lifet
 		if active >= cap {
 			return ErrKeyLimit
 		}
-		var keyID string
-		err := tx.QueryRow(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder)
-		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7
+		err := tx.QueryRow(ctx, `INSERT INTO api_keys (user_id, prefix, hash, label, expires, class, trusted_forwarder, issued_by_admin_key)
+		SELECT id, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 microsecond', $6, $7, NULLIF($8, '')::uuid
 		FROM users WHERE id = $1 AND enabled AND NOT EXISTS
-		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password) RETURNING id`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted).Scan(&keyID)
+		(SELECT 1 FROM local_credentials c WHERE c.user_id=users.id AND c.must_change_password) RETURNING id, expires`, userID, key[:12], hash[:], label, lifetime.Microseconds(), class, trusted, request.issuedBy).Scan(&issued.ID, &issued.Expires)
 		if err != nil {
 			return err
 		}
-		a.event.TargetType, a.event.TargetID = "key", keyID
+		a.event.TargetType, a.event.TargetID = "key", issued.ID
 		a.event.Details = map[string]any{"user_id": userID, "class": class, "trusted_forwarder": trusted}
+		if request.issuedBy != "" {
+			a.event.Details["issued_by_admin_key"] = request.issuedBy
+		}
 		return nil
 	})
 	if errors.Is(err, ErrKeyLimit) {
-		return "", ErrKeyLimit
+		return IssuedKey{}, ErrKeyLimit
 	}
 	if err != nil {
-		return "", errors.New("user not found, disabled, password change required, or create API key failed")
+		return IssuedKey{}, errors.New("user not found, disabled, password change required, or create API key failed")
 	}
-	return key, nil
+	return issued, nil
+}
+
+// RevokeIssuedKey revokes an inference key that adminKeyID issued. Keys from
+// other issuers, including the owner's own keys, are ErrNotFound. Like every
+// revocation it clears the API-key caches before returning.
+func (a Admin) RevokeIssuedKey(ctx context.Context, adminKeyID, keyID string) (err error) {
+	a, finish := a.auditOperation(ctx, "user_key.revoke", "key", keyID)
+	a.event.Details = map[string]any{"issued_by_admin_key": adminKeyID}
+	defer func() { finish(err) }()
+	return a.changeWith(ctx, func(tx pgx.Tx) error {
+		var userID string
+		err := tx.QueryRow(ctx, `UPDATE api_keys SET revoked=true WHERE id=$1 AND issued_by_admin_key=$2 RETURNING user_id::text`, keyID, adminKeyID).Scan(&userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return errors.New("revoke API key failed")
+		}
+		a.event.Details["user_id"] = userID
+		return nil
+	})
 }
 
 func (a Admin) ListKeys(ctx context.Context, userID string) ([]KeyInfo, error) {
@@ -272,6 +333,7 @@ func (a Admin) DeleteUser(ctx context.Context, userID string) (err error) {
 
 // UserInfo is what operators need to find a user; it holds no credentials.
 type UserInfo struct {
+	Profile
 	ID             string     `json:"id"`
 	Issuer         string     `json:"issuer"`
 	Subject        string     `json:"sub"`
@@ -297,8 +359,8 @@ type UserFilter struct {
 }
 
 func (a Admin) ListUsersFiltered(ctx context.Context, filter UserFilter) ([]UserInfo, error) {
-	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin, disabled_at FROM users
-		WHERE ($1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0)
+	rows, err := a.Pool.Query(ctx, `SELECT id, issuer, sub, username, email, groups, enabled, synced_at, protected_admin, disabled_at,full_name,given_name,family_name,institution FROM users
+		WHERE ($1 = '' OR strpos(lower(username), lower($1)) > 0 OR strpos(lower(email), lower($1)) > 0 OR strpos(lower(full_name), lower($1)) > 0 OR strpos(lower(institution), lower($1)) > 0)
 		AND (NOT $2 OR NOT enabled) AND ($3::timestamptz IS NULL OR (NOT enabled AND disabled_at<$3))
 		ORDER BY username, issuer, sub`, filter.Match, filter.Disabled, filter.DisabledBefore)
 	if err != nil {
@@ -308,7 +370,7 @@ func (a Admin) ListUsersFiltered(ctx context.Context, filter UserFilter) ([]User
 	users := []UserInfo{}
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin, &u.DisabledAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Issuer, &u.Subject, &u.Username, &u.Email, &u.Groups, &u.Enabled, &u.SyncedAt, &u.ProtectedAdmin, &u.DisabledAt, &u.FullName, &u.GivenName, &u.FamilyName, &u.Institution); err != nil {
 			return nil, errors.New("read user failed")
 		}
 		users = append(users, u)
@@ -412,7 +474,13 @@ func (a Admin) SetGroups(ctx context.Context, userID string, groups []string) (e
 
 // SyncIdentity refreshes claims without re-enabling disabled accounts or linking
 // by email. API key caches observe new memberships before this returns.
-func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool) (id string, err error) {
+func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool) (string, error) {
+	return a.SyncIdentityProfile(ctx, issuer, sub, username, email, groups, emailVerified, ProfileClaims{})
+}
+
+// SyncIdentityProfile also refreshes optional display claims from a verified
+// institutional login. Other synchronization paths preserve those attributes.
+func (a Admin) SyncIdentityProfile(ctx context.Context, issuer, sub, username, email string, groups []string, emailVerified bool, claims ProfileClaims) (id string, err error) {
 	if a.Actor.Type == "" {
 		a.Actor = audit.Actor{Type: "identity_provider"}
 	}
@@ -431,7 +499,9 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 		var oldName, oldEmail string
 		var oldGroups []string
 		var enabled, verified bool
-		err := tx.QueryRow(ctx, `SELECT id::text,username,email,groups,enabled,email_verified FROM users WHERE issuer=$1 AND sub=$2 FOR UPDATE`, issuer, sub).Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &verified)
+		var oldProfile Profile
+		err := tx.QueryRow(ctx, `SELECT id::text,username,email,groups,enabled,email_verified,full_name,given_name,family_name,institution FROM users WHERE issuer=$1 AND sub=$2 FOR UPDATE`, issuer, sub).Scan(&id, &oldName, &oldEmail, &oldGroups, &enabled, &verified, &oldProfile.FullName, &oldProfile.GivenName, &oldProfile.FamilyName, &oldProfile.Institution)
+		profile := claims.apply(oldProfile)
 		if err == nil {
 			if !enabled {
 				return ErrNotFound
@@ -440,12 +510,12 @@ func (a Admin) SyncIdentity(ctx context.Context, issuer, sub, username, email st
 			incoming := slices.Clone(groups)
 			slices.Sort(oldGroups)
 			slices.Sort(incoming)
-			if oldName == username && oldEmail == email && verified == emailVerified && slices.Equal(slices.Compact(oldGroups), slices.Compact(incoming)) {
+			if oldName == username && oldEmail == email && verified == emailVerified && oldProfile == profile && slices.Equal(slices.Compact(oldGroups), slices.Compact(incoming)) {
 				return errAuthUnchanged
 			}
-			_, err = tx.Exec(ctx, `UPDATE users SET username=$2,email=$3,groups=$4,synced_at=clock_timestamp(),email_verified=$5 WHERE id=$1`, id, username, email, groups, emailVerified)
+			_, err = tx.Exec(ctx, `UPDATE users SET username=$2,email=$3,groups=$4,synced_at=clock_timestamp(),email_verified=$5,full_name=$6,given_name=$7,family_name=$8,institution=$9 WHERE id=$1`, id, username, email, groups, emailVerified, profile.FullName, profile.GivenName, profile.FamilyName, profile.Institution)
 		} else if errors.Is(err, pgx.ErrNoRows) {
-			err = tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6) RETURNING id::text`, issuer, sub, username, email, groups, emailVerified).Scan(&id)
+			err = tx.QueryRow(ctx, `INSERT INTO users(issuer,sub,username,email,groups,synced_at,email_verified,full_name,given_name,family_name,institution) VALUES($1,$2,$3,$4,$5,clock_timestamp(),$6,$7,$8,$9,$10) RETURNING id::text`, issuer, sub, username, email, groups, emailVerified, profile.FullName, profile.GivenName, profile.FamilyName, profile.Institution).Scan(&id)
 		}
 		a.event.TargetID = id
 		return err

@@ -25,7 +25,7 @@ func TestTraceStorageDoesNotHoldStreamingResponse(t *testing.T) {
 	release := make(chan struct{})
 	var traces *requesttrace.Service
 	f := startUsageRouter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if backendProbe(r) {
 			w.WriteHeader(200)
 			return
 		}

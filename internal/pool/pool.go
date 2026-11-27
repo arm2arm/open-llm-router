@@ -5,11 +5,15 @@ package pool
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"hash/fnv"
+	"io"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +28,13 @@ const (
 	CheckTimeout      = 2 * time.Second
 	Cooldown          = 10 * time.Second
 	MaxSessionIDBytes = 256
+	// CatalogInterval is how often a healthy replica's model catalog is read
+	// again for its context length. It is also read on a replica's first
+	// successful check and when it recovers.
+	CatalogInterval = 10 * time.Minute
+	// CatalogPath is the OpenAI-compatible model catalog.
+	CatalogPath     = "/v1/models"
+	MaxCatalogBytes = 1 << 20
 )
 
 type replica struct {
@@ -33,6 +44,10 @@ type replica struct {
 	healthy   bool
 	failures  int
 	coolUntil time.Time
+	// contextLength is what the replica's catalog reports for the model, 0
+	// when unknown; catalogAt is when the catalog was last read.
+	contextLength int
+	catalogAt     time.Time
 }
 
 func (r *replica) count() int {
@@ -50,6 +65,7 @@ type Pool struct {
 	replicas []replica
 	waiters  []*waiter // ordered by priority, then arrival
 	events   *capacityEvents
+	upstream string // model name sent to the backends, looked up in their catalogs
 }
 
 // A release wakes queued requests across both active and draining revisions.
@@ -164,7 +180,13 @@ waiting:
 		case <-changed:
 			p.mu.Lock()
 			changed = p.events.channel()
-			p.dispatch()
+			// One dispatch serves every waiter that fits, in queue order, so
+			// only the head runs it. A notification wakes all waiters; letting
+			// each of them dispatch would repeat that scan once per waiter.
+			// A departing head dispatches and notifies again (below).
+			if len(p.waiters) > 0 && p.waiters[0] == w {
+				p.dispatch()
+			}
 			p.mu.Unlock()
 		case <-timer.C:
 			break waiting
@@ -217,9 +239,12 @@ func (p *Pool) dispatchBefore(priority int) {
 	}
 }
 
+// eligible runs the cheap state checks before the caller's access filter: a
+// full pool is rescanned for every queued caller on each release.
 func (p *Pool) eligible(i int, r Request, now time.Time) bool {
 	rep := &p.replicas[i]
-	return (r.Allowed == nil || r.Allowed(rep.config)) && !(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight
+	return rep.healthy && !now.Before(rep.coolUntil) && rep.count() < rep.config.MaxInflight &&
+		!(r.Exclude != nil && r.Exclude.pool == p && r.Exclude.index == i) && (r.Allowed == nil || r.Allowed(rep.config))
 }
 
 // reserve picks a replica for r: the session's preferred replica if it is
@@ -330,6 +355,9 @@ type State struct {
 	Healthy     bool    `json:"healthy"`
 	Weight      float64 `json:"weight"`
 	MaxInflight int     `json:"max_inflight"`
+	// ContextLength is the context length the replica's model catalog
+	// reports for the model; omitted when unknown.
+	ContextLength int `json:"context_length,omitempty"`
 }
 
 func (p *Pool) Snapshot() []State {
@@ -338,16 +366,78 @@ func (p *Pool) Snapshot() []State {
 	out := make([]State, len(p.replicas))
 	for i, r := range p.replicas {
 		out[i] = State{Backend: r.config.Backend, URL: r.config.URL, Inflight: r.count(), Healthy: r.healthy && !time.Now().Before(r.coolUntil),
-			Weight: r.config.Weight, MaxInflight: r.config.MaxInflight}
+			Weight: r.config.Weight, MaxInflight: r.config.MaxInflight, ContextLength: r.contextLength}
 	}
 	return out
+}
+
+// ContextLength is the smallest context length that the replicas' model
+// catalogs report, so that a request fits whichever replica serves it. It is
+// 0 when no replica reports one.
+func (p *Pool) ContextLength() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	smallest := 0
+	for _, r := range p.replicas {
+		if r.contextLength > 0 && (smallest == 0 || r.contextLength < smallest) {
+			smallest = r.contextLength
+		}
+	}
+	return smallest
+}
+
+// CatalogEntry is the part of an entry of an OpenAI-compatible model catalog
+// (GET /v1/models) that the router reads.
+type CatalogEntry struct {
+	ID      string `json:"id"`
+	OwnedBy string `json:"owned_by"`
+	// MaxModelLen is the context length that vLLM and SGLang report;
+	// ContextLength is the name other OpenAI-compatible catalogs use. They
+	// stay raw, so an unexpected value cannot make the catalog unreadable.
+	MaxModelLen   json.RawMessage `json:"max_model_len"`
+	ContextLength json.RawMessage `json:"context_length"`
+}
+
+// ReportedContextLength is the entry's context length, or 0 if it reports
+// no positive integer up to config.MaxContextLength.
+func (e CatalogEntry) ReportedContextLength() int {
+	for _, raw := range []json.RawMessage{e.MaxModelLen, e.ContextLength} {
+		if n, err := strconv.Atoi(string(raw)); err == nil && n > 0 && n <= config.MaxContextLength {
+			return n
+		}
+	}
+	return 0
+}
+
+// catalogContextLength reads a model catalog and returns the context length
+// it reports for model, 0 if it reports none. ok is false when the body is not
+// a readable catalog, so the previous value is kept.
+func catalogContextLength(body io.Reader, model string) (n int, ok bool) {
+	data, err := io.ReadAll(io.LimitReader(body, MaxCatalogBytes+1))
+	if err != nil || len(data) > MaxCatalogBytes {
+		return 0, false
+	}
+	var catalog struct {
+		Data *[]CatalogEntry `json:"data"`
+	}
+	if json.Unmarshal(data, &catalog) != nil || catalog.Data == nil {
+		return 0, false
+	}
+	for _, entry := range *catalog.Data {
+		if entry.ID == model {
+			return entry.ReportedContextLength(), true
+		}
+	}
+	return 0, true
 }
 
 type Manager struct {
 	Pools      map[string]*Pool // immutable after construction
 	client     *http.Client
 	capacities map[string]*atomic.Int64
-	events     *capacityEvents
+	// events are per model, like the capacity counters its revisions share:
+	// a release wakes only callers that could use the freed capacity.
+	events map[string]*capacityEvents
 }
 
 func New(cfg *config.Config, transport http.RoundTripper) *Manager {
@@ -360,18 +450,25 @@ func Replace(cfg *config.Config, transport http.RoundTripper, previous *Manager)
 	m := &Manager{Pools: make(map[string]*Pool), client: &http.Client{Transport: transport, Timeout: CheckTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 	m.capacities = map[string]*atomic.Int64{}
-	m.events = &capacityEvents{changed: make(chan struct{})}
+	m.events = map[string]*capacityEvents{}
 	if previous != nil {
-		m.events = previous.events
-		for key, counter := range previous.capacities {
-			m.capacities[key] = counter
-		}
+		// Removed models keep their entries: their draining leases still
+		// release capacity that a restored revision must observe.
+		maps.Copy(m.capacities, previous.capacities)
+		maps.Copy(m.events, previous.events)
 	}
 	for name, model := range cfg.Models {
+		if m.events[name] == nil {
+			m.events[name] = &capacityEvents{changed: make(chan struct{})}
+		}
+		upstream := model.UpstreamModel
+		if upstream == "" {
+			upstream = name
+		}
 		if previous != nil {
 			if old := previous.Pools[name]; old != nil {
 				old.mu.Lock()
-				same := len(old.replicas) == len(model.Pool)
+				same := old.upstream == upstream && len(old.replicas) == len(model.Pool)
 				for i, r := range old.replicas {
 					same = same && r.config == model.Pool[i]
 				}
@@ -382,7 +479,7 @@ func Replace(cfg *config.Config, transport http.RoundTripper, previous *Manager)
 				}
 			}
 		}
-		p := &Pool{events: m.events}
+		p := &Pool{events: m.events[name], upstream: upstream}
 		for _, r := range model.Pool {
 			key := name + "\x00" + r.URL
 			counter := m.capacities[key]
@@ -410,8 +507,20 @@ func (m *Manager) Ready() bool {
 	return true
 }
 
+// ContextLength is the smallest context length the replicas of model report,
+// or 0 when none does or the model has no pool.
+func (m *Manager) ContextLength(model string) int {
+	if m == nil || m.Pools[model] == nil {
+		return 0
+	}
+	return m.Pools[model].ContextLength()
+}
+
 // Check probes in parallel, returning each probe's success separately from the
 // ongoing two-failure health state. Every response is closed, including failures.
+// A replica that passes and whose catalog is due also has its model catalog
+// read for the model's context length; a health path of /v1/models is that
+// catalog, so no second request is made.
 func (m *Manager) Check(ctx context.Context) map[string][]bool {
 	var wg sync.WaitGroup
 	results := make(map[string][]bool, len(m.Pools))
@@ -421,6 +530,9 @@ func (m *Manager) Check(ctx context.Context) map[string][]bool {
 		for i := range p.replicas {
 			wg.Go(func() {
 				r := p.replicas[i].config
+				p.mu.Lock()
+				due := p.replicas[i].catalogAt.IsZero() || !p.replicas[i].healthy || time.Since(p.replicas[i].catalogAt) >= CatalogInterval
+				p.mu.Unlock()
 				path := r.HealthPath
 				if path == "" {
 					path = "/health"
@@ -436,8 +548,15 @@ func (m *Manager) Check(ctx context.Context) map[string][]bool {
 				resp, err := m.client.Do(req)
 				ok := err == nil && resp.StatusCode == http.StatusOK
 				checks[i] = ok
+				contextLength, read := 0, false
+				if ok && due && path == CatalogPath {
+					contextLength, read = catalogContextLength(resp.Body, p.upstream)
+				}
 				if resp != nil {
 					resp.Body.Close()
+				}
+				if ok && due && path != CatalogPath {
+					contextLength, read = m.catalogContextLength(probeCtx, r, p.upstream)
 				}
 				if ctx.Err() != nil {
 					return
@@ -445,6 +564,12 @@ func (m *Manager) Check(ctx context.Context) map[string][]bool {
 				p.mu.Lock()
 				defer p.mu.Unlock()
 				state := &p.replicas[i]
+				if ok && due {
+					state.catalogAt = time.Now()
+					if read {
+						state.contextLength = contextLength
+					}
+				}
 				if ok {
 					state.healthy, state.failures = true, 0
 					p.dispatch()
@@ -459,6 +584,27 @@ func (m *Manager) Check(ctx context.Context) map[string][]bool {
 	}
 	wg.Wait()
 	return results
+}
+
+// catalogContextLength reads a replica's model catalog for model. A failed or
+// unreadable catalog returns ok false and keeps the previous value.
+func (m *Manager) catalogContextLength(ctx context.Context, r config.Replica, model string) (n int, ok bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(r.URL, "/")+CatalogPath, nil)
+	if err != nil {
+		return 0, false
+	}
+	if r.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+r.BearerToken)
+	}
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, false
+	}
+	return catalogContextLength(resp.Body, model)
 }
 
 // Run performs ongoing health checks. Call Check once before serving traffic.

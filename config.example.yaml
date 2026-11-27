@@ -15,6 +15,15 @@ auth:
   max_key_lifetime_days: 90
   max_active_keys_per_user: 10
 
+# Optional public information for the portal. Use a reachable site notice and
+# public organisation names. Origin keys stay on the server. Restart OLR after
+# changing these file-based settings.
+# portal:
+#   privacy_notice_url: https://research.example.org/llm-privacy
+#   recipient_labels:
+#     "http://mock-llm-a:8000": Example Institute
+#     "http://mock-llm-b:8000": Example Federation Partner
+
 # Personal browser clients (Open WebUI Direct Connections); empty disables CORS.
 # Use the browser site's origin, without a path: [https://ai.aip.de].
 cors:
@@ -25,6 +34,12 @@ cors:
 admin_api:
   enabled: false
   trusted_proxy_cidrs: []
+  # Optional limits for inference keys an integration issues for SSO users
+  # (user_keys:issue); see docs/AGENT_ADMINISTRATION.md.
+  # user_key_issuance:
+  #   allowed_groups: [staff]
+  #   max_lifetime_days: 30
+  #   label_prefix: "Integration · "
 
 # Quota calendar and upload admission (per router process).
 limits:
@@ -69,9 +84,18 @@ models:
     # priority: {interactive: 0, batch: 10}  # sent as "priority" to vLLM started
     #                                        # with --scheduling-policy priority
     # upstream_model: backend-served-name  # optional, also applied to aliases
+    # Reported in /v1/models. context_length defaults to the smallest
+    # max_model_len the replicas' /v1/models catalogs report; type is chat
+    # (default) or embedding.
+    # context_length: 131072
+    # type: chat
     pool:
       # weight is the relative throughput of a replica; max_inflight caps the
       # requests it serves at once.
+      # On every real replica, optionally add public_organization and privacy_url
+      # with the recipient's public name and actual published notice. Empty values
+      # are disclosed as incomplete; never use internal hostnames as public labels.
+      # Set PORTAL_PRIVACY_URL separately for the site's completed notice (docs/PRIVACY.md).
       - {url: http://mock-llm-a:8000, weight: 2.0, max_inflight: 64}
       - {url: http://mock-llm-b:8000, weight: 1.0, max_inflight: 32}
       # For a vLLM --api-key backend, add bearer_token_env: VLLM_API_KEY
@@ -113,4 +137,6 @@ aliases: {claude-sonnet-4-5: chat-model}
 # Content retention requires data-owner approval and explicit user opt-in.
 content_tracing:
   enabled: false
+  max_stored_mib: 64     # per-account default; Admin → Request logging overrides live
+  max_stored_traces: 512
   redact_patterns: [] # supplemental RE2 patterns, e.g. organization identifiers

@@ -1,13 +1,39 @@
 # Privacy notice — template
 
 This is a template for sites that run open-llm-router. Replace every `<…>` with the site's
-value and publish the result where users sign in. It describes what the router itself stores;
-the model backends, the reverse proxy and the identity provider are covered by their own
-notices.
+value and publish the result where users sign in and in the clients they use. Complete the
+recipient and backend-retention information below as well as the router's storage periods;
+link the actual notices for the model backends, reverse proxy and identity provider.
 
 ---
 
 **Controller:** `<organization, address>` · **Contact for privacy requests:** `<email or form>`
+
+## AI interaction and inference recipients
+
+You interact with an AI model through `<client names, e.g. DRPHub, Hermes, an IDE,
+Open WebUI>`. Model responses can be inaccurate. Check important information.
+The client sends `<describe prompts, history, system instructions, tool definitions,
+tool results and included attachments>` through the router to a model backend.
+The router can send the full request to any permitted replica on initial selection
+and to another replica on a qualifying retry. An initial recipient may already have
+processed the request before a failed response causes a retry. Routing is not
+restricted to one organization merely because a model has one public name.
+
+List **every possible primary and retry recipient**, including replicas that are
+temporarily unhealthy. Expand aliases to their active model pools. For each model
+or alias available to this audience, complete:
+
+| Model / aliases | Recipient organization and role | Initial / retry destination | Processing location and transfers | Backend logging, training use and retention | Actual privacy notice / contact |
+|---|---|---|---|---|---|
+| `<model and aliases>` | `<organization / processor or controller>` | `<initial, retry, or both>` | `<location, transfer safeguards>` | `<prompt/output/error logs, training use, retention periods, deletion and backups>` | `<published URL / contact>` |
+| `<same model, additional replica organization>` | `<organization / role>` | `<initial and retry>` | `<location, safeguards>` | `<logging, training, retention and deletion>` | `<published URL / contact>` |
+
+**Routing and storage are separate.** Turning off personal request tracing only
+stops the router's optional content capture. It does not stop inference requests,
+full-request retries, normal accounting, client-side history, or backend logging.
+Deleting router activity does not delete copies in clients or at backend providers;
+describe those deletion routes here: `<client/backend contacts and procedures>`.
 
 ## What is stored
 
@@ -15,7 +41,7 @@ When you use the LLM router at `<https://router.example.org>`, it stores:
 
 | Data | Content | Kept for | How you delete it |
 |---|---|---|---|
-| Account | identity-provider issuer and subject, username, email, group memberships, enabled flag, last identity update and when access was disabled | until operator erasure, including after access is disabled or employment/membership ends; there is no automatic disabled-account expiry | ask `<contact>`; the operator deletes the account and its owned records; administration history remains as described below |
+| Account | identity-provider issuer and subject, username, email, optional full/first/last name and institution supplied at institutional sign-in, group memberships, enabled flag, last identity update and when access was disabled | until operator erasure, including after access is disabled or employment/membership ends; there is no automatic disabled-account expiry | ask `<contact>`; the operator deletes the account and its owned records; administration history remains as described below |
 | API keys | label, first 12 characters, a one-way hash, creation, last use, expiry, revoked flag | until you remove them | revoke a key in the portal, then remove it for good |
 | Known local devices | one-way hash of a random `olr_device` cookie, account ID, creation and expiry; no IP address or browser fingerprint | 30 days after successful local sign-in; expired rows removed by daily retention | clear the cookie in your browser; account erasure removes registrations |
 | Sessions | a hash of the session cookie, creation and expiry | 8 hours, or until you sign out | sign out |
@@ -73,7 +99,8 @@ or erasure of your account, contact `<contact>`. Requests are answered within on
 ## Legal basis and recipients
 
 `<Legal basis, e.g. performance of a service for members of the organization>`. Data is
-processed on `<hosting location>` and is not shared with third parties `<or: list recipients>`.
+processed on `<router hosting location>` and sent to the inference recipients listed
+above. Also list `<other recipients, locations, roles and applicable safeguards>`.
 Authorized administrators can inspect account identity, groups, limits and usage/key
 metadata. If the site enables agent administration and grants `users:read`, the
 authorized agent client and its operator are recipients of usernames, email
@@ -86,6 +113,28 @@ data-export operators can access stored content.
 
 ## For operators
 
+- Publish the completed site notice and set `portal.privacy_notice_url` to its
+  absolute HTTPS URL (up to 2048 bytes, no credentials, query or whitespace).
+  A nonempty `PORTAL_PRIVACY_URL` overrides the file setting. When both are empty,
+  sign-in and Connect remain usable and displays a contact-operator message. The router
+  validates the link's syntax; the operator owns its content and availability.
+  Compose forwards this environment variable; Helm accepts it under
+  `env.PORTAL_PRIVACY_URL`. Restart the router after changing it.
+- In **Backends**, set **Public organization** and **Recipient privacy URL** for
+  each backend. For file-configured/manual replicas, set `public_organization`
+  and `privacy_url` on every `models.<name>.pool[]` entry. Managed backend metadata
+  replaces replica metadata when a backend reference is resolved. These fields
+  are public: do not put credentials, internal hostnames, private backend paths
+  or administrator-only names in them. They are never inferred from connection
+  settings. Missing labels/notices are explicitly incomplete in Connect and the
+  authenticated catalogues. Existing `portal.recipient_labels` entries remain
+  a fallback when a replica has no public organization; they do not supply a
+  recipient privacy URL. Review them whenever routing or access changes.
+  If a backend is itself a gateway, confirm its onward recipients and include
+  them in the site notice.
+- Put the [first-session AI notice](CLIENTS.md#first-session-ai-notice) in each
+  client where users actually send prompts, including users who never visit the
+  portal. The sign-in privacy link and Connect explanation do not replace it.
 - Per-request retention is `retention.usage_days` (default 90) and daily totals
   `retention.usage_daily_days` (default 400) in the config file; put the same values in this
   notice. The router deletes older rows at startup and every night at `retention.run_at`, and

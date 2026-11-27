@@ -139,7 +139,7 @@ and P3; dependencies may change that order.
   A PostgreSQL regression floods 400/403/404 and 429 rejections without creating
   traces or consuming the admitted call's capture budget. Per-user process limits
   are four active/queued captures and 30 captures/minute, within a bounded map and
-  global 32-slot budget. Retained storage is limited to 512 traces and 64 MiB of
+  global 32-slot budget. Retained storage defaults to 512 traces and 64 MiB of
   logical JSON per user across replicas. Separate transaction statements after a
   user-row lock avoid stale snapshots when concurrent writers wait. Generated
   byte sizes cover historical rows; deletion naturally frees budget. Parameters

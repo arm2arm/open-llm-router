@@ -117,7 +117,7 @@ func TestConcurrentCapsAndExclusion(t *testing.T) {
 func TestHealthThresholdsAndCooldown(t *testing.T) {
 	var failing atomic.Bool
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" || r.Header.Get("Authorization") != "Bearer backend-key" {
+		if r.URL.Path != "/health" && r.URL.Path != CatalogPath || r.Header.Get("Authorization") != "Bearer backend-key" {
 			t.Error("bad probe", r.URL, r.Header)
 		}
 		if failing.Load() {

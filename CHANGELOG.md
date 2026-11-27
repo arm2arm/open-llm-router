@@ -5,6 +5,78 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- `GET /v1/me/usage` exposes the calling API key's label, workload class and
+  expiry alongside its ID and display prefix. Clients that use a pasted key
+  can warn the user before it expires.
+
+- A trusted application that signs users in through the router's Keycloak realm
+  can issue each user an inference key, without sending them to the portal. The
+  new administration-key permission `user_keys:issue` (grantable alone; it does
+  not include `users:read`) adds `issue_user_key`, `revoke_issued_key` and
+  `get_issued_key_summary`. Issuance works only for the configured OIDC issuer,
+  never for local accounts or the protected administrator. A user who has never
+  signed in is recorded from Keycloak when the group-sync service account is
+  configured. Disabled users and users without model access get no key. Issued
+  keys carry a label prefix, respect `auth.max_key_lifetime_days` and
+  `auth.max_active_keys_per_user`, and appear in the user's portal key list.
+  Only the issuing administration key can revoke or summarize them through the
+  API. Each issue and revocation is in history, without the key. The optional
+  `admin_api.user_key_issuance` setting limits issuance by group and lifetime and
+  sets the label prefix. The Agent access wizard marks the permission as
+  sensitive and warns about it. **Upgrade:** migration 0036 adds the issuing
+  administration key to inference keys; existing keys are unchanged.
+
+- `GET /v1/models`, the portal's `/portal/api/models` and the `issue_user_key` and
+  `get_issued_key_summary` responses report each model's
+  `context_length`, `type` (`chat` or `embedding`) and `protocols`, so agents can
+  size their context and portals never pick an embedding model as a chat
+  default. Aliases report their target's values. Models accept two optional
+  settings: `context_length` (a positive integer) and `type` (default `chat`).
+  Without a configured `context_length`, health checks read it from the
+  replicas' `/v1/models` catalogs (vLLM's and SGLang's `max_model_len`) on the
+  first successful check, on recovery and every 10 minutes, and report the
+  smallest value across the replicas; the field is omitted while unknown.
+  Backends that serve no catalog, such as Ollama, see one extra
+  `GET /v1/models` per replica every 10 minutes. Endpoint discovery shows the
+  reported values, and the routing editor can set both settings. Existing
+  configurations and clients work unchanged. mock-llm reports `max_model_len`
+  (`MOCK_MAX_MODEL_LEN`, default 32768) and counts catalog reads apart from
+  forwarded requests in `/_mock/stats` (`catalog_requests`).
+- Admin-added backends can no longer reach blocked destinations through IPv6
+  forms that a translator delivers to IPv4: NAT64 (`64:ff9b::/96`) and
+  IPv4-compatible addresses get the verdict of their embedded IPv4 address,
+  local-use NAT64 needs an explicit `OLR_BACKEND_ALLOWED_CIDRS` grant, and
+  IPv6 zone identifiers are refused. A zone previously let a private-network
+  origin evade the AWS IPv6 metadata block. Grant translated private
+  backends by their IPv4 network. Identity-provider checks apply the same
+  rules to metadata addresses and now also refuse Alibaba's `100.100.100.200`.
+- Queued inference requests cost far less CPU: a release no longer makes every
+  caller queued for any model rescan the pool.
+- Forwarding large requests is cheaper: routing fields are read, and the
+  model, priority, `stream_options` and `store` fields rewritten, without
+  decoding and re-encoding the body. A 0.8 MB chat request takes 2.3x less
+  CPU and a tenth of the memory; a body of many small fields no longer
+  allocates per field. Other members are forwarded byte for byte (no key
+  re-sorting or HTML escaping). When a model sets `priority`, the router also
+  removes case variants such as `"Priority"`, which some decoders apply.
+- The portal loads faster: its content-hashed JavaScript and CSS bundles are
+  cached by the browser and sent gzip-compressed (about 705 KB down to 200 KB),
+  instead of being transferred again, uncompressed, on every page load.
+
+- The API-key creation dialog explains Interactive and Batch use, their separate
+  concurrency limits and shared quotas, and labels Interactive as the default
+  for most uses.
+- Backend editors can publish an organization name and recipient privacy URL.
+  Connect explains AI interaction, retries and backend processing, shows per-model
+  recipient privacy links, and identifies missing notices. Authenticated model
+  catalogues add `recipient_details` and `recipients_complete`; existing portal
+  recipient labels and privacy configuration remain supported.
+- Sign-in and Connect can link the operator’s privacy notice. Connect shows the
+  possible recipients of a request for each permitted model and alias, including
+  unlabelled destinations. Both portal settings are optional.
+- OpenAI streaming preserves supplemental metadata on final usage events.
+  Ordinary usage-only events can still be suppressed when the client omits usage.
+
 - Helm upgrades preserve an existing settings encryption key when values omit it
   or supply an empty entry, and reject accidental replacement with another key.
   Ordinary removed backend tokens are still removed from the managed Secret.

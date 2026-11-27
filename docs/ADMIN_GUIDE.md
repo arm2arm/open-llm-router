@@ -18,6 +18,36 @@ other users' content. Publish the updated [privacy notice](PRIVACY.md), protect 
 and backups as content-bearing storage, and see [the tracing guide](REQUEST_TRACING.md)
 for capture bounds and operational behavior. Server logs, metrics and OTLP stay content-free.
 
+When logging is enabled but new details are missing, check the account's
+**Stored details** budget in **My requests**. Filling either configured limit (64 MiB or 512 traces by default)
+skips new captures while accounting continues. The panel shows storage usage,
+warns near the limit and offers confirmed deletion to free space. See
+[missing-detail troubleshooting](REQUEST_TRACING.md#logging-is-enabled-but-details-are-missing)
+for retention, shared API keys and account attribution.
+
+## Detailed log quotas
+
+Open **Admin → Request logging** to set the default **Maximum storage (MiB)** and
+**Maximum stored traces** for each account. These are per-user defaults, not a
+shared site-wide storage pool. For a larger default, for example, enter **256 MiB**
+and **4096 traces**, then **Save defaults**.
+
+For an exception, open **Admin → Users & groups → Manage → Detailed log quota**.
+Set either field and **Save user quota**; an empty field inherits its global
+default independently. **Use global defaults** clears the fields; save to apply.
+The account's current storage use is visible here, but its private log content is not.
+
+Changes are audited and apply across router replicas without a restart. Raising
+a full quota lets new captures resume. Lowering it preserves existing logs and
+pauses captures until storage is below both limits; retention and opt-in are
+unchanged. Site policy must still allow detailed logging.
+
+Deployment fallback values are `config.content_tracing.max_stored_mib: 64` and
+`config.content_tracing.max_stored_traces: 512` in Helm (omit `config.` in the
+standalone YAML). **Use deployment defaults**, then **Save defaults**, removes
+both global overrides. Supported limits are 1–1,048,576 whole MiB and
+1–1,000,000 traces. Neither field accepts zero or unlimited.
+
 ## What an administrator can configure today
 
 | Task | Current interface | When it applies |
@@ -27,6 +57,7 @@ for capture bounds and operational behavior. Server logs, metrics and OTLP stay 
 | Grant a group access to models; set group default limits | **Admin → Advanced routing** group policies, settings API/CLI, or private YAML | Next request after activation; file changes need restart |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
 | View users, group usage and replica health | Portal **Admin** | Live view; refresh to update |
+| Set default or per-user detailed log storage quotas | **Admin → Request logging** and **Users & groups → Manage** | New captures on every replica; existing logs preserved |
 | Override an individual user's limits | Portal **Admin**, portal API or `olr admin override` | Next request, for API keys, sessions and OIDC access tokens alike |
 | Disable/re-enable a router user | Portal **Admin** or portal API; CLI can disable | Next request on every authentication path |
 | Create a local API-key user | `olr admin user add` | Immediately; this creates no password login |
@@ -289,6 +320,54 @@ schema changes and intentional database destruction are outside this
 guarantee, as for the protected administrator. Search these events in
 **Admin → History** or through `olr admin history`.
 
+### Show institutional names and affiliation
+
+**Account** shows full name, first name, last name, username, email and institution.
+**Admin → Users** shows the display name alongside the username and institution;
+search accepts names, email or institution. User details show the individual fields.
+
+OLR reads `name`, `given_name` and `family_name` from the **verified ID token** at
+institutional sign-in. It already requests the `openid profile email` scopes.
+When `name` is absent but name parts are supplied, it combines the first and last
+name for display. These fields never change the username, account identity,
+group membership or access permissions.
+
+In Keycloak, ensure the user's **First name** and **Last name** are filled and the
+client's **profile** client scope includes the standard name mappers with **Add to
+ID token** enabled. Use **Clients → your OLR client → Client scopes → Evaluate**
+to check the generated ID token for a test user. If names originate in another
+identity provider, its broker/LDAP mapper must first make them available in Keycloak.
+See the [Keycloak protocol-mapper documentation](https://www.keycloak.org/docs/latest/server_admin/index.html#_protocol-mappers)
+and the [OIDC profile claims](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims).
+
+Institution is optional. By default OLR tries `institution`, `organization`, then
+`schacHomeOrganization`, accepting a string or a short list of strings. A federation
+home-organization domain is displayed as supplied; OLR does not infer an institution
+from an email address. Structured organization objects are not used as display text.
+To supply a friendly institution name:
+
+1. Make an institution user attribute available in Keycloak (from federation/LDAP,
+   or under **Realm settings → User profile** and the user's attributes).
+2. Open **Clients → your OLR client → Client scopes → the dedicated client scope →
+   Mappers → Add mapper → By configuration → User Attribute**.
+3. Set **User Attribute** to the source attribute, **Token Claim Name** to
+   `institution`, **Claim JSON Type** to `String`, and **Add to ID token** to **On**.
+4. Save, evaluate the generated ID token, then sign out of OLR and sign in again.
+
+If the existing token uses a different top-level claim, set **Admin → Keycloak →
+Institution claim** to that name and activate the settings. Before managed settings
+are imported, the equivalent YAML is `oidc.institution_claim: home_institution`, or
+`OIDC_INSTITUTION_CLAIM=home_institution` in the environment. For Helm, use
+`env.OIDC_INSTITUTION_CLAIM: home_institution`. An empty setting uses the automatic
+claim order above. Managed authentication revisions remain authoritative after import.
+
+Profile values refresh at the next successful institutional login. Existing users
+therefore need to sign out and sign in once after upgrading. Missing/null/malformed
+optional claims preserve stored values; an explicit empty string clears a value.
+Local users and API/group synchronization preserve the existing profile. Missing
+fields show **Not provided** and never prevent login. Values are bounded to 1024
+UTF-8 bytes per field and included in user data exports and account erasure.
+
 ### Configure and test Keycloak in Admin
 
 **Admin → Keycloak** shows the configuration authority (file or database
@@ -401,7 +480,8 @@ change always return 403. This lookup does not merge accounts or transfer their 
 Failed checks name the problem without showing secrets or provider responses
 (for example *the provider rejected the portal client ID or secret*). Checks and
 test sign-ins contact only the configured issuer, never follow redirects and
-refuse link-local, metadata, multicast and unspecified addresses. This page
+refuse link-local, metadata, multicast and unspecified addresses, including
+their NAT64 and IPv6-zoned forms. This page
 manages the router's connection only: realms, clients, brokering and group
 membership stay with the Keycloak administrator. Local sign-in stays available
 throughout.
@@ -880,8 +960,12 @@ HTTP(S) origins are allowed; manual private destinations require an operator-set
 `OLR_BACKEND_ALLOWED_CIDRS`, for example `192.168.178.0/24`. Development Compose
 defaults to `192.168.0.0/16`, covering the Ollama example. Production defaults to
 no additional private networks. New loopback, link-local and cloud metadata
-destinations are refused even with a broad CIDR. DNS is checked again on each new
-connection for both health tests and inference; redirects are not followed.
+destinations are refused even with a broad CIDR. NAT64 (`64:ff9b::/96`) and
+IPv4-compatible IPv6 addresses are judged by the IPv4 address a translator
+delivers them to, so grant the IPv4 network (for example `10.20.0.0/16`), not
+its translated form; local-use NAT64 (`64:ff9b:1::/48`) needs an explicit grant.
+IPv6 zone identifiers (`[fe80::1%eth0]`) are refused. DNS is checked again on
+each new connection for both health tests and inference; redirects are not followed.
 Backend connections use this policy directly, without environment HTTP proxies.
 Container `localhost` refers to the router container, not the host's Ollama.
 
@@ -932,6 +1016,15 @@ adapters remain planned work.
 **Backend presets**, optional **Keycloak**, **Advanced routing**, and **History**.
 Use **Users & groups → Manage group policies** to create groups and set per-user
 defaults. Detailed route drafts, activation, and rollback remain in Advanced routing.
+
+Use **Sync now** beside **Manage group policies**, or beside the effective sync
+interval in **Admin → Keycloak**, to refresh known Keycloak users' memberships and
+enabled state immediately. It uses the running settings and shows checked, updated,
+disabled, failed and remaining counts. Overlapping runs are skipped; incomplete
+scans can be retried and resume from the existing job's cursor. The button requires
+a configured sync client and secret; **Run checks → Sync permissions** tests that
+client's access. SSO administrators can sync without a local sign-in. This refreshes
+existing users; it does not import all realm users or create OLR group policies.
 
 Choose **Add backend**, enter an IP address or service name
 such as **10.0.0.12:8000** or **llm.cluster:8000**. Bare hosts use HTTP; explicit
@@ -1045,7 +1138,8 @@ in **Admin → Advanced routing** (or `/portal/api/admin/settings/routing`, or
 model (`*` grants all), its aliases, native protocols, upstream name and each
 endpoint with its credential reference, health and in-flight count. After
 **Import current routing**, edit a draft: add a logical model, set its upstream
-name, protocols, timeouts and session affinity, add or remove endpoint replicas
+name, protocols, timeouts, session affinity, context length (empty reports the
+smallest value the backends' catalogs give) and model type, add or remove endpoint replicas
 (origin, health path, weight, capacity, credential reference chosen from the
 allowed list), and add or retarget aliases. A model still granted by a group
 or named by an alias cannot be removed; the page names the dependency. **Save
@@ -1212,6 +1306,37 @@ running are not terminated when limits change. Cached OIDC access-token
 principals observe the change on their next request.
 
 ### Group names and authorization freshness
+
+**Admin → Users & groups → Groups** lists configured policies together with groups
+OLR has received for known users. A received group without an OLR policy is marked
+**No policy**. Choose **Configure policy** to use its exact name, select model grants
+and set limits, then save. A new policy starts with no model or administrator access.
+The group is available in backend access settings after the policy is saved.
+
+This is not a directory of every group in the Keycloak realm: OLR learns memberships
+when a user signs in, supplies a current API token, or is refreshed by configured group
+sync. **Refresh memberships** reloads OLR's stored users and groups; it does not trigger
+a Keycloak sync. Local-user membership pickers offer configured policies only.
+
+If Pierre belongs to `ErUM` in Keycloak but OLR does not show it:
+
+1. In the **same realm as OLR's issuer**, open **Clients → olr-kube-client → Client
+   scopes → the dedicated client scope → Mappers**. Add or edit a **Group Membership**
+   mapper with **Token Claim Name** `groups`, **Add to ID token** on, and **Full group
+   path** off for OLR's default leaf-name format. If using a shared client scope, it
+   must be assigned as a default scope to the OLR client. Enable the access-token
+   option too if using identity-provider API tokens.
+2. Use **Client scopes → Evaluate**, select Pierre, and inspect the **generated ID
+   token**. Confirm it contains `"groups":["ErUM"]` (possibly alongside other groups).
+   Realm/client roles such as `default-roles-…`, `offline_access` or `uma_authorization`
+   are not group memberships. If that claim contains only roles, fix the mapper.
+3. In OLR's **Admin → Keycloak**, confirm **Groups claim** is `groups`. After changing
+   Keycloak membership or mappers, Pierre signs out of OLR and signs in again; then
+   refresh the OLR user list. Group sync, when configured and working, can refresh
+   an already-known user's memberships without a new portal login.
+4. Check Pierre's row for the membership and create the `ErUM` access policy.
+   Names are case-sensitive: `ErUM` and `erum` are different policies. With full-path
+   format enabled, use the exact path (for example `/ErUM`) instead.
 
 Portal login, API access tokens and group sync turn group claims into router
 group names with one rule, set by `oidc.group_names` (or the Admin page):

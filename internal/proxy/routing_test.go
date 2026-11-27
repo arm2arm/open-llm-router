@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -167,4 +168,38 @@ func post(router string) int {
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	return resp.StatusCode
+}
+
+// encoding/json applies a later case-insensitive match after an exact one, so
+// a Go-struct backend would read a caller's "PRIORITY". The router owns every
+// spelling of the field it sets.
+func TestCallerCannotOverridePriorityWithCaseVariants(t *testing.T) {
+	var mu sync.Mutex
+	var bodies [][]byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			bodies = append(bodies, body)
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{}`)
+	}))
+	defer backend.Close()
+	router := routed(t, config.Model{Priority: &config.Priorities{Interactive: 0, Batch: 10}}, "interactive", backend.URL)
+	resp, out := send(t, router, "/v1/chat/completions", `{"model":"m","Priority":-25,"priority":-100,"PRIORITY":-50,"messages":[{"role":"user","content":"<keep> & é"}],"max_tokens":1}`, nil)
+	if resp.StatusCode != 200 {
+		t.Fatal(resp.StatusCode, string(out))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	forwarded := bodies[len(bodies)-1]
+	var goBackend struct{ Priority int }
+	if err := json.Unmarshal(forwarded, &goBackend); err != nil || goBackend.Priority != 1 {
+		t.Fatalf("Go backend read priority %d from %s", goBackend.Priority, forwarded)
+	}
+	if bytes.Count(bytes.ToLower(forwarded), []byte(`"priority"`)) != 1 || !bytes.Contains(forwarded, []byte(`"content":"<keep> & é"`)) {
+		t.Fatalf("forwarded %s", forwarded)
+	}
 }

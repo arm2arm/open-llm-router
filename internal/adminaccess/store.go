@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var Permissions = []string{"service:read", "usage:read", "audit:read", "users:read", "users:write", "users:credentials", "routing:read", "routing:write", "authentication:read", "authentication:write", "admin_keys:read", "admin_keys:write", "admin_keys:delegate"}
+var Permissions = []string{"service:read", "usage:read", "audit:read", "users:read", "users:write", "users:credentials", "routing:read", "routing:write", "authentication:read", "authentication:write", "admin_keys:read", "admin_keys:write", "admin_keys:delegate", "user_keys:issue"}
 var ErrDenied = errors.New("administration access denied")
 var ErrInput = errors.New("invalid administration key settings")
 var ErrLimit = errors.New("active administration key limit reached")
@@ -47,7 +47,8 @@ type Create struct {
 func (k Key) Allows(permission string) bool { return slices.Contains(k.Permissions, permission) }
 func Sensitive(permissions []string) bool {
 	for _, p := range permissions {
-		if p == "authentication:write" || p == "users:credentials" || p == "admin_keys:delegate" {
+		// user_keys:issue creates inference credentials for any eligible SSO user.
+		if p == "authentication:write" || p == "users:credentials" || p == "admin_keys:delegate" || p == "user_keys:issue" {
 			return true
 		}
 	}

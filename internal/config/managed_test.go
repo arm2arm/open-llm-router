@@ -52,17 +52,20 @@ models:
     pool:
       - {url: "http://backend:8000", weight: 1, max_inflight: 1}
 `
-	env := map[string]string{"OIDC_AUDIENCE": "olr-api", EnvOIDCClientSecret: "s"}
+	env := map[string]string{"OIDC_AUDIENCE": "olr-api", "OIDC_INSTITUTION_CLAIM": "home_institution", EnvOIDCClientSecret: "s"}
 	cfg, err := Parse([]byte(file), lookupIn(env))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"enabled": SourceFile, "issuer": SourceFile, "portal_client_id": SourceFile, "audience": SourceEnvironment,
-		"portal_client_secret": SourceEnvironment, "groups_claim": SourceDefault, "sync_client_secret": SourceDefault, "sync_interval_s": SourceDefault, "sync_max_disable": SourceDefault}
+		"portal_client_secret": SourceEnvironment, "institution_claim": SourceEnvironment, "groups_claim": SourceDefault, "sync_client_secret": SourceDefault, "sync_interval_s": SourceDefault, "sync_max_disable": SourceDefault}
 	for name, source := range want {
 		if cfg.AuthSources[name] != source {
 			t.Fatalf("%s: %s, want %s", name, cfg.AuthSources[name], source)
 		}
+	}
+	if cfg.OIDC.InstitutionClaim != "home_institution" {
+		t.Fatal("institution claim environment mapping lost")
 	}
 	if len(cfg.AuthSources) != len(AuthSettings) {
 		t.Fatal("every setting needs a source")

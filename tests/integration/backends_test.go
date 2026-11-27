@@ -33,7 +33,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/models":
-			_, _ = io.WriteString(w, `{"data":[{"id":"deepseek-cluster","owned_by":"vllm"}]}`)
+			_, _ = io.WriteString(w, `{"data":[{"id":"deepseek-cluster","owned_by":"vllm","max_model_len":65536}]}`)
 		case "/v1/chat/completions":
 			var body struct{ Model string }
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -99,6 +99,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 		return out.Settings
 	}
 	b := &settings.Backend{Name: "Physics cluster", URL: backend.URL, PrivateNetwork: true, HealthPath: "/v1/models", Groups: []string{"staff"}, Preset: "unlimited"}
+	b.PublicOrganization, b.PrivacyURL = "Physics Institute", "https://physics.example/privacy"
 	detect := map[string]any{"id": "gpu", "backend": b, "api_key": key}
 	encoded, _ := json.Marshal(detect)
 	if resp, _ := student.call(t, "POST", "/portal/api/admin/backends/detect", string(encoded), f.cfg.Portal.BaseURL); resp.StatusCode != 403 {
@@ -106,7 +107,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 	}
 	var catalog endpoints.Catalog
 	_ = json.Unmarshal(call("POST", "/portal/api/admin/backends/detect", detect, 200), &catalog)
-	if catalog.Provider != "vLLM" || len(catalog.Models) != 1 || catalog.Models[0] != "deepseek-cluster" {
+	if catalog.Provider != "vLLM" || len(catalog.Models) != 1 || catalog.Models[0] != "deepseek-cluster" || catalog.ContextLengths["deepseek-cluster"] != 65536 {
 		t.Fatal("new backend detection", catalog)
 	}
 	v := view(call("POST", path+"/import", struct{}{}, 200))
@@ -129,8 +130,12 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 	// Discovery can reuse a stored credential, without returning it.
 	call("POST", "/portal/api/admin/backends/detect", map[string]any{"id": "gpu", "backend": doc.Backends["gpu"]}, 200)
 	doc.Models["cluster-route"] = config.Model{Protocols: []string{"openai"}, UpstreamModel: "deepseek-cluster", TimeoutS: 5, Pool: []config.Replica{{Backend: "gpu", Weight: 1, MaxInflight: 8}}}
+	// A configured context length and type are stored in the revision.
+	pinned := 4096
+	doc.Models["cluster-embed"] = config.Model{Protocols: []string{"openai"}, UpstreamModel: "deepseek-cluster", TimeoutS: 5, ContextLength: &pinned, Type: config.ModelTypeEmbedding, Pool: []config.Replica{{Backend: "gpu", Weight: 1, MaxInflight: 8}}}
+	doc.Aliases["cluster-alias"] = "cluster-route"
 	group := doc.Groups["staff"]
-	group.Models = append(group.Models, "cluster-route")
+	group.Models = append(group.Models, "cluster-route", "cluster-embed")
 	doc.Groups["staff"] = group
 	students := doc.Groups["students"]
 	students.Models = []string{"*"}
@@ -140,6 +145,68 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 		t.Fatal(v.Draft.Validation.Problems)
 	}
 	v = view(call("POST", path+"/activate", revisionBody(v.Version, v.Draft.ID), 200))
+	if stored := v.Active.Document.Models["cluster-embed"]; stored.ContextLength == nil || *stored.ContextLength != pinned || stored.Type != config.ModelTypeEmbedding || v.Active.Document.Models["cluster-route"].ContextLength != nil {
+		t.Fatalf("model metadata did not survive the revision: %+v", stored)
+	}
+	// Public disclosure survives the stored revision and uses its active model
+	// and alias mapping in both authenticated catalogues. Both report the
+	// context length detected from the backend's catalog, or configured.
+	for _, endpoint := range []string{"/portal/api/models", "/v1/models"} {
+		var data []byte
+		if endpoint == "/portal/api/models" {
+			data = call("GET", endpoint, nil, 200)
+		} else {
+			response := f.call(t, f.key, "GET", endpoint, "")
+			data, _ = io.ReadAll(response.Body)
+			response.Body.Close()
+			if response.StatusCode != 200 {
+				t.Fatal(response.StatusCode, string(data))
+			}
+		}
+		var catalogue []struct {
+			ID         string `json:"id"`
+			Recipients []struct {
+				Organization string `json:"organization"`
+				PrivacyURL   string `json:"privacy_url"`
+			} `json:"recipient_details"`
+			Complete      bool     `json:"recipients_complete"`
+			ContextLength int      `json:"context_length"`
+			Type          string   `json:"type"`
+			Protocols     []string `json:"protocols"`
+		}
+		// Other top-level fields are strings; decode only the model array.
+		var envelope map[string]json.RawMessage
+		if json.Unmarshal(data, &envelope) != nil {
+			t.Fatal(string(data))
+		}
+		field := "data"
+		if endpoint == "/portal/api/models" {
+			field = "models"
+		}
+		if json.Unmarshal(envelope[field], &catalogue) != nil {
+			t.Fatal(string(data))
+		}
+		found := 0
+		for _, model := range catalogue {
+			if model.ID != "cluster-route" && model.ID != "cluster-alias" && model.ID != "cluster-embed" {
+				continue
+			}
+			found++
+			if !model.Complete || len(model.Recipients) != 1 || model.Recipients[0].Organization != b.PublicOrganization || model.Recipients[0].PrivacyURL != b.PrivacyURL {
+				t.Fatal("recipient metadata did not activate", string(data))
+			}
+			length, kind := 65536, config.ModelTypeChat
+			if model.ID == "cluster-embed" {
+				length, kind = pinned, config.ModelTypeEmbedding
+			}
+			if model.ContextLength != length || model.Type != kind || len(model.Protocols) != 1 || model.Protocols[0] != "openai" {
+				t.Fatalf("%s %s: context_length %d type %q protocols %v", endpoint, model.ID, model.ContextLength, model.Type, model.Protocols)
+			}
+		}
+		if found != 3 || strings.Contains(string(data), backend.URL) || strings.Contains(string(data), key) || strings.Contains(string(data), "Physics cluster") {
+			t.Fatal("catalogue missing public recipients or exposing private configuration", string(data))
+		}
+	}
 	resp := f.call(t, f.key, "POST", "/v1/chat/completions", `{"model":"cluster-route","messages":[]}`)
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
@@ -198,7 +265,7 @@ func TestAdminBackendOnboardingAndOriginBoundKeys(t *testing.T) {
 	}
 	// Active configuration resolves encrypted credentials again on restart.
 	reloaded, _, err := service.Candidate(t.Context(), settings.DomainRouting, v.Active.ID)
-	if err != nil || reloaded.Models["cluster-route"].Pool[0].BearerToken != key {
+	if err != nil || reloaded.Models["cluster-route"].Pool[0].BearerToken != key || reloaded.Models["cluster-route"].Pool[0].PublicOrganization != b.PublicOrganization || reloaded.Models["cluster-route"].Pool[0].PrivacyURL != b.PrivacyURL {
 		t.Fatal("stored backend did not reload", err)
 	}
 	// A backend preset applies to requests from different users, beyond group limits.

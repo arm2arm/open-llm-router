@@ -3,7 +3,11 @@
 The portal is served at the configured `PORTAL_BASE_URL` origin. `/portal/*` uses an
 opaque eight-hour session cookie; `/v1/*` continues to require API keys and ignores cookies.
 The initial local password-change session is restricted and lasts ten minutes.
-All portal responses use `Cache-Control: no-store`. Errors are JSON:
+All portal API and page responses use `Cache-Control: no-store`. The static
+bundle is the exception: content-hashed files below `/portal/assets/` are
+`public, max-age=31536000, immutable`, other static files revalidate with
+`no-cache` and an `ETag`, and text assets are sent gzip-compressed when the
+browser accepts it. Errors are JSON:
 `{"error":{"type":"authentication_error","message":"authentication required"}}`.
 Unauthenticated API calls return 401; forbidden origins/disabled logins return 403;
 invalid input returns 400, unknown or other users' keys return 404, and unavailable
@@ -17,6 +21,7 @@ fields relevant to that operation rather than an exhaustive response schema.
 
 - `GET /portal/api/auth`: public authentication metadata,
   with `default` (`oidc` or `local`: the primary sign-in option),
+  `privacy_notice_url` (the site's public notice, or empty when unconfigured),
   `local: {available, login_url, password_url}` and
   `oidc: {configured, available, login_url}`. No secret or account-existence information
   is returned. The OIDC `login_url` points to the browser entry below.
@@ -97,9 +102,14 @@ operator recovery while anonymous attempts remain throttled.
 
 `GET /portal/api/me`:
 
+`user.full_name`, `given_name`, `family_name` and `institution` are display-only
+strings, empty when not supplied. They are refreshed from verified ID-token
+claims at institutional sign-in and also appear in administrator user list/detail
+responses. See [profile claim mapping](ADMIN_GUIDE.md#show-institutional-names-and-affiliation).
+
 ```json
 {
-  "user": {"id":"uuid","username":"staff","email":"staff@example.test","groups":["staff"],"protected_admin":false},
+  "user": {"id":"uuid","username":"staff","email":"staff@example.test","full_name":"Example Person","given_name":"Example","family_name":"Person","institution":"Example Institute","groups":["staff"],"protected_admin":false},
   "limits": {"tokens_per_day":2000000,"tokens_per_month":null,"rpm":60,"tpm":null,
              "max_concurrent":4,"max_concurrent_batch":8,"strict_quota":false}
 }
@@ -136,6 +146,9 @@ draft. Loading the latest settings explicitly discards local edits.
   "created":"RFC3339","last_used":null,"expires":"RFC3339","revoked":false}],
   "policy":{"default_lifetime_days":90,"max_lifetime_days":90}}`.
   Only the session user's keys are listed. Neither hashes nor full keys are returned.
+  Keys an integration issued for the user through the administration API
+  (`user_keys:issue`) are listed too, under their integration label prefix, and
+  the user can revoke them like any other key.
   Policy metadata uses the same effective default and maximum as key creation. The
   portal labels the default duration and offers only lifetimes this policy allows.
 - `POST /portal/api/keys`: accepts `{"label":"laptop","expires_in_days":7,"class":"batch"}` (label: 1–100 bytes after trimming).
@@ -205,6 +218,33 @@ untouched. See [PRIVACY.md](PRIVACY.md).
   "input_tokens":0,"output_tokens":0}, …]}`: exactly 30 days ending today in `limits.timezone`,
   oldest first, from the daily totals (unaffected by deleting activity).
 
+## Administrator trace quotas
+
+Full administrator sessions can use:
+
+- `GET` / `PUT /portal/api/admin/trace-quotas` for global per-user defaults.
+- `GET` / `PUT /portal/api/admin/users/{id}/trace-quota` for one account's overrides
+  and storage usage. These routes never return private trace content.
+
+Both PUT routes require the configured Origin and JSON content type. Send
+`{"version":0,"max_bytes":268435456,"max_traces":4096}`. `version` is required;
+use the latest GET value. A stale edit returns 409 and must be reloaded. Each
+nullable limit inherits independently: account → global → deployment YAML.
+Omitted fields also inherit. Bytes must be a whole MiB from 1,048,576 to
+1,099,511,627,776; trace counts must be integers from 1 to 1,000,000.
+
+Responses include `version`, `updated_at`, `overrides` (nullable saved fields),
+`defaults` (inherited values), `effective` (resolved `max_bytes` / `max_traces`),
+and `bounds` (`max_mib` / `max_traces`). Per-user responses also include `storage`
+with `bytes`, `traces`, `max_bytes`, `max_traces` and `next_expiry`.
+User-facing trace preferences report the same effective limits. Invalid values
+return 400, unknown users 404, non-admins 403, and audit/storage failures 503.
+
+Changes are atomically audited as `trace.quota.defaults` or `trace.quota.user`
+and take effect across replicas on new writes without a restart. They preserve
+stored content, retention, consent and inference limits. Both stored bytes and
+trace count must have room for a new trace; existing over-quota logs remain.
+
 ## Personal trace settings and content
 
 These routes require a full session. Mutations require the configured Origin and JSON
@@ -273,7 +313,7 @@ The browser gates workspace/Admin on completing a required first password change
 labels the identity source and offers local rotation under **Account**. API
 authorization remains enforced on the server regardless of browser navigation.
 
-- `GET /portal/api/admin/users?match=text`: up to 500 users whose username or email contains the
+- `GET /portal/api/admin/users?match=text`: up to 500 users whose username, full name, email or institution contains the
   text (case-insensitive), with groups, enabled flag, active key count, tokens today and this
   month, overrides by field, `issuer`, `protected_admin`, `has_local_password` and
   `must_change_password`.
@@ -336,10 +376,28 @@ authorization remains enforced on the server regardless of browser navigation.
   requires a fresh browser login and restores only unrevoked, unexpired keys. Cached OIDC access-token
   principals are refused on their next request. Admins cannot disable themselves.
   Disabling the protected local administrator returns 403, including for another admin.
-- `GET /portal/api/admin/groups`: per configured group, enabled members, requests and tokens today
-  and tokens this month. A user in several groups counts in each.
+- `POST /portal/api/admin/groups/sync` with `{}`: run the current router's Keycloak
+  group-sync job immediately. Requires an administrator session and same-origin
+  JSON, including for SSO administrators; no recent local sign-in is required.
+  Uses the running authentication configuration, never a draft. Returns 200 with
+  `result: {checked, updated, disabled, failed, remaining, skipped}` and `problem`
+  (empty on success). An incomplete/failed run includes a safe problem message and
+  any partial progress. `skipped: true` means another scan or settings switch is
+  in progress; retry later. Returns 409 `sync_disabled` if no sync job is configured,
+  or 503 `sync_unavailable` while it is initializing. The portal request deadline
+  bounds the run; incomplete scans resume using the scheduled job's cursor.
+  Existing disable limits, issuer scope and account/cache invalidation apply.
+  This refreshes existing users' memberships and enabled state; it does not import
+  all realm users or create group policies.
+- `GET /portal/api/admin/groups`: configured groups and groups received for known users,
+  with enabled members, requests and tokens today and tokens this month. `configured`
+  distinguishes a group with an active access policy from a received membership with
+  no policy. Discovery grants no access. A user in several groups counts in each.
+  `sync_enabled` reports whether this router has group sync configured.
+  The administration `get_usage` tool retains configured groups only unless its key
+  also has `users:read`; `list_groups` requires `users:read`.
 - `GET /portal/api/admin/replicas`: per model, each replica's origin, health, in-flight calls,
-  `max_inflight` and weight.
+  `max_inflight`, weight and, when its model catalog reports one, `context_length`.
 
 ## Backend management and shared presets
 
@@ -359,7 +417,8 @@ shared per backend across users and router instances. Older documents without th
 map receive built-in presets. The reserved unlimited preset must have no caps.
 
 POST /portal/api/admin/backends/detect accepts an identity, backend connection fields,
-and an optional transient API key. Bare IP/service names use HTTP. Stored documents
+and an optional transient API key. Its catalog result adds `context_lengths` (served model →
+reported `max_model_len` or `context_length`) when the catalog reports any. Bare IP/service names use HTTP. Stored documents
 use canonical HTTP(S) origins. Replacement keys are submitted separately in the
 routing draft's secrets map; documents and responses carry encrypted references only.
 The workspace saves a draft and activates it, and refuses to replace an unrelated
@@ -386,9 +445,12 @@ Resolved backend secrets are excluded from all responses and revisions.
   failures return 400. A passing probe does not prove the upstream model exists.
 - `POST /portal/api/admin/endpoints/models` accepts
   `{"model":"chat-model","replicas":[{"url":"http://ollama:11434","bearer_token_env":""}]}`.
-  Returns `{models, complete, replicas:[{url, models, source?, provider?, health_path?, error?}]}`. `models`
+  Returns `{models, complete, context_lengths?, replicas:[{url, models, source?, provider?, health_path?, context_lengths?, error?}]}`. `models`
   is the sorted intersection across every replica, empty if any catalog failed;
-  per-replica lists are diagnostic. Uses `GET /v1/models`, with `/api/tags` fallback
+  per-replica lists are diagnostic. `context_lengths` maps a model to the context
+  length its catalog reports (vLLM/SGLang `max_model_len`, else `context_length`);
+  the top-level map has the smallest value across replicas for the shared models,
+  which is what `/v1/models` reports once the model's health checks read it. Uses `GET /v1/models`, with `/api/tags` fallback
   only on 404/405/501. Destinations and credential references use the same policy
   as inference, without browser credentials, environment proxies or redirects.
   Credential references are bound to their deployment-approved origins (file
@@ -422,6 +484,8 @@ Example configuration for an existing logical `chat-model`:
   "configuration":{
     "upstream_model":"qwen3.8:27b-mlx",
     "protocols":["openai"],
+    "context_length":32768,
+    "type":"chat",
     "timeout_s":900,
     "idle_timeout_s":120,
     "queue_timeout_s":0,
@@ -542,8 +606,9 @@ checks; drafts accept up to 256 KiB.
   (group → granted models, `*` for all; active routing policy).
 - `POST …/import` with `{}`; afterwards `PUT /portal/api/admin/endpoints` returns 409.
 - `PUT …/draft` with `{"version":N,"document":{"models":{…},"aliases":{…},"groups":{…}}}`. Model
-  objects use the YAML field names (`protocols`, `upstream_model`, `timeout_s`, `pool`
-  with `url`, `health_path`, `weight`, `max_inflight`, `bearer_token_env`, …).
+  objects use the YAML field names (`protocols`, `upstream_model`, optional `context_length`
+  and `type`, `timeout_s`, `pool` with `url`, `health_path`, `weight`, `max_inflight`,
+  `bearer_token_env`, …). Omitted `context_length` and `type` mean detected and `chat`.
 - `POST …/discard` with `{"version":N}`.
 - `POST …/checks` with `{"revision":R}` (0: the current routing) returns `{revision,
   results}` with one `models.<name>.pool[<i>]` result per probed replica, or
@@ -560,15 +625,42 @@ checks; drafts accept up to 256 KiB.
 {
   "router_url":"http://localhost:8080",
   "base_url":"http://localhost:8080/v1",
+  "privacy_notice_url":"https://site.example/privacy",
   "models":[
-    {"id":"chat-model","canonical_model":"chat-model","protocols":["openai","anthropic"]},
-    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","protocols":["openai","anthropic"]}
+    {"id":"chat-model","canonical_model":"chat-model","context_length":131072,"type":"chat","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true},
+    {"id":"claude-sonnet-4-5","canonical_model":"chat-model","context_length":131072,"type":"chat","protocols":["openai","anthropic"],"recipients":["Research Institute"],"has_unlisted_recipients":false,"recipient_details":[{"organization":"Research Institute","privacy_url":"https://institute.example/privacy"}],"recipients_complete":true}
   ]
 }
 ```
 
 Models and aliases are sorted by ID and filtered by the user's effective model policy.
+`context_length`, `type` and `protocols` are described in
+[model list metadata](REFERENCE.md#model-list-metadata); `context_length` is omitted while
+unknown, and an alias reports its canonical model's values.
+Each model and alias includes the sorted, distinct public recipient labels of
+all replicas permitted for the user, including possible retries. A true
+`has_unlisted_recipients` means one or more eligible replicas lack a label.
+This is a list of possible destinations, not a prediction of the selected replica.
 The origin is configured, never derived from untrusted Host or forwarding headers.
+`privacy_notice_url` is `portal.privacy_notice_url` (overridden by a nonempty
+`PORTAL_PRIVACY_URL`), or an empty string if unconfigured; public
+`GET /portal/api/auth` also returns it for sign-in. See the [site notice setup](PRIVACY.md#for-operators).
+
+Each model/alias lists distinct `(organization, privacy_url)` pairs in
+`recipient_details` from **all**
+permitted replicas in the active routing snapshot, regardless of health or capacity.
+Model policy and backend group restrictions are both applied. Aliases disclose the
+same recipients as their canonical model. `recipients_complete` is false if any
+permitted replica lacks either field (or there are no destinations). Empty fields
+are preserved explicitly; internal names, connection URLs, paths and credentials
+are never substituted. Duplicate public pairs are collapsed, so this is not a
+replica inventory. Values are operator declarations, not verification of provider
+practices. Refresh when models or routing change; the snapshot is not a routing lock.
+
+Authenticated `GET /v1/models` includes the same additive `context_length`, `type`,
+`protocols`, `recipient_details` and `recipients_complete` fields on each OpenAI-style
+model entry. Client owners can
+use these before the first prompt; see the [session notice example](CLIENTS.md#first-session-ai-notice).
 
 ## Deployment settings
 
@@ -663,7 +755,8 @@ admin sessions and the existing same-origin JSON protections:
   detected/peer IP, proxy status and site lifetime defaults.
 - `POST /portal/api/admin/agent-keys`: `{label, permissions, allowed_networks,
   expires_in_days}`; returns `{key, metadata}` once. Requires a recent sign-in;
-  sensitive scopes require a recent local administrator.
+  sensitive scopes (`authentication:write`, `users:credentials`,
+  `admin_keys:delegate`, `user_keys:issue`) require a recent local administrator.
   Optional `replaces_key_id` creates a replacement with equal or reduced
   permissions/networks, checked against the current owned key. It renews the
   configured lifetime without coupling the replacement to the old key's revocation.

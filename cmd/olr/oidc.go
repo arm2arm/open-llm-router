@@ -31,6 +31,7 @@ type oidcServices struct {
 	log         *slog.Logger
 	mu          sync.Mutex
 	verifier    atomic.Pointer[apitoken.Verifier]
+	groupSync   atomic.Pointer[groupsync.Syncer]
 	audience    atomic.Bool // the active configuration accepts IdP tokens
 	stop        func()
 }
@@ -58,6 +59,7 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stop()
+	s.groupSync.Store(nil)
 	s.stats.Enabled.Store(false)
 	s.stats.IntervalSeconds.Store(0)
 	s.stats.LastSuccess.Store(0)
@@ -102,12 +104,50 @@ func (s *oidcServices) Switch(cfg *config.Config) {
 				}
 				syncer.Stats = s.stats
 				defer syncer.Close()
+				s.groupSync.Store(syncer)
+				defer s.groupSync.CompareAndSwap(syncer, nil)
 				syncer.Run(ctx, time.Duration(oidcCfg.SyncIntervalS)*time.Second)
 				return nil
 			})
 		})
 	}
 	s.stop = func() { cancel(); wg.Wait() }
+}
+
+func (s *oidcServices) GroupSyncEnabled() bool { return s.stats.Enabled.Load() }
+
+// SyncGroups uses the running configuration, never an unactivated draft.
+// Hold the lifecycle lock so switching settings cannot close this syncer's
+// HTTP client or start a replacement job during a manual run.
+func (s *oidcServices) SyncGroups(ctx context.Context) (groupsync.Result, error) {
+	if !s.mu.TryLock() {
+		return groupsync.Result{Skipped: true}, nil
+	}
+	defer s.mu.Unlock()
+	if !s.GroupSyncEnabled() {
+		return groupsync.Result{}, groupsync.ErrDisabled
+	}
+	syncer := s.groupSync.Load()
+	if syncer == nil {
+		return groupsync.Result{}, groupsync.ErrUnavailable
+	}
+	return syncer.RunOnce(ctx)
+}
+
+// LookupIdentity reads one user through the running group-sync service
+// account. It never uses an unactivated draft or another realm's account.
+func (s *oidcServices) LookupIdentity(ctx context.Context, issuer, subject string) (groupsync.Identity, error) {
+	if !s.GroupSyncEnabled() {
+		return groupsync.Identity{}, groupsync.ErrDisabled
+	}
+	syncer := s.groupSync.Load()
+	if syncer == nil {
+		return groupsync.Identity{}, groupsync.ErrUnavailable
+	}
+	if syncer.Issuer() != issuer {
+		return groupsync.Identity{}, groupsync.ErrDisabled
+	}
+	return syncer.Lookup(ctx, subject)
 }
 
 // Close stops the services.
