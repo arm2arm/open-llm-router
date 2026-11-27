@@ -21,6 +21,7 @@ export async function checkAgentAccess(
   const label = `Browser agent ${Date.now()}`
   await page.getByRole('button', { name: 'Create administration key' }).click()
   await page.getByLabel('Agent or purpose').fill(label)
+  await page.getByRole('checkbox', { name: /^admin_keys:delegate/ }).check()
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
   await page.getByRole('button', { name: 'Add my detected address' }).click()
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
@@ -108,12 +109,29 @@ export async function checkAgentAccess(
   await expect(page.getByLabel('Agent or purpose')).toHaveValue(
     `${label} replacement`,
   )
-  for (let step = 0; step < 3; step++)
-    await page.getByRole('button', { name: 'Continue', exact: true }).click()
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Create key', exact: true })
-    .click()
+  const dialog = page.getByRole('dialog')
+  const next = dialog.getByRole('button', { name: 'Continue', exact: true })
+  const create = dialog.getByRole('button', { name: 'Create key', exact: true })
+  const back = dialog.getByRole('button', { name: 'Back', exact: true })
+  await next.click()
+  const networks = dialog.getByLabel('Approved IP addresses or CIDRs')
+  const originalNetworks = await networks.inputValue()
+  await networks.fill(`${originalNetworks}\n198.51.100.0/24`)
+  await next.click()
+  await next.click()
+  await create.click()
+  await expect(dialog.getByRole('alert')).toContainText(
+    'Network 198.51.100.0/24 is outside the original',
+  )
+  await expect(dialog.getByRole('link', { name: /Sign in again/ })).toHaveCount(
+    0,
+  )
+  await back.click()
+  await back.click()
+  await networks.fill(originalNetworks)
+  await next.click()
+  await next.click()
+  await create.click()
   const replacement = await page
     .locator('[aria-label="New administration key"]')
     .innerText()

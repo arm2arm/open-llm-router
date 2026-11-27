@@ -79,7 +79,9 @@ for (const rotation of [false, true]) {
     )
     expect(writes).toHaveLength(0)
     const networks = dialog.getByLabel('Approved IP addresses or CIDRs')
-    await networks.fill('192.0.2.10/32')
+    await networks.fill(
+      rotation ? '2001:db8:1234:5678::1/128' : '192.0.2.10/32',
+    )
     // Also exercise implicit form submission without a submit button on this step.
     await dialog
       .locator('form')
@@ -95,6 +97,9 @@ for (const rotation of [false, true]) {
       '4 of 4',
     )
     expect(writes).toHaveLength(0)
+    await expect(
+      dialog.getByRole('link', { name: /Sign in again/ }),
+    ).toHaveCount(0)
     await dialog
       .getByRole('button', { name: 'Create key', exact: true })
       .click()
@@ -104,6 +109,56 @@ for (const rotation of [false, true]) {
     expect(writes).toHaveLength(1)
     expect(writes[0].replaces_key_id).toBe(rotation ? agentKey.id : undefined)
     await secretCannotBeDismissed(page, 'I saved the key')
+  })
+}
+
+for (const sensitive of [false, true]) {
+  test(`an SSO administrator gets the appropriate sign-in link for ${sensitive ? 'sensitive' : 'read-only'} key grants`, async ({
+    page,
+  }) => {
+    await mockAccessiblePortal(page)
+    await page.route('**/portal/api/auth/session', (route) =>
+      route.fulfill({
+        json: { auth_method: 'oidc', must_change_password: false },
+      }),
+    )
+    await page.route('**/portal/api/admin/agent-keys', (route) =>
+      route.request().method() === 'POST'
+        ? route.fulfill({
+            status: 403,
+            json: {
+              error: {
+                type: 'reauthentication_required',
+                message: 'A fresh administrator sign-in is required.',
+              },
+            },
+          })
+        : route.fallback(),
+    )
+    await page.goto('/portal/admin/agents')
+    await page
+      .getByRole('button', { name: 'Create administration key' })
+      .click()
+    const dialog = page.getByRole('dialog')
+    const next = dialog.getByRole('button', { name: 'Continue' })
+    const signIn = dialog.getByRole('link', { name: /Sign in again/ })
+    await dialog.getByLabel('Agent or purpose').fill('Sign-in test')
+    if (sensitive)
+      await dialog
+        .getByRole('checkbox', { name: /^admin_keys:delegate/ })
+        .check()
+    await next.click()
+    await dialog
+      .getByRole('button', { name: 'Add my detected address' })
+      .click()
+    await next.click()
+    await next.click()
+    await expect(signIn).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Create key' }).click()
+    await expect(signIn).toHaveAttribute(
+      'href',
+      `/portal/sign-in/${sensitive ? 'local' : 'keycloak'}?next=/portal/admin/agents`,
+    )
   })
 }
 

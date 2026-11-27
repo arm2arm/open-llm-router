@@ -45,10 +45,16 @@ func Contains(networks []string, ip netip.Addr) bool {
 	return false
 }
 func Subnets(child, parent []string) bool {
+	_, ok := checkSubnets(child, parent)
+	return ok
+}
+
+// checkSubnets identifies the first requested network outside the allowed ranges.
+func checkSubnets(child, parent []string) (string, bool) {
 	for _, value := range child {
 		c, err := netip.ParsePrefix(value)
 		if err != nil {
-			return false
+			return value, false
 		}
 		ok := false
 		for _, value := range parent {
@@ -59,10 +65,10 @@ func Subnets(child, parent []string) bool {
 			}
 		}
 		if !ok {
-			return false
+			return value, false
 		}
 	}
-	return len(child) > 0
+	return "", len(child) > 0
 }
 
 // ClientIP trusts X-Forwarded-For only from explicitly trusted socket peers.

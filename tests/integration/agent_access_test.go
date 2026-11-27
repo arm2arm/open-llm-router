@@ -278,8 +278,16 @@ func TestAgentRecentGrantAndOwnerRevocation(t *testing.T) {
 		if response.StatusCode != want {
 			t.Fatalf("issue status %d want %d", response.StatusCode, want)
 		}
-		var out struct{ Key string }
-		_ = json.Unmarshal(data, &out)
+		var out struct {
+			Key   string
+			Error struct{ Type string }
+		}
+		if err := json.Unmarshal(data, &out); err != nil {
+			t.Fatal(err)
+		}
+		if want == 403 && (out.Error.Type != "reauthentication_required" || out.Key != "") {
+			t.Fatal("expected a sign-in challenge")
+		}
 		return out.Key
 	}
 	for _, permission := range []string{"users:credentials", "authentication:write", "admin_keys:delegate"} {

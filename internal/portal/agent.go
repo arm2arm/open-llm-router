@@ -265,8 +265,12 @@ func (h *Handler) agentIssue(w http.ResponseWriter, r *http.Request, u user) {
 	if !h.jsonBody(w, r, &body) {
 		return
 	}
-	if time.Since(u.SessionCreated) > recentLocalSignIn || (adminaccess.Sensitive(body.Permissions) && !recentLocal(u)) {
-		fail(w, 403, "reauthentication_required", "sign in again; sensitive permissions require a local administrator sign-in within 15 minutes")
+	if adminaccess.Sensitive(body.Permissions) && !recentLocal(u) {
+		fail(w, 403, "reauthentication_required", "These permissions require a local administrator sign-in within the last 15 minutes.")
+		return
+	}
+	if time.Since(u.SessionCreated) > recentLocalSignIn {
+		fail(w, 403, "reauthentication_required", "Your last sign-in was over 15 minutes ago. Sign in again to issue this key.")
 		return
 	}
 	h.issueAgentKey(w, r, u, body, nil)

@@ -6,17 +6,20 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/arm2arm/open-llm-router/internal/audit"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var Permissions = []string{"service:read", "usage:read", "audit:read", "users:read", "users:write", "users:credentials", "routing:read", "routing:write", "authentication:read", "authentication:write", "admin_keys:read", "admin_keys:write", "admin_keys:delegate", "user_keys:issue"}
 var ErrDenied = errors.New("administration access denied")
+var errRotationKeyUnavailable = fmt.Errorf("%w. Refresh Agent access and select a key owned by the signed-in administrator", ErrDenied)
 var ErrInput = errors.New("invalid administration key settings")
 var ErrLimit = errors.New("active administration key limit reached")
 
@@ -198,13 +201,23 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, owner string, c Create, pare
 			return ErrLimit
 		}
 		if c.ReplacesID != "" {
-			previous, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM admin_api_keys WHERE id=$1 AND owner_id=$2 FOR SHARE`, c.ReplacesID, owner))
-			if err != nil || !Subnets(c.Networks, previous.Networks) {
-				return ErrDenied
+			var id pgtype.UUID
+			if err := id.Scan(c.ReplacesID); err != nil {
+				return errRotationKeyUnavailable
+			}
+			previous, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM admin_api_keys WHERE id=$1 AND owner_id=$2 FOR SHARE`, id, owner))
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errRotationKeyUnavailable
+			}
+			if err != nil {
+				return err
+			}
+			if network, ok := checkSubnets(c.Networks, previous.Networks); !ok {
+				return fmt.Errorf("%w. Network %s is outside the original key's approved networks. Choose a covered network or create a separate administration key", ErrDenied, network)
 			}
 			for _, permission := range c.Permissions {
 				if !previous.Allows(permission) {
-					return ErrDenied
+					return fmt.Errorf("%w. Permission %s exceeds the original key's permissions. Remove it or create a separate administration key", ErrDenied, permission)
 				}
 			}
 		}
