@@ -1,824 +1,450 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Network, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { GroupPolicies, AccessPreview } from '@/policies'
+import { EndpointSettingsPanel } from '@/endpoints'
+import { routingDocument } from '@/backend-workspace'
+import { RouteEditor } from '@/route-editor'
+import { RoutingAliases } from '@/routing-aliases'
+import {
+  DraftReview,
+  RevisionHistory,
+  RouteList,
+  sameSettings,
+  type RouteScreen,
+} from '@/routing-views'
 import {
   api,
   type CheckResult,
-  type EndpointModel,
-  type EndpointReplica,
   type Replica,
   type RoutingDocument,
   type RoutingRevision,
   type RoutingView,
-  type Backend,
 } from '@/lib/api'
 
 const queryKey = ['admin-routing']
-
-function Failure({ error }: { error: Error | null }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (error) ref.current?.focus()
-  }, [error])
-  return error ? (
-    <div
-      ref={ref}
-      role="alert"
-      tabIndex={-1}
-      className="error whitespace-pre-wrap"
-    >
-      {error.message}
-    </div>
-  ) : null
+type WorkingDraft = {
+  base: RoutingRevision
+  version: number
+  document: RoutingDocument
 }
-const asError = (error: unknown) =>
-  error instanceof Error
-    ? error
-    : new Error('Routing settings could not be updated.')
+type Screen = RouteScreen | { kind: 'endpoints' }
 
-const newReplica = (): EndpointReplica => ({
-  url: '',
-  health_path: '/health',
-  weight: 1,
-  max_inflight: 8,
-  bearer_token_env: '',
-})
-const newModel = (): EndpointModel => ({
-  upstream_model: '',
-  protocols: ['openai'],
-  timeout_s: 120,
-  idle_timeout_s: 30,
-  queue_timeout_s: 0,
-  session_affinity: false,
-  priority: null,
-  pool: [newReplica()],
-})
-
-function copyDocument(document: RoutingDocument): RoutingDocument {
-  return JSON.parse(JSON.stringify(document)) as RoutingDocument
-}
-
-// grantsOf lists the groups that name a model explicitly or grant all models.
-function grantsOf(model: string, grants: Record<string, string[]>) {
-  return Object.entries(grants)
-    .filter(([, models]) => models.includes(model) || models.includes('*'))
-    .map(([group, models]) => (models.includes('*') ? `${group} (*)` : group))
-}
-
-function Results({ results }: { results: CheckResult[] }) {
-  return (
-    <ul className="grid gap-2" aria-label="Endpoint check results">
-      {results.map((result, index) => (
-        <li
-          key={`${result.name}-${index}`}
-          className="flex flex-wrap gap-2 items-baseline"
-        >
-          <span
-            className={`badge ${result.status === 'failed' ? 'inactive' : ''}`}
-          >
-            {result.status === 'passed' ? '✓ passed' : '✕ failed'}
-          </span>
-          <code className="text-xs">{result.name}</code>
-          <span className="subtitle">{result.message}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function ReplicaFields({
-  replica,
-  index,
-  model,
-  references,
-  backends,
-  onRenameBackend,
-  onChange,
-  onRemove,
-}: {
-  replica: EndpointReplica
-  index: number
-  model: string
-  references: string[]
-  backends: Record<string, Backend>
-  onRenameBackend: (id: string, name: string) => void
-  onChange: (replica: EndpointReplica) => void
-  onRemove?: () => void
-}) {
-  const label = `${model} replica ${index + 1}`
-  return (
-    <fieldset
-      className="grid gap-2 sm:grid-cols-6 items-end rounded-md border p-3"
-      aria-label={label}
-    >
-      <label
-        className={`grid gap-1 text-sm ${replica.backend ? 'sm:col-span-3' : 'sm:col-span-6'}`}
-      >
-        Backend
-        <select
-          className="select"
-          aria-label={`${label} backend`}
-          value={replica.backend ?? ''}
-          onChange={(event) =>
-            onChange({
-              ...replica,
-              backend: event.target.value,
-              url: '',
-              health_path: '',
-              bearer_token_env: '',
-              private_network: false,
-            })
-          }
-        >
-          <option value="">Enter an origin manually</option>
-          {Object.entries(backends).map(([id, backend]) => (
-            <option key={id} value={id}>
-              {backend.name || id} — {backend.url}
-            </option>
-          ))}
-        </select>
-      </label>
-      {replica.backend && backends[replica.backend] && (
-        <label className="grid gap-1 text-sm sm:col-span-3">
-          Backend name
-          <Input
-            aria-label={`${label} backend name`}
-            value={backends[replica.backend].name ?? ''}
-            maxLength={128}
-            placeholder="e.g. aip-fast1"
-            onChange={(event) =>
-              onRenameBackend(replica.backend!, event.target.value)
-            }
-          />
-          <span className="subtitle">
-            Shown everywhere this backend is used.
-          </span>
-        </label>
-      )}
-      {replica.backend ? (
-        <p className="subtitle sm:col-span-2">
-          {backends[replica.backend]?.url ?? 'Missing backend'} · uses the
-          backend’s API key and network setting
-        </p>
-      ) : (
-        <label className="grid gap-1 text-sm sm:col-span-2">
-          Origin URL
-          <Input
-            aria-label={`${label} origin`}
-            value={replica.url}
-            required
-            maxLength={2048}
-            placeholder="http://gpu-node:8000"
-            onChange={(event) =>
-              onChange({ ...replica, url: event.target.value })
-            }
-          />
-        </label>
-      )}
-      <label className="grid gap-1 text-sm">
-        Health path
-        <Input
-          aria-label={`${label} health path`}
-          value={replica.health_path}
-          placeholder={
-            replica.backend ? backends[replica.backend]?.health_path : '/health'
-          }
-          maxLength={256}
-          onChange={(event) =>
-            onChange({ ...replica, health_path: event.target.value })
-          }
-        />
-      </label>
-      <label className="grid gap-1 text-sm">
-        Weight
-        <Input
-          aria-label={`${label} weight`}
-          type="number"
-          min={0.01}
-          step="any"
-          value={replica.weight}
-          onChange={(event) =>
-            onChange({ ...replica, weight: Number(event.target.value) })
-          }
-        />
-      </label>
-      <label className="grid gap-1 text-sm">
-        Max in flight
-        <Input
-          aria-label={`${label} max in flight`}
-          type="number"
-          min={1}
-          value={replica.max_inflight}
-          onChange={(event) =>
-            onChange({ ...replica, max_inflight: Number(event.target.value) })
-          }
-        />
-      </label>
-      {!replica.backend && (
-        <label className="grid gap-1 text-sm">
-          Credential
-          <select
-            className="select"
-            aria-label={`${label} credential reference`}
-            value={replica.bearer_token_env}
-            onChange={(event) =>
-              onChange({ ...replica, bearer_token_env: event.target.value })
-            }
-          >
-            <option value="">None</option>
-            {references.map((reference) => (
-              <option key={reference} value={reference}>
-                {reference}
-              </option>
-            ))}
-            {replica.bearer_token_env &&
-              !references.includes(replica.bearer_token_env) && (
-                <option value={replica.bearer_token_env}>
-                  {replica.bearer_token_env} (not allowed)
-                </option>
-              )}
-          </select>
-        </label>
-      )}
-      {!replica.backend && (
-        <label className="flex items-center gap-2 text-sm sm:col-span-6">
-          <input
-            type="checkbox"
-            checked={replica.private_network ?? false}
-            onChange={(event) =>
-              onChange({ ...replica, private_network: event.target.checked })
-            }
-          />
-          Internal network endpoint (allows HTTP)
-        </label>
-      )}
-      {onRemove && (
-        <Button
-          type="button"
-          variant="outline"
-          aria-label={`Remove ${label}`}
-          onClick={onRemove}
-        >
-          <Trash2 />
-        </Button>
-      )}
-    </fieldset>
-  )
-}
-
-function ModelEditor({
-  name,
-  model,
-  references,
-  backends,
-  onRenameBackend,
-  onRename,
-  blockers,
-  onChange,
-  onRemove,
-}: {
-  name: string
-  model: EndpointModel
-  references: string[]
-  backends: Record<string, Backend>
-  onRenameBackend: (id: string, name: string) => void
-  onRename: (name: string) => string | undefined
-  blockers: string[]
-  onChange: (model: EndpointModel) => void
-  onRemove: () => void
-}) {
-  const [editedName, setEditedName] = useState(name)
-  const [nameError, setNameError] = useState('')
-  const number = (key: keyof EndpointModel) => (
-    <label className="grid gap-1 text-sm">
-      {
-        {
-          timeout_s: 'Header timeout (s)',
-          idle_timeout_s: 'Idle timeout (s)',
-          queue_timeout_s: 'Queue timeout (s)',
-        }[key as string]
-      }
-      <Input
-        aria-label={`${name} ${String(key)}`}
-        type="number"
-        min={0}
-        value={Number(model[key] ?? 0)}
-        onChange={(event) =>
-          onChange({ ...model, [key]: Number(event.target.value) })
-        }
-      />
-    </label>
-  )
-  return (
-    <article
-      className="grid gap-3 rounded-md border p-3"
-      aria-label={`Model ${name}`}
-    >
-      <div className="flex flex-wrap gap-2 items-center justify-between">
-        <h4 className="font-medium">{name}</h4>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={blockers.length > 0}
-          aria-label={`Remove model ${name}`}
-          title={blockers.join('; ')}
-          onClick={onRemove}
-        >
-          <Trash2 /> Remove model
-        </Button>
-      </div>
-      <div className="grid gap-2">
-        <label className="grid gap-1 text-sm">
-          Model name
-          <Input
-            aria-label={`${name} model name`}
-            value={editedName}
-            maxLength={128}
-            placeholder="e.g. aip-fast"
-            aria-invalid={!!nameError}
-            onChange={(event) => {
-              setEditedName(event.target.value)
-              setNameError('')
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                setNameError(onRename(editedName) ?? '')
-              }
-            }}
-          />
-        </label>
-        <p className="subtitle text-sm">
-          The name users select in API clients. Group grants and aliases follow
-          a rename; the upstream model stays the same. Update clients that use
-          the old name.
-        </p>
-        {nameError && (
-          <p role="alert" className="error">
-            {nameError}
-          </p>
-        )}
-        <Button
-          type="button"
-          variant="outline"
-          className="justify-self-start"
-          disabled={editedName === name}
-          onClick={() => setNameError(onRename(editedName) ?? '')}
-        >
-          Rename model
-        </Button>
-      </div>
-      {blockers.length > 0 && (
-        <p className="subtitle">
-          Cannot be removed while {blockers.join('; ')}.
-        </p>
-      )}
-      <div className="grid gap-3 sm:grid-cols-4">
-        <label className="grid gap-1 text-sm">
-          Upstream model name
-          <Input
-            aria-label={`${name} upstream model`}
-            value={model.upstream_model}
-            placeholder={name}
-            maxLength={256}
-            onChange={(event) =>
-              onChange({ ...model, upstream_model: event.target.value })
-            }
-          />
-        </label>
-        {number('timeout_s')}
-        {number('idle_timeout_s')}
-        {number('queue_timeout_s')}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-4">
-        <label className="grid gap-1 text-sm">
-          Context length (tokens)
-          <Input
-            aria-label={`${name} context length`}
-            type="number"
-            min={1}
-            step={1}
-            value={model.context_length ?? ''}
-            placeholder="Detected"
-            onChange={(event) => {
-              const next = { ...model }
-              if (event.target.value === '') delete next.context_length
-              else next.context_length = Number(event.target.value)
-              onChange(next)
-            }}
-          />
-        </label>
-        <label className="grid gap-1 text-sm">
-          Model type
-          <select
-            className="select"
-            aria-label={`${name} model type`}
-            value={model.type ?? 'chat'}
-            onChange={(event) => {
-              const next = { ...model }
-              if (event.target.value === 'embedding') next.type = 'embedding'
-              else delete next.type
-              onChange(next)
-            }}
-          >
-            <option value="chat">Chat</option>
-            <option value="embedding">Embedding</option>
-          </select>
-        </label>
-        <p className="subtitle text-sm sm:col-span-2">
-          Reported to clients in the model list. Leave the context length empty
-          to report the smallest value the backends' model catalogs give, such
-          as vLLM&apos;s max_model_len.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-4 text-sm">
-        {(['openai', 'anthropic'] as const).map((protocol) => (
-          <label key={protocol} className="flex gap-2 items-center">
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              aria-label={`${name} ${protocol} protocol`}
-              checked={model.protocols.includes(protocol)}
-              onChange={(event) =>
-                onChange({
-                  ...model,
-                  protocols: event.target.checked
-                    ? [...model.protocols, protocol]
-                    : model.protocols.filter((p) => p !== protocol),
-                })
-              }
-            />
-            {protocol === 'openai' ? 'OpenAI API' : 'Anthropic API'}
-          </label>
-        ))}
-        <label className="flex gap-2 items-center">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            aria-label={`${name} session affinity`}
-            checked={model.session_affinity}
-            onChange={(event) =>
-              onChange({ ...model, session_affinity: event.target.checked })
-            }
-          />
-          Session affinity
-        </label>
-      </div>
-      {model.pool.map((replica, index) => (
-        <ReplicaFields
-          key={index}
-          replica={replica}
-          index={index}
-          model={name}
-          references={references}
-          backends={backends}
-          onRenameBackend={onRenameBackend}
-          onChange={(next) =>
-            onChange({
-              ...model,
-              pool: model.pool.map((r, i) => (i === index ? next : r)),
-            })
-          }
-          onRemove={
-            model.pool.length > 1
-              ? () =>
-                  onChange({
-                    ...model,
-                    pool: model.pool.filter((_, i) => i !== index),
-                  })
-              : undefined
-          }
-        />
-      ))}
-      <div>
-        <Button
-          type="button"
-          variant="outline"
-          aria-label={`Add replica to ${name}`}
-          onClick={() =>
-            onChange({ ...model, pool: [...model.pool, newReplica()] })
-          }
-        >
-          <Plus /> Add replica
-        </Button>
-      </div>
-    </article>
-  )
-}
-
-function DraftEditor({
+function RoutingWorkspace({
   view,
-  base,
-  onSaved,
+  health,
 }: {
   view: RoutingView
-  base: RoutingRevision
-  onSaved: () => Promise<void>
+  health: { model: string; replicas: Replica[] }[]
 }) {
-  const [loaded, setLoaded] = useState(() => ({
-    base,
-    version: view.settings.version,
-  }))
-  const changedElsewhere =
-    loaded.version !== view.settings.version || loaded.base.id !== base.id
-  const [document, setDocument] = useState(() =>
-    copyDocument(base.document as RoutingDocument),
-  )
-  const [modelName, setModelName] = useState('')
+  const cache = useQueryClient()
+  const { settings } = view
+  const active = settings.active?.document ?? routingDocument(view)
+  const base = settings.draft ?? settings.active
+  const [working, setWorking] = useState<WorkingDraft | null>(null)
+  const document = working?.document ?? base?.document ?? active
+  const dirty =
+    !!working && !sameSettings(working.base.document, working.document)
+  const stale =
+    !!working &&
+    (working.version !== settings.version || working.base.id !== base?.id)
+  const [screen, setScreen] = useState<Screen>({ kind: 'routes' })
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
-  const blockers = (name: string) => {
-    const reasons: string[] = []
-    const groups = Object.entries(document.groups)
-      .map(([name, policy]) => [name, policy.models] as const)
-      .filter(([, models]) => models.includes(name))
-      .map(([group]) => group)
-    if (groups.length)
-      reasons.push(
-        `group ${groups.join(', ')} grants it (remove its grant first)`,
-      )
-    const aliases = Object.entries(document.aliases)
-      .filter(([, target]) => target === name)
-      .map(([alias]) => alias)
-    if (aliases.length) reasons.push(`alias ${aliases.join(', ')} names it`)
-    return reasons
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [checks, setChecks] = useState<{
+    id: number
+    results: CheckResult[]
+  } | null>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const alert = useRef<HTMLDivElement>(null)
+  const focusHeading = useRef(false)
+  useEffect(() => {
+    if (focusHeading.current) heading.current?.focus()
+    focusHeading.current = false
+  }, [screen])
+  useEffect(() => {
+    if (error) alert.current?.focus()
+  }, [error])
+  const section =
+    screen.kind === 'review' && !settings.draft ? 'routes' : screen.kind
+
+  function navigate(next: Screen) {
+    if (base && !working && ['editor', 'groups', 'aliases'].includes(next.kind))
+      setWorking({ base, version: settings.version, document: base.document! })
+    focusHeading.current = true
+    setScreen(next)
+    setError('')
+    setMessage('')
   }
-  async function save() {
+  function editDocument(next: RoutingDocument) {
+    setWorking((current) => ({
+      base: current?.base ?? base!,
+      version: current?.version ?? settings.version,
+      document: next,
+    }))
+  }
+  function back() {
+    if (!dirty) setWorking(null)
+    navigate({ kind: 'routes' })
+  }
+  async function reload() {
+    await Promise.all(
+      [
+        'admin-routing',
+        'admin-replicas',
+        'admin-endpoints',
+        'admin-groups',
+        'me',
+        'models',
+      ].map((name) => cache.invalidateQueries({ queryKey: [name] })),
+    )
+  }
+  async function run(task: () => Promise<void>) {
     setPending(true)
-    setError(null)
+    setError('')
+    setMessage('')
     try {
-      const saved = await api<RoutingView>(
-        'admin/settings/routing/draft',
-        'PUT',
-        {
-          version: loaded.version,
-          document,
-        },
-      )
-      setLoaded({
-        base: saved.settings.draft!,
-        version: saved.settings.version,
-      })
-      setDocument(
-        copyDocument(saved.settings.draft!.document as RoutingDocument),
-      )
-      await onSaved()
+      await task()
     } catch (error) {
-      setError(asError(error))
+      setError(
+        error instanceof Error ? error.message : 'The routing update failed.',
+      )
     } finally {
       setPending(false)
     }
   }
-  const models = Object.keys(document.models).sort()
+  function save(next: RoutingDocument) {
+    void run(async () => {
+      const saved = await api<RoutingView>(
+        'admin/settings/routing/draft',
+        'PUT',
+        {
+          version: working?.version ?? settings.version,
+          document: next,
+        },
+      )
+      cache.setQueryData(queryKey, saved)
+      setWorking(null)
+      setChecks(null)
+      navigate({ kind: 'review' })
+      await reload()
+    })
+  }
+  function act(
+    path: 'import' | 'apply' | 'activate' | 'discard' | 'rollback',
+    revision?: number,
+  ) {
+    void run(async () => {
+      const body =
+        path === 'discard'
+          ? { version: settings.version }
+          : revision !== undefined
+            ? { version: settings.version, revision }
+            : {}
+      try {
+        const result = await api<RoutingView>(
+          'admin/settings/routing/' + path,
+          'POST',
+          body,
+        )
+        if (result?.settings) cache.setQueryData(queryKey, result)
+      } catch (error) {
+        if (path === 'activate') await reload()
+        throw error
+      }
+      if (path !== 'apply') setWorking(null)
+      setChecks(null)
+      navigate({ kind: 'routes' })
+      setMessage(
+        {
+          import: 'Current routing imported.',
+          apply: 'Active routing applied to this router.',
+          activate: 'Draft activated. New requests use the active routes.',
+          discard: 'Routing draft discarded.',
+          rollback: 'Previous routing revision restored.',
+        }[path],
+      )
+      await reload()
+    })
+  }
+  function testEndpoints() {
+    const id = settings.draft!.id
+    void run(async () => {
+      const response = await api<{ results: CheckResult[] }>(
+        'admin/settings/routing/checks',
+        'POST',
+        { revision: id },
+      )
+      setChecks({ id, results: response.results })
+      await reload()
+    })
+  }
+  const title =
+    screen.kind === 'editor'
+      ? screen.name === null
+        ? 'Create route'
+        : 'Edit route · ' + screen.name
+      : {
+          routes: 'Routes',
+          aliases: 'Aliases',
+          groups: 'Group access',
+          history: 'Revision history',
+          endpoints: 'Per-model endpoints',
+          review: 'Review draft',
+        }[section as Exclude<Screen['kind'], 'editor'>]
+  const groups = settings.managed
+    ? Object.fromEntries(
+        Object.entries(document.groups ?? {}).map(([group, policy]) => [
+          group,
+          policy.models ?? [],
+        ]),
+      )
+    : view.group_grants
   return (
-    <form
-      aria-label="Edit routing draft"
-      className="grid gap-4"
-      onSubmit={(event) => {
-        event.preventDefault()
-        void save()
-      }}
-    >
-      <h3 className="panel-title">
-        {loaded.base.status === 'draft'
-          ? `Routing draft ${loaded.base.id}`
-          : 'New routing draft'}
-      </h3>
-      <p className="subtitle">
-        Saving creates a draft; it does not change routing until activated.
-        Backend API keys are encrypted when saved.
-      </p>
-      <Failure error={error} />
-      {changedElsewhere && (
-        <div role="status" className="notice">
-          <p>
-            Settings changed elsewhere. Your edits are kept. Saving will check
-            for conflicts.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => {
-              setLoaded({ base, version: view.settings.version })
-              setDocument(copyDocument(base.document as RoutingDocument))
-              setError(null)
-            }}
-          >
-            Load latest and discard local edits
-          </Button>
+    <fieldset disabled={pending} className="routing-workspace">
+      <header className="panel-head">
+        <div className="min-w-0">
+          {section !== 'routes' && section !== 'editor' && (
+            <button type="button" className="route-back" onClick={back}>
+              <ArrowLeft size={15} />
+              Routes
+            </button>
+          )}
+          <h2 ref={heading} tabIndex={-1} className="routing-title">
+            {title}
+          </h2>
+          {section === 'routes' && (
+            <p className="subtitle">
+              {settings.managed
+                ? 'Active revision ' + settings.active?.id
+                : 'File-managed routing'}{' '}
+              ·{' '}
+              <span data-testid="routing-runtime">
+                {view.runtime.revision
+                  ? 'routing revision ' + view.runtime.revision
+                  : 'the file routing'}
+              </span>{' '}
+              running here
+            </p>
+          )}
         </div>
-      )}
-      <fieldset disabled={pending} className="grid gap-4 min-w-0">
-        <h4 className="font-medium">Route settings</h4>
-        {models.map((name) => (
-          <ModelEditor
-            key={name}
-            name={name}
-            model={document.models[name]}
-            references={view.credential_references}
-            backends={document.backends ?? {}}
-            onRenameBackend={(id, name) =>
-              setDocument((current) => ({
-                ...current,
-                backends: {
-                  ...current.backends,
-                  [id]: { ...current.backends![id], name },
-                },
-              }))
-            }
-            onRename={(value) => {
-              const renamed = value.trim()
-              if (
-                !renamed ||
-                renamed === '*' ||
-                new TextEncoder().encode(renamed).length > 128 ||
-                /\p{Cc}/u.test(renamed)
-              )
-                return 'Choose a model name of 1–128 bytes, without control characters or “*”.'
-              if (renamed === name) return undefined
-              if (
-                Object.hasOwn(document.models, renamed) ||
-                Object.hasOwn(document.aliases, renamed)
-              )
-                return 'This name is already used by a model or alias.'
-              const next = copyDocument(document)
-              // An implicit upstream name must retain its original value.
-              next.models = {
-                ...next.models,
-                [renamed]: {
-                  ...next.models[name],
-                  upstream_model: next.models[name].upstream_model || name,
-                },
-              }
-              delete next.models[name]
-              for (const group of Object.values(next.groups))
-                group.models = group.models.map((model) =>
-                  model === name ? renamed : model,
-                )
-              for (const alias of Object.keys(next.aliases))
-                if (next.aliases[alias] === name) next.aliases[alias] = renamed
-              setDocument(next)
-              return undefined
-            }}
-            blockers={blockers(name)}
-            onChange={(model) =>
-              setDocument({
-                ...document,
-                models: { ...document.models, [name]: model },
-              })
-            }
-            onRemove={() => {
-              const next = copyDocument(document)
-              delete next.models[name]
-              setDocument(next)
-            }}
-          />
-        ))}
-        <div className="flex flex-wrap gap-2 items-end">
-          <label className="grid gap-1 text-sm">
-            New logical model name
-            <Input
-              aria-label="New logical model name"
-              value={modelName}
-              maxLength={128}
-              onChange={(event) => setModelName(event.target.value)}
-            />
-          </label>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!modelName.trim() || modelName.trim() in document.models}
-            onClick={() => {
-              setDocument({
-                ...document,
-                models: { ...document.models, [modelName.trim()]: newModel() },
-              })
-              setModelName('')
-            }}
-          >
-            <Plus /> Add model
-          </Button>
-        </div>
-        <fieldset className="grid gap-2 rounded-md border p-3">
-          <legend className="px-1 text-sm">Aliases</legend>
-          {Object.entries(document.aliases)
-            .sort()
-            .map(([alias, target]) => (
-              <div key={alias} className="flex flex-wrap gap-2 items-center">
-                <code>{alias}</code>→
-                <select
-                  className="select"
-                  aria-label={`Alias ${alias} target`}
-                  value={target}
-                  onChange={(event) =>
-                    setDocument({
-                      ...document,
-                      aliases: {
-                        ...document.aliases,
-                        [alias]: event.target.value,
-                      },
-                    })
-                  }
-                >
-                  {models.map((name) => (
-                    <option key={name}>{name}</option>
-                  ))}
-                  {!models.includes(target) && (
-                    <option value={target}>{target} (missing)</option>
-                  )}
-                </select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  aria-label={`Remove alias ${alias}`}
-                  onClick={() => {
-                    const next = copyDocument(document)
-                    delete next.aliases[alias]
-                    setDocument(next)
-                  }}
-                >
-                  <Trash2 />
+        {section === 'routes' &&
+          (settings.managed ? (
+            <div className="flex flex-wrap gap-2">
+              {dirty ? (
+                <Button onClick={() => save(document)}>
+                  Save routing draft
                 </Button>
-              </div>
-            ))}
-          <AliasAdder
-            models={models}
-            onAdd={(alias, target) =>
-              setDocument({
-                ...document,
-                aliases: { ...document.aliases, [alias]: target },
-              })
-            }
-          />
-        </fieldset>
-        <GroupPolicies document={document} onChange={setDocument} />
-        <AccessPreview document={document} />
-        <div>
-          <Button type="submit">
-            {pending ? 'Saving…' : 'Save routing draft'}
-          </Button>
-        </div>
-      </fieldset>
-    </form>
-  )
-}
-
-function AliasAdder({
-  models,
-  onAdd,
-}: {
-  models: string[]
-  onAdd: (alias: string, target: string) => void
-}) {
-  const [alias, setAlias] = useState('')
-  const [target, setTarget] = useState('')
-  return (
-    <div className="flex flex-wrap gap-2 items-end">
-      <label className="grid gap-1 text-sm">
-        New alias
-        <Input
-          aria-label="New alias"
-          value={alias}
-          maxLength={128}
-          onChange={(event) => setAlias(event.target.value)}
-        />
-      </label>
-      <label className="grid gap-1 text-sm">
-        For model
-        <select
-          className="select"
-          aria-label="New alias target"
-          value={target}
-          onChange={(event) => setTarget(event.target.value)}
-        >
-          <option value="">Choose a model</option>
-          {models.map((name) => (
-            <option key={name}>{name}</option>
+              ) : (
+                settings.draft && (
+                  <Button onClick={() => navigate({ kind: 'review' })}>
+                    Review draft
+                  </Button>
+                )
+              )}
+              <Button
+                variant={dirty || settings.draft ? 'outline' : 'default'}
+                onClick={() => navigate({ kind: 'editor', name: null })}
+              >
+                <Plus />
+                Create route
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={() => act('import')}>
+              Import current routing
+            </Button>
           ))}
-        </select>
-      </label>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!alias.trim() || !target}
-        onClick={() => {
-          onAdd(alias.trim(), target)
-          setAlias('')
-        }}
-      >
-        <Plus /> Add alias
-      </Button>
-    </div>
+      </header>
+      <div className="routing-body">
+        {error && (
+          <div
+            ref={alert}
+            tabIndex={-1}
+            role="alert"
+            className="error whitespace-pre-wrap"
+          >
+            {error}
+          </div>
+        )}
+        {message && (
+          <p role="status" className="notice">
+            {message}
+          </p>
+        )}
+        {stale && (
+          <div role="status" className="notice grid justify-items-start gap-2">
+            <p>
+              Settings changed elsewhere. Your edits are kept. Saving will check
+              for conflicts.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setWorking(null)
+                navigate({ kind: 'routes' })
+              }}
+            >
+              Load latest and discard local edits
+            </Button>
+          </div>
+        )}
+        {section === 'routes' && (
+          <>
+            {!settings.managed && (
+              <p className="subtitle">
+                Import to create routes and manage revisions in the portal.
+                Import copies the routing currently in use.
+              </p>
+            )}
+            {settings.managed &&
+              settings.active &&
+              view.runtime.revision !== settings.active.id && (
+                <div className="notice flex flex-wrap items-center justify-between gap-2">
+                  <span>This router is running a different revision.</span>
+                  <Button variant="outline" onClick={() => act('apply')}>
+                    Apply active routing to this router
+                  </Button>
+                </div>
+              )}
+            {dirty && (
+              <p role="status" className="notice">
+                You have unsaved routing changes.
+              </p>
+            )}
+            {!dirty && settings.draft && (
+              <p className="subtitle">
+                Draft {settings.draft.id} is waiting for review.
+              </p>
+            )}
+            <RouteList
+              active={active}
+              document={document}
+              health={health}
+              grants={groups}
+              edit={
+                settings.managed
+                  ? (name) => navigate({ kind: 'editor', name })
+                  : undefined
+              }
+            />
+            <div
+              className="routing-tools"
+              role="group"
+              aria-label="Routing tools"
+            >
+              {settings.managed ? (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate({ kind: 'aliases' })}
+                  >
+                    Aliases
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate({ kind: 'groups' })}
+                  >
+                    Group access
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate({ kind: 'history' })}
+                  >
+                    Revision history
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate({ kind: 'endpoints' })}
+                >
+                  Per-model endpoints
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+        {screen.kind === 'editor' && (
+          <RouteEditor
+            source={screen.name}
+            document={document}
+            references={view.credential_references}
+            advanced={!!screen.advanced}
+            pending={pending}
+            onSave={save}
+            onCancel={back}
+            onKeep={(next) => {
+              editDocument(next)
+              navigate({ kind: 'routes' })
+            }}
+          />
+        )}
+        {(section === 'aliases' || section === 'groups') && (
+          <form
+            aria-label="Edit routing draft"
+            className="grid gap-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              save(document)
+            }}
+          >
+            {section === 'aliases' ? (
+              <RoutingAliases document={document} onChange={editDocument} />
+            ) : (
+              <>
+                <GroupPolicies document={document} onChange={editDocument} />
+                <AccessPreview document={document} />
+              </>
+            )}
+            <Button
+              type="submit"
+              className="justify-self-start"
+              disabled={!dirty}
+            >
+              Save routing draft
+            </Button>
+          </form>
+        )}
+        {section === 'endpoints' && <EndpointSettingsPanel />}
+        {section === 'review' && settings.draft && (
+          <DraftReview
+            view={view}
+            draft={settings.draft}
+            active={active}
+            go={navigate}
+            busy={pending}
+            results={
+              checks?.id === settings.draft.id ? checks?.results : undefined
+            }
+            check={testEndpoints}
+            activate={() => act('activate', settings.draft!.id)}
+            discard={() => act('discard')}
+          />
+        )}
+        {section === 'history' && (
+          <>
+            {dirty && (
+              <p className="notice">
+                Save your local edits before rolling back.
+              </p>
+            )}
+            <RevisionHistory
+              history={settings.history}
+              disabled={dirty || pending}
+              rollback={(id) => act('rollback', id)}
+            />
+          </>
+        )}
+      </div>
+    </fieldset>
   )
 }
 
 export function RoutingSettingsPanel() {
-  const [editorReset, setEditorReset] = useState(0)
-  const cache = useQueryClient()
   const view = useQuery({
     queryKey,
     queryFn: () => api<RoutingView>('admin/settings/routing'),
@@ -831,320 +457,20 @@ export function RoutingSettingsPanel() {
       ),
     refetchInterval: 10_000,
   })
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
-  const [results, setResults] = useState<CheckResult[] | null>(null)
-  const reload = async () => {
-    await cache.invalidateQueries({ queryKey })
-    await cache.invalidateQueries({ queryKey: ['admin-replicas'] })
-    await cache.invalidateQueries({ queryKey: ['admin-endpoints'] })
-    await cache.invalidateQueries({ queryKey: ['admin-groups'] })
-    await cache.invalidateQueries({ queryKey: ['me'] })
-  }
-  async function act(path: string, body: object) {
-    setPending(true)
-    setError(null)
-    try {
-      await api(`admin/settings/routing/${path}`, 'POST', body)
-      await reload()
-      if (path === 'discard') setEditorReset((value) => value + 1)
-    } catch (error) {
-      setError(asError(error))
-    } finally {
-      setPending(false)
-    }
-  }
-  async function check(revision: number) {
-    setPending(true)
-    setError(null)
-    try {
-      const response = await api<{ results: CheckResult[] }>(
-        'admin/settings/routing/checks',
-        'POST',
-        { revision },
-      )
-      setResults(response.results)
-      await reload()
-    } catch (error) {
-      setError(asError(error))
-    } finally {
-      setPending(false)
-    }
-  }
-  const data = view.data
-  const settings = data?.settings
-  const active = settings?.active
-  const draft = settings?.draft
-  const effective = (active?.document ?? {
-    models: (settings?.effective.find((s) => s.name === 'models')?.value ??
-      {}) as Record<string, EndpointModel>,
-    aliases: (settings?.effective.find((s) => s.name === 'aliases')?.value ??
-      {}) as Record<string, string>,
-  }) as RoutingDocument
-  const replicaHealth = (model: string, url: string) =>
-    health.data?.models
-      .find((m) => m.model === model)
-      ?.replicas.find((r) => r.url === url.replace(/\/$/, ''))
   return (
     <section className="panel" id="routing" aria-label="Routing settings">
-      <div className="panel-head">
-        <h2 className="panel-title">Routing</h2>
-        <Network size={20} className="text-muted-foreground" />
-      </div>
-      <Failure error={view.error ?? error} />
-      {data && settings && (
-        <div className="grid gap-6">
-          <p className="subtitle">
-            A request names a model or alias. Group policies grant models; each
-            model forwards its native OpenAI or Anthropic API to a pool of
-            compatible backends. Connect a backend to discover models and create
-            routes.
-          </p>
-          <dl className="grid gap-2 sm:grid-cols-2 text-sm">
-            <div>
-              <dt className="subtitle">Configuration authority</dt>
-              <dd>
-                {settings.managed
-                  ? `Database — active routing revision ${active?.id}`
-                  : 'Config file (and per-model endpoint revisions)'}
-              </dd>
-            </div>
-            <div>
-              <dt className="subtitle">This router is running</dt>
-              <dd data-testid="routing-runtime">
-                {data.runtime.revision
-                  ? `routing revision ${data.runtime.revision}`
-                  : 'the file routing'}
-              </dd>
-            </div>
-          </dl>
-          <div className="table-wrap">
-            <table aria-label="Routed models">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Granted by</th>
-                  <th>Aliases</th>
-                  <th>Endpoints</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(effective.models)
-                  .sort()
-                  .map(([name, model]) => (
-                    <tr key={name}>
-                      <td className="font-medium">
-                        {name}
-                        <div className="subtitle">
-                          {model.protocols.join(', ')}
-                          {model.upstream_model
-                            ? ` → ${model.upstream_model}`
-                            : ''}
-                        </div>
-                      </td>
-                      <td>
-                        {grantsOf(name, data.group_grants).join(', ') || '—'}
-                      </td>
-                      <td>
-                        {Object.entries(effective.aliases)
-                          .filter(([, target]) => target === name)
-                          .map(([alias]) => alias)
-                          .join(', ') || '—'}
-                      </td>
-                      <td>
-                        <ul className="grid gap-1">
-                          {model.pool.map((replica) => {
-                            const url = replica.backend
-                              ? (effective.backends?.[replica.backend]?.url ??
-                                replica.url)
-                              : replica.url
-                            const state = replicaHealth(name, url)
-                            return (
-                              <li
-                                key={replica.backend || replica.url}
-                                className="text-xs"
-                              >
-                                <code>{url}</code>{' '}
-                                {state
-                                  ? `${state.healthy ? '● healthy' : '✕ unavailable'} · ${state.in_flight}/${state.max_inflight} in flight`
-                                  : '· not running'}
-                                {replica.bearer_token_env &&
-                                  ` · credential ${replica.bearer_token_env}`}
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-          {!settings.managed ? (
-            <div className="grid gap-2">
-              <p className="subtitle">
-                Importing copies the routing in use into the database without
-                changing it. Afterwards models, endpoints and aliases are edited
-                here as complete revisions, and the per-model endpoint editor is
-                closed.
-              </p>
-              <div>
-                <Button
-                  disabled={pending}
-                  onClick={() => void act('import', {})}
-                >
-                  Import current routing
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {active && data.runtime.revision !== active.id && (
-                <div role="note" className="grid gap-2">
-                  <p className="subtitle">
-                    This router runs a different routing than active revision{' '}
-                    {active.id}.
-                  </p>
-                  <div>
-                    <Button
-                      variant="outline"
-                      disabled={pending}
-                      onClick={() => void act('apply', {})}
-                    >
-                      Apply active routing to this router
-                    </Button>
-                  </div>
-                </div>
-              )}
-              <DraftEditor
-                key={editorReset}
-                view={data}
-                base={(draft ?? active) as RoutingRevision}
-                onSaved={reload}
-              />
-              {draft && (
-                <div
-                  role="group"
-                  className="grid gap-2"
-                  aria-label="Routing draft status"
-                >
-                  {draft.validation?.valid ? (
-                    <p className="subtitle">
-                      Draft {draft.id} is valid. Activation probes the changed
-                      models&apos; endpoints first and changes nothing if one
-                      fails; running requests finish normally.
-                    </p>
-                  ) : (
-                    <div role="alert" className="error">
-                      Draft {draft.id} cannot be activated:
-                      <ul>
-                        {draft.validation?.problems.map((problem) => (
-                          <li key={problem}>{problem}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {data.impact_available && (
-                    <div role="group" aria-label="Draft affected users">
-                      <p>
-                        Affected users: {data.affected_users.length}. The
-                        protected local administrator retains access.
-                      </p>
-                      <ul>
-                        {data.affected_users.map((user) => (
-                          <li key={user.id}>
-                            {user.username} ({user.id})
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      disabled={pending}
-                      onClick={() => void check(draft.id)}
-                    >
-                      Test changed endpoints
-                    </Button>
-                    <Button
-                      disabled={
-                        pending ||
-                        !draft.validation?.valid ||
-                        !data.impact_available
-                      }
-                      onClick={() =>
-                        void act('activate', {
-                          version: settings.version,
-                          revision: draft.id,
-                        })
-                      }
-                    >
-                      Activate routing draft
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={pending}
-                      onClick={() =>
-                        void act('discard', { version: settings.version })
-                      }
-                    >
-                      Discard routing draft
-                    </Button>
-                  </div>
-                  {results && <Results results={results} />}
-                </div>
-              )}
-              {settings.history.length > 0 && (
-                <div className="table-wrap">
-                  <table aria-label="Routing revision history">
-                    <thead>
-                      <tr>
-                        <th>Revision</th>
-                        <th>Status</th>
-                        <th>Created</th>
-                        <th>By</th>
-                        <th>
-                          <span className="sr-only">Actions</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {settings.history.map((revision) => (
-                        <tr key={revision.id}>
-                          <td>{revision.id}</td>
-                          <td>{revision.status.replace('_', ' ')}</td>
-                          <td>
-                            {new Date(revision.created_at).toLocaleString()}
-                          </td>
-                          <td>{revision.created_by}</td>
-                          <td>
-                            {revision.status === 'previously_active' && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={pending}
-                                aria-label={`Roll back routing to revision ${revision.id}`}
-                                onClick={() =>
-                                  void act('rollback', {
-                                    version: settings.version,
-                                    revision: revision.id,
-                                  })
-                                }
-                              >
-                                Roll back
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+      {view.isPending && (
+        <p role="status" className="p-4">
+          Loading routes…
+        </p>
+      )}
+      {view.error && (
+        <p role="alert" className="error">
+          {view.error.message}
+        </p>
+      )}
+      {view.data && (
+        <RoutingWorkspace view={view.data} health={health.data?.models ?? []} />
       )}
     </section>
   )

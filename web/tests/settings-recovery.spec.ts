@@ -117,20 +117,26 @@ for (const domain of ['routing', 'authentication'] as const) {
     await page.goto(
       `/portal/admin/${domain === 'routing' ? 'advanced' : 'keycloak'}`,
     )
-    const form = page.getByRole('form', {
-      name:
-        domain === 'routing'
-          ? 'Edit routing draft'
-          : 'Edit authentication draft',
+    const isRouting = domain === 'routing'
+    const panel = page.getByRole('region', {
+      name: isRouting ? 'Routing settings' : 'Authentication settings',
+      exact: true,
+    })
+    if (isRouting)
+      await panel.getByRole('button', { name: 'Create route' }).click()
+    const form = panel.getByRole('form', {
+      name: isRouting ? 'Edit routing draft' : 'Edit authentication draft',
     })
     const input = form.getByLabel(
-      domain === 'routing' ? 'New logical model name' : 'Portal client ID',
+      isRouting ? 'Name clients use' : 'Portal client ID',
       { exact: true },
     )
     await input.fill('my-unsaved-work')
-    if (domain === 'routing')
-      await form.getByRole('button', { name: 'Add model', exact: true }).click()
-    else {
+    if (isRouting) {
+      await form
+        .getByLabel('New route replica 1 origin', { exact: true })
+        .fill('https://backend.example')
+    } else {
       await form
         .getByLabel('Portal client secret source', { exact: true })
         .selectOption('store')
@@ -138,36 +144,31 @@ for (const domain of ['routing', 'authentication'] as const) {
         .getByLabel('New portal client secret', { exact: true })
         .fill('synthetic-unsaved-credential')
     }
-    if (domain === 'routing')
-      await form
-        .getByLabel('my-unsaved-work replica 1 origin', { exact: true })
-        .fill('https://backend.example')
     version = 2
     await refocus(page)
-    await expect(form.getByRole('status')).toContainText(
-      'Settings changed elsewhere. Your edits are kept.',
-    )
-    if (domain === 'routing')
-      await expect(
-        form.getByText('my-unsaved-work', { exact: true }).first(),
-      ).toBeVisible()
-    else {
-      await expect(input).toHaveValue('my-unsaved-work')
+    await expect(
+      panel
+        .getByRole('status')
+        .filter({ hasText: 'Settings changed elsewhere.' }),
+    ).toContainText('Your edits are kept.')
+    await expect(input).toHaveValue('my-unsaved-work')
+    if (!isRouting)
       await expect(
         form.getByLabel('New portal client secret', { exact: true }),
       ).toHaveValue('synthetic-unsaved-credential')
-    }
     await form
       .getByRole('button', {
-        name: domain === 'routing' ? 'Save routing draft' : 'Save draft',
+        name: isRouting ? 'Save routing draft' : 'Save draft',
         exact: true,
       })
       .click()
-    await expect(form.getByRole('alert')).toContainText(
-      'Settings changed; reload before saving.',
-    )
+    await expect(
+      panel
+        .getByRole('alert')
+        .filter({ hasText: 'Settings changed; reload before saving.' }),
+    ).toBeVisible()
     expect(submitted?.version).toBe(1)
-    if (domain === 'routing')
+    if (isRouting)
       expect((submitted?.document as typeof routing).models).toHaveProperty(
         'my-unsaved-work',
       )
@@ -175,30 +176,39 @@ for (const domain of ['routing', 'authentication'] as const) {
       expect(submitted?.secrets).toEqual({
         portal_client_secret: 'synthetic-unsaved-credential',
       })
-    await form
+    await panel
       .getByRole('button', { name: 'Load latest and discard local edits' })
       .click()
-    await expect(form.getByRole('status')).toHaveCount(0)
-    if (domain === 'authentication') {
+    await expect(
+      panel
+        .getByRole('status')
+        .filter({ hasText: 'Settings changed elsewhere.' }),
+    ).toHaveCount(0)
+    if (isRouting) {
+      await expect(
+        panel.getByRole('button', { name: 'Edit route my-unsaved-work' }),
+      ).toHaveCount(0)
+      await panel.getByRole('button', { name: 'Review draft' }).click()
+      await panel.getByRole('button', { name: 'Discard routing draft' }).click()
+      await expect(
+        panel.getByRole('button', { name: 'Review draft' }),
+      ).toHaveCount(0)
+      await panel.getByRole('button', { name: 'Create route' }).click()
+      await expect(input).toHaveValue('')
+    } else {
       await expect(input).toHaveValue('other-writer')
       await expect(
         form.getByLabel('New portal client secret', { exact: true }),
       ).toHaveCount(0)
+      await input.fill('explicit-discard')
+      await panel
+        .getByRole('button', { name: 'Discard draft', exact: true })
+        .click()
+      await expect(
+        form.getByRole('heading', { name: 'New draft', exact: true }),
+      ).toBeVisible()
+      await expect(input).toHaveValue('other-writer')
     }
-    await input.fill('explicit-discard')
-    await page
-      .getByRole('button', {
-        name: domain === 'routing' ? 'Discard routing draft' : 'Discard draft',
-        exact: true,
-      })
-      .click()
-    await expect(
-      form.getByRole('heading', {
-        name: domain === 'routing' ? 'New routing draft' : 'New draft',
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(input).toHaveValue(domain === 'routing' ? '' : 'other-writer')
   })
 }
 

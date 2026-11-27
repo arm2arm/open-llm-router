@@ -20,7 +20,6 @@ import { GroupManager } from '@/group-manager'
 import { GroupSyncButton } from '@/group-sync'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { EndpointSettingsPanel } from '@/endpoints'
 import { AuthenticationSettingsPanel } from './authentication'
 import { RoutingSettingsPanel } from './routing'
 import { AdministrationHistory } from './admin-history'
@@ -567,12 +566,7 @@ export function AdminPage({ self }: { self: string }) {
           <AuthenticationSettingsPanel />
         </>
       )}
-      {section === 'advanced' && (
-        <>
-          <RoutingSettingsPanel />
-          <EndpointSettingsPanel />
-        </>
-      )}
+      {section === 'advanced' && <RoutingSettingsPanel />}
       {section === 'history' && <AdministrationHistory />}
     </>
   )

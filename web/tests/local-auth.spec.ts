@@ -951,6 +951,7 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
   await page
     .getByRole('link', { name: 'Advanced routing', exact: true })
     .click()
+  await page.getByRole('button', { name: 'Per-model endpoints' }).click()
   const panel = page.getByRole('region', {
     name: 'Endpoint configuration',
     exact: true,
@@ -1104,6 +1105,7 @@ test('administrator edits endpoints, tests, applies, restarts and restores a rou
     )
     .toBe(200)
   await page.reload()
+  await page.getByRole('button', { name: 'Per-model endpoints' }).click()
   await expect(entry).toContainText('weight 3')
   await complete()
   await entry.getByText('Revision history and restore', { exact: true }).click()
@@ -1403,7 +1405,7 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
     'staff',
   )
   await panel.getByRole('button', { name: 'Import current routing' }).click()
-  await expect(panel).toContainText('Database — active routing revision 1')
+  await expect(panel).toContainText('Active revision 1')
   await panel
     .getByRole('button', { name: 'Apply active routing to this router' })
     .click()
@@ -1419,39 +1421,45 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   ).toHaveCount(0)
   // A model granted by a group policy cannot be removed here.
   const draft = panel.getByRole('form', { name: 'Edit routing draft' })
+  await panel
+    .getByRole('button', { name: 'Edit route test', exact: true })
+    .click()
+  await draft.locator('summary').click()
   await expect(
-    draft.getByRole('button', { name: 'Remove model test', exact: true }),
+    draft.getByRole('button', { name: 'Remove route' }),
   ).toBeDisabled()
-  // Add a model on the second compatible backend, plus an alias.
-  await draft.getByLabel('New logical model name').fill('added-model')
-  await draft.getByRole('button', { name: 'Add model', exact: true }).click()
-  const added = draft.getByRole('article', { name: 'Model added-model' })
-  await added.getByLabel('added-model upstream model').fill('chat-model')
-  await expect(added.getByLabel('added-model model type')).toHaveValue('chat')
-  await added.getByLabel('added-model context length').fill('65536')
-  await added
-    .getByLabel('added-model replica 1 origin')
+  await draft.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+  await panel.getByRole('button', { name: 'Create route' }).click()
+  await draft.getByLabel('Name clients use').fill('added-model')
+  await draft.getByLabel('Model on that backend').fill('chat-model')
+  await draft
+    .getByLabel('New route replica 1 origin')
     .fill('http://mock-llm-b:8000')
+  await draft.locator('summary').click()
+  await expect(draft.getByLabel('New route model type')).toHaveValue('chat')
+  await draft.getByLabel('New route context length').fill('65536')
+  // A duplicate origin in one pool is an actionable validation problem.
+  await draft.getByRole('button', { name: 'Add replica' }).click()
+  await draft
+    .getByLabel('New route replica 2 origin')
+    .fill('http://mock-llm-b:8000')
+  await draft.getByRole('button', { name: 'Keep editing other routes' }).click()
+  await panel.getByRole('button', { name: 'Aliases', exact: true }).click()
   await draft.getByLabel('New alias', { exact: true }).fill('quick')
   await draft.getByLabel('New alias target').selectOption('added-model')
   await draft.getByRole('button', { name: 'Add alias', exact: true }).click()
-  // A duplicate origin in one pool is an actionable validation problem.
-  await added
-    .getByRole('button', { name: 'Add replica to added-model' })
-    .click()
-  await added
-    .getByLabel('added-model replica 2 origin')
-    .fill('http://mock-llm-b:8000')
-  await draft
-    .getByRole('button', { name: 'Save routing draft', exact: true })
-    .click()
+  await draft.getByRole('button', { name: 'Save routing draft' }).click()
   const status = panel.locator('[aria-label="Routing draft status"]')
   await expect(status).toContainText('is listed twice in this pool')
   await expect(
     panel.getByRole('button', { name: 'Activate routing draft' }),
   ).toBeDisabled()
+  await status
+    .getByRole('button', { name: 'Edit route added-model' })
+    .first()
+    .click()
   await draft
-    .getByRole('article', { name: 'Model added-model' })
     .getByRole('button', { name: 'Remove added-model replica 2' })
     .click()
   await draft
@@ -1490,6 +1498,7 @@ test('administrator adds a model, alias and endpoint as a routing revision, acti
   )
 
   // Roll back to the imported routing: the alias and model are gone.
+  await panel.getByRole('button', { name: 'Revision history' }).click()
   await panel
     .getByRole('button', {
       name: 'Roll back routing to revision 1',
@@ -1536,6 +1545,7 @@ test('administrator edits group defaults and previews overrides before activatio
   await page.goto(`${base}/portal/admin/advanced`)
   const panel = page.getByRole('region', { name: 'Routing settings' })
   await panel.getByRole('button', { name: 'Import current routing' }).click()
+  await panel.getByRole('button', { name: 'Group access' }).click()
   const form = panel.getByRole('form', { name: 'Edit routing draft' })
   await form.getByLabel('staff grant limited', { exact: true }).check()
   await form.getByLabel('staff rpm', { exact: true }).fill('9')
@@ -1568,6 +1578,7 @@ test('administrator edits group defaults and previews overrides before activatio
   expect(effective.limits.rpm).toBe(2)
   expect(effective.limits.max_concurrent_batch).toBe(4)
   expect(effective.limits.strict_quota).toBe(true)
+  await panel.getByRole('button', { name: 'Revision history' }).click()
   await panel
     .getByRole('button', {
       name: 'Roll back routing to revision 1',

@@ -850,6 +850,51 @@ test('pending advanced drafts block direct edits and save errors preserve input'
     'gpu.cluster:8000',
   )
 })
+test('a saved invalid draft opens the affected dotted route and allows manual endpoint repair', async ({
+  page,
+}) => {
+  const { view, saved } = await workspace(page)
+  connectionFixture(view)
+  const broken = structuredClone(view.settings.active!.document!)
+  const name = 'catalog/model.v2'
+  broken.models[name] = {
+    ...structuredClone(broken.models.fast),
+    pool: [{ ...broken.models.fast.pool[0], backend: 'missing' }],
+  }
+  broken.backends = {}
+  view.settings.draft = {
+    ...view.settings.active!,
+    id: 2,
+    status: 'draft',
+    document: broken,
+    validation: {
+      valid: false,
+      checked_at: '2026-01-01T00:00:00Z',
+      problems: ['models.' + name + '.pool[0]: choose an existing backend'],
+    },
+  }
+  await page.goto('/portal/admin/advanced')
+  await page.getByRole('button', { name: 'Review draft' }).click()
+  await expect(
+    page.getByRole('button', { name: 'Activate routing draft' }),
+  ).toBeDisabled()
+  await page
+    .getByRole('alert')
+    .getByRole('button', { name: 'Edit route ' + name })
+    .click()
+  const form = page.getByRole('form', { name: 'Edit routing draft' })
+  await expect(form.getByLabel(name + ' replica 1 weight')).toBeVisible()
+  await form
+    .getByLabel(name + ' replica 1 backend', { exact: true })
+    .selectOption('manual')
+  await form.getByLabel(name + ' replica 1 origin').fill('https://new.example')
+  await form.getByRole('button', { name: 'Save routing draft' }).click()
+  await expect.poll(() => saved.length).toBe(1)
+  expect(saved[0].document.models[name].pool[0]).toMatchObject({
+    backend: '',
+    url: 'https://new.example',
+  })
+})
 
 test('clone preserves configuration and model selection under a unique new name', async ({
   page,
@@ -1017,20 +1062,21 @@ test('replica backend names update shared labels without changing IDs or credent
   })
   const before = structuredClone(document)
   await page.goto('/portal/admin/advanced')
+  await page
+    .getByRole('button', { name: 'Edit route fast', exact: true })
+    .click()
+  await page.locator('.route-options > summary').click()
   const name = page.getByLabel('fast replica 1 backend name', { exact: true })
   await expect(name).toHaveValue('Test GPU')
   await name.fill('AIP fast1')
   expect(
     await page.evaluate(() => window.document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(360)
-  await expect(
-    page.getByLabel('shared replica 1 backend name', { exact: true }),
-  ).toHaveValue('AIP fast1')
   const selector = page.getByRole('combobox', {
     name: 'fast replica 1 backend',
     exact: true,
   })
-  await expect(selector).toHaveValue('gpu')
+  await expect(selector).toHaveValue('backend:gpu')
   await expect(selector.locator('option:checked')).toHaveText(
     'AIP fast1 — http://gpu.cluster:8000',
   )
@@ -1042,6 +1088,12 @@ test('replica backend names update shared labels without changing IDs or credent
     'gpu — http://gpu.cluster:8000',
   )
   await name.fill('AIP fast1')
+  await page.getByRole('button', { name: 'Keep editing other routes' }).click()
+  await page.getByRole('button', { name: 'Edit route shared' }).click()
+  await page.locator('.route-options > summary').click()
+  await expect(
+    page.getByLabel('shared replica 1 backend name', { exact: true }),
+  ).toHaveValue('AIP fast1')
   await page
     .getByRole('button', { name: 'Save routing draft', exact: true })
     .click()
@@ -1073,25 +1125,20 @@ test('model renaming replaces generated names and preserves grants, aliases and 
   doc.aliases['aip-chat'] = generated
   const before = structuredClone(doc)
   await page.goto('/portal/admin/advanced')
-  const model = page.getByRole('article', {
-    name: `Model ${generated}`,
-    exact: true,
-  })
-  const input = model.getByLabel(`${generated} model name`, { exact: true })
+  await page
+    .getByRole('button', { name: 'Edit route ' + generated, exact: true })
+    .click()
+  const model = page.getByRole('form', { name: 'Edit routing draft' })
+  const input = model.getByLabel('Name clients use', { exact: true })
+  const save = model.getByRole('button', { name: 'Save routing draft' })
   await input.fill('fast')
-  await model.getByRole('button', { name: 'Rename model' }).click()
+  await save.click()
   await expect(model.getByRole('alert')).toContainText('already used')
   await input.fill('aip-chat')
-  await model.getByRole('button', { name: 'Rename model' }).click()
+  await save.click()
   await expect(model.getByRole('alert')).toContainText('already used')
   await input.fill('aip-fast')
-  await model.getByRole('button', { name: 'Rename model' }).click()
-  await expect(
-    page.getByRole('article', { name: 'Model aip-fast', exact: true }),
-  ).toBeVisible()
-  await page
-    .getByRole('button', { name: 'Save routing draft', exact: true })
-    .click()
+  await save.click()
   await expect.poll(() => saved.length).toBe(1)
   const result = saved[0].document
   expect(result.models[generated]).toBeUndefined()
@@ -1103,4 +1150,96 @@ test('model renaming replaces generated names and preserves grants, aliases and 
   expect(result.aliases['aip-chat']).toBe('aip-fast')
   expect(result.models.fast).toEqual(before.models.fast)
   expect(result.backends).toEqual(before.backends)
+})
+test('a managed catalog creates and activates one route using the basic fields at 360px', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 })
+  const { view, saved } = await workspace(page)
+  connectionFixture(view)
+  const active = view.settings.active!.document!
+  for (let i = 1; i < 20; i++)
+    active.models['catalog-model-' + i] = structuredClone(active.models.fast)
+  view.impact_available = true
+  await page.goto('/portal/admin/advanced')
+  const panel = page.getByRole('region', { name: 'Routing settings' })
+  const edit = panel.getByRole('form', { name: 'Edit routing draft' })
+  await expect(panel.getByRole('button', { name: /^Edit route / })).toHaveCount(
+    20,
+  )
+  await expect(edit).toHaveCount(0)
+  await panel.getByLabel('Find a route').fill('catalog-model-19')
+  await expect(panel.getByRole('button', { name: /^Edit route / })).toHaveCount(
+    1,
+  )
+  await panel
+    .getByRole('button', { name: 'Edit route catalog-model-19' })
+    .press('Enter')
+  await expect(edit).toHaveCount(1)
+  await expect(edit.getByLabel('Name clients use')).toHaveValue(
+    'catalog-model-19',
+  )
+  await edit.getByRole('button', { name: 'Cancel' }).press('Enter')
+  await panel.getByRole('button', { name: 'Create route' }).press('Enter')
+  await expect(
+    panel.getByRole('heading', { name: 'Create route' }),
+  ).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(edit.getByLabel('Name clients use')).toBeFocused()
+  await page.keyboard.type('research-chat')
+  await page.keyboard.press('Tab')
+  const backend = edit.getByLabel('New route replica 1 backend', {
+    exact: true,
+  })
+  await expect(backend).toBeFocused()
+  await backend.press('t')
+  await expect(backend).toHaveValue('backend:gpu')
+  await page.keyboard.press('Tab')
+  await expect(edit.getByLabel('Model on that backend')).toBeFocused()
+  await page.keyboard.type('deepseek-r1')
+  await expect(edit.getByLabel('New route replica 1 weight')).toBeHidden()
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(360)
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+        .analyze()
+    ).violations,
+  ).toEqual([])
+  await edit.getByRole('button', { name: 'Save routing draft' }).press('Enter')
+  const review = panel.getByRole('group', { name: 'Routing draft status' })
+  await expect(review).toContainText('Add route research-chat')
+  expect(saved).toHaveLength(1)
+  expect(active.models['research-chat']).toBeUndefined()
+  expect(saved[0].document.models['research-chat']).toMatchObject({
+    upstream_model: 'deepseek-r1',
+    protocols: ['openai'],
+    pool: [{ backend: 'gpu', weight: 1, max_inflight: 8 }],
+  })
+  await page.reload()
+  await panel.getByRole('button', { name: 'Review draft' }).click()
+  await page.route(
+    '**/admin/settings/routing/activate',
+    (route) =>
+      route.fulfill({
+        status: 400,
+        json: {
+          error: { message: 'The changed endpoint failed its health check.' },
+        },
+      }),
+    { times: 1 },
+  )
+  await review.getByRole('button', { name: 'Activate routing draft' }).click()
+  await expect(panel.getByRole('alert')).toContainText('health check')
+  expect(view.settings.active!.id).toBe(1)
+  await review.getByRole('button', { name: 'Activate routing draft' }).click()
+  await expect(review).toHaveCount(0)
+  await expect(
+    panel.getByRole('button', { name: 'Edit route research-chat' }),
+  ).toBeVisible()
+  expect(view.settings.active!.document!.models['research-chat']).toEqual(
+    saved[0].document.models['research-chat'],
+  )
 })

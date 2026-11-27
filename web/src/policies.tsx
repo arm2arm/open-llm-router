@@ -64,13 +64,13 @@ export function GroupPolicies({
                   <input
                     type="checkbox"
                     aria-label={`${name} grant ${model}`}
-                    checked={policy.models.includes(model)}
+                    checked={policy.models?.includes(model) ?? false}
                     onChange={(e) =>
                       update(name, {
                         ...policy,
                         models: e.target.checked
-                          ? [...policy.models, model]
-                          : policy.models.filter((m) => m !== model),
+                          ? [...(policy.models ?? []), model]
+                          : (policy.models ?? []).filter((m) => m !== model),
                       })
                     }
                   />
