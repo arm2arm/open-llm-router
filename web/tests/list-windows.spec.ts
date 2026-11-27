@@ -160,6 +160,7 @@ test('administrator can search beyond the user cap for a policy preview', async 
   await page
     .getByRole('link', { name: 'Advanced routing', exact: true })
     .click()
+  await page.getByRole('button', { name: 'Group access', exact: true }).click()
   const preview = page.getByRole('group', { name: 'Effective access preview' })
   await expect(preview.getByRole('status')).toContainText('Narrow the search')
   await preview.getByLabel('Find a user by name or email').fill('zebra')

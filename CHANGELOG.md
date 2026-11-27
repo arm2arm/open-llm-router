@@ -5,6 +5,10 @@
 These notes describe changes on `main`; they do not announce a published release.
 The source of detailed evidence is the [remediation ledger](docs/AUDIT_REMEDIATION.md).
 
+- **Admin → Advanced routing** opens on a searchable route list. Create or edit one
+  route at a time, review a saved draft and its effect on users, then activate
+  it. Aliases, group access and revision history have dedicated views.
+
 - `GET /v1/me/usage` exposes the calling API key's label, workload class and
   expiry alongside its ID and display prefix. Clients that use a pasted key
   can warn the user before it expires.

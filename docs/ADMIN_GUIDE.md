@@ -52,7 +52,7 @@ both global overrides. Supported limits are 1–1,048,576 whole MiB and
 
 | Task | Current interface | When it applies |
 |---|---|---|
-| Add/edit/remove replicas for an existing model; change upstream model, protocols, timeouts, affinity, credential reference, weight or capacity | **Admin → Endpoint configuration** or portal API | Live after validation and health checks; saved in PostgreSQL |
+| Add/edit/remove replicas for an existing model; change upstream model, protocols, timeouts, affinity, credential reference, weight or capacity | **Admin → Advanced routing → Per-model endpoints** (file-managed), **Edit → Advanced settings** (managed), or portal API | Live after validation and health checks; saved in PostgreSQL |
 | Add/remove logical model names or aliases | **Admin → Advanced routing**, settings API/CLI, or private YAML | Live on activation; file changes need restart |
 | Grant a group access to models; set group default limits | **Admin → Advanced routing** group policies, settings API/CLI, or private YAML | Next request after activation; file changes need restart |
 | Assign a person to a Keycloak group | Keycloak administration | Next portal login or successful group sync for API-key users |
@@ -76,12 +76,12 @@ When institutional login is primary, the sign-in page highlights **Institutional
 login** through Keycloak and keeps local credentials under **Use a local account**.
 The direct `/portal/sign-in/local` recovery page always shows the local form.
 
-In **Admin → Advanced routing**, edit a route's **Model name** and select **Rename
-model**, then save and activate the draft. This replaces generated names such as
-`backend-…/model` with a name such as `aip-fast`. Group grants and alias targets
-follow the rename; the upstream model, backend IDs and replica settings remain
-unchanged. Clients using the old route name must use the new name or an existing
-alias. Backend names are edited separately in each replica's **Backend name** field.
+In **Admin → Advanced routing**, choose **Edit** beside a route and change **Name
+clients use**. Choose **Save routing draft**, review the change, and activate it.
+This replaces generated names such as `backend-…/model` with a name such as
+`aip-fast`. Group grants and alias targets follow the rename. Clients using the
+old route name must switch to the new name or an alias. The router still sends
+the original upstream model name to the backend.
 
 The public **About** page is available at `/portal/about`, from sign-in, the
 portal navigation and the public project overview. It includes developer
@@ -1044,7 +1044,7 @@ original stays unchanged. Review the copy and choose **Save backend** to create
 it, or cancel without creating anything. Saved and deployment API keys are bound
 to the original connection, so enter the key for the new backend if it needs one.
 
-In **Advanced routing**, each linked replica has a **Backend name** field.
+In **Advanced routing → Edit → Advanced settings**, each linked replica has a **Shared backend name** field.
 Renaming it updates the shared backend's display name in every selector and card;
 the backend ID, routing references and saved credentials stay the same. Save and
 activate the routing draft to publish the name.
@@ -1134,21 +1134,30 @@ file-managed until imported, then versioned with drafts, activation and rollback
 in **Admin → Advanced routing** (or `/portal/api/admin/settings/routing`, or
 `olr admin settings -domain routing`). Group grants and per-user policy defaults are included in the same revision.
 
-**Admin → Advanced routing** shows how a request is routed: the groups that grant each
-model (`*` grants all), its aliases, native protocols, upstream name and each
-endpoint with its credential reference, health and in-flight count. After
-**Import current routing**, edit a draft: add a logical model, set its upstream
-name, protocols, timeouts, session affinity, context length (empty reports the
-smallest value the backends' catalogs give) and model type, add or remove endpoint replicas
-(origin, health path, weight, capacity, credential reference chosen from the
-allowed list), and add or retarget aliases. A model still granted by a group
-or named by an alias cannot be removed; the page names the dependency. **Save
-routing draft** lists validation problems (for example a duplicate origin in one
-pool, an unknown alias target or a refused destination). **Test changed
-endpoints**, **Activate routing draft**, **Discard**, **Roll back** and **Apply
-active routing to this router** act as described below. Endpoints are generic
-OpenAI- or Anthropic-compatible HTTP origins, not named cloud providers.
-Credential values are never shown or stored in the browser.
+**Admin → Advanced routing** lists the model names clients can use, their backends
+and live replica health. Search by name, alias, group or backend. Expand a
+destination to inspect individual endpoints, credential references, group grants
+and in-flight counts. Pending additions, edits and removals are marked in the list.
+
+1. For file-managed routing, choose **Import current routing** to start managing
+   revisions. **Per-model endpoints** opens the existing endpoint editor before
+   import. To discover models on a new connection, use **Admin → Backends**.
+2. Choose **Create route**, enter the **Name clients use**, select a backend or
+   enter an endpoint URL, and set **Model on that backend** if it differs from
+   the client name. **Advanced settings** contains protocols, timeouts, model
+   metadata, session affinity, additional replicas, credentials and capacity.
+3. Choose **Save routing draft** to review the complete revision. To change
+   several routes or their access together, choose **Keep editing other routes**.
+   Open **Aliases** or **Group access** from the list. The latter includes the
+   effective access preview. Save the collected edits as one draft.
+4. In **Review draft**, inspect the changes, validation problems and affected
+   users. A validation problem with an identifiable route opens that editor.
+   **Test changed endpoints** probes destinations. **Activate routing draft**
+   publishes the revision after the changed endpoints pass their checks.
+   A failed check leaves the draft available for correction.
+5. To restore a past revision, open **Revision history** and choose **Roll back**.
+   **Apply active routing to this router** appears when its running revision
+   differs from the active revision.
 
 - **Import** copies the routing in use, including saved per-model endpoint
   revisions, without changing it. From then on the per-model endpoint editor is
@@ -1495,7 +1504,7 @@ weeks of real user activity.
 
 ### Edit group policies and preview effective access
 
-After importing Routing, edit **Group policies** in the routing draft. Grant
+After importing routing, open **Group access** to edit group policies in the routing draft. Grant
 canonical models or `*`, set each per-user quota/rate/concurrency default,
 strict quota, priority and administrator access. Endpoints/providers are reached
 through the granted model's pool; these are not shared group/provider budgets.

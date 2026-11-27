@@ -34,6 +34,113 @@
   gap: 20px;
   margin-bottom: 24px;
 }
+.routing-workspace,
+.routing-workspace .field,
+.routing-workspace .select,
+.routing-editor input {
+  min-width: 0;
+  max-width: 100%;
+}
+.routing-title {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+}
+.routing-body,
+.routing-editor {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+.routing-body {
+  padding: 20px 24px;
+}
+.routing-editor {
+  width: min(100%, 52rem);
+}
+.routing-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.route-back,
+.route-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.route-back {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  padding: 3px 0;
+  margin-bottom: 4px;
+}
+.route-search {
+  position: relative;
+  max-width: 24rem;
+}
+.route-search svg {
+  position: absolute;
+  inset-inline-start: 10px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.route-search input {
+  padding-inline-start: 33px;
+}
+table.route-list {
+  table-layout: fixed;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.route-list :is(th, td) {
+  padding: 10px 8px;
+  vertical-align: top;
+}
+.route-edit-column {
+  width: 64px;
+}
+.route-options {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.route-options summary,
+.route-destinations summary {
+  cursor: pointer;
+}
+.route-options summary span {
+  font-weight: 600;
+}
+.route-options summary small {
+  display: block;
+  color: var(--muted-foreground);
+  margin-inline-start: 15px;
+}
+.route-destinations ul,
+.route-destinations p {
+  margin-block: 6px;
+}
+.route-changes li {
+  display: grid;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .routing-body {
+    padding: 14px;
+  }
+  .route-edit-column {
+    width: 48px;
+  }
+  .route-list :is(th, td) {
+    padding: 8px 3px;
+  }
+}
 .backend-heading h2 {
   font-size: 28px;
   font-weight: 650;
