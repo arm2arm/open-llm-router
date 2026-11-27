@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,24 +65,37 @@ func TestAdminKeyDelegationNarrowingAndRecovery(t *testing.T) {
 	var replacementRaw string
 	for _, tc := range []struct {
 		permissions, networks []string
-		allowed               bool
+		denial                string
 	}{
-		{[]string{"users:read"}, []string{"192.0.2.4"}, false},
-		{[]string{"service:read"}, []string{"192.0.2.0/24"}, false},
-		{[]string{"service:read"}, []string{"192.0.2.4"}, true},
+		{[]string{"users:read"}, []string{"192.0.2.4"}, "Permission users:read exceeds"},
+		{[]string{"service:read"}, []string{"192.0.2.4", "198.51.100.0/24"}, "Network 198.51.100.0/24 is outside"},
+		{[]string{"service:read"}, []string{"192.0.2.0/24"}, "Network 192.0.2.0/24 is outside"},
+		{[]string{"service:read"}, []string{"192.0.2.4"}, ""},
 	} {
 		c, err := adminaccess.Validate(adminaccess.Create{Label: "replacement", Days: 7, Permissions: tc.permissions, Networks: tc.networks, ReplacesID: parent.ID}, 90)
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, secret, err := adminaccess.Issue(t.Context(), pool, owner.ID, c, nil, 10, actor)
-		if tc.allowed {
+		if tc.denial == "" {
 			if err != nil {
 				t.Fatal("replacement with equal grants refused", err)
 			}
 			replacementRaw = secret
-		} else if !errors.Is(err, adminaccess.ErrDenied) {
-			t.Fatal("replacement broadened grants")
+		} else if secret != "" || !errors.Is(err, adminaccess.ErrDenied) || !strings.Contains(err.Error(), tc.denial) {
+			t.Fatalf("expected a rotation denial identifying the rejected grant, got %v", err)
+		}
+	}
+	other := user(t, pool, "local", "other-key-owner")
+	for _, tc := range []struct{ owner, original string }{
+		{owner.ID, "invalid-id"},
+		{owner.ID, "00000000-0000-0000-0000-000000000000"},
+		{other, parent.ID},
+	} {
+		c := adminaccess.Create{Label: "replacement", Days: 1, Permissions: []string{"service:read"}, Networks: []string{"192.0.2.4/32"}, ReplacesID: tc.original}
+		_, secret, err := adminaccess.Issue(t.Context(), pool, tc.owner, c, nil, 10, audit.Actor{Type: "portal_user", ID: tc.owner})
+		if secret != "" || !errors.Is(err, adminaccess.ErrDenied) || !strings.Contains(err.Error(), "select a key owned by the signed-in administrator") {
+			t.Fatalf("expected an unavailable original key, got %v", err)
 		}
 	}
 	if err := adminaccess.Revoke(t.Context(), pool, owner.ID, parent.ID, actor); err != nil {

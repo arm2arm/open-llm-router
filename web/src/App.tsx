@@ -417,7 +417,10 @@ function Workspace({
                   />
                 )}
                 {me.data.admin && (
-                  <Route path="/admin/agents" element={<AgentAccessPage />} />
+                  <Route
+                    path="/admin/agents"
+                    element={<AgentAccessPage session={session} />}
+                  />
                 )}
                 <Route path="*" element={<Navigate to="/keys" replace />} />
               </Routes>

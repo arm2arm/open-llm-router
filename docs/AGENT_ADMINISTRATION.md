@@ -48,8 +48,10 @@ The inventory lists prefixes, permissions, networks, expiration, last successful
 use and IP, and parent relationships. Rotation creates a replacement; test it,
 then revoke the old key. Replacements retain or reduce permissions and networks;
 the server checks against the current key even if it changed after the wizard
-opened. Rotation renews expiration within the operator's configured lifetime cap
-and creates an independent credential, so revoking the old key preserves its
+opened. When a request exceeds those grants, the wizard identifies the network
+or permission to change. To approve broader access, use **Create administration key**.
+Rotation renews expiration within the operator's configured lifetime cap and
+creates an independent credential, so revoking the old key preserves its
 replacement. **Restrict access** can reduce permissions, networks and
 expiration, and revokes existing descendants. Revocation is effective on the next
 request, including within an existing MCP connection.

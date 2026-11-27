@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, request } from '@/lib/api'
+import { api, ApiError, request, type Session } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -63,7 +63,7 @@ const permissionHelp: Record<string, string> = {
   'user_keys:issue':
     'Issue inference keys for SSO users on their behalf, and revoke or inspect the keys this key issued. Grants no access to the user list.',
 }
-export function AgentAccessPage() {
+export function AgentAccessPage({ session }: { session: Session }) {
   const cache = useQueryClient()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -82,7 +82,7 @@ export function AgentAccessPage() {
   const [days, setDays] = useState(7)
   const [secret, setSecret] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<Error | null>(null)
   const [revokeError, setRevokeError] = useState('')
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<AgentKey | null>(null)
@@ -90,6 +90,9 @@ export function AgentAccessPage() {
   const [restrict, setRestrict] = useState<AgentKey | null>(null)
   const [copied, setCopied] = useState(false)
   const data = inventory.data
+  const localSignIn =
+    session.auth_method === 'local' ||
+    permissions.some((p) => sensitive.includes(p))
   const entries = networks.split(/[\s,]+/).filter(Boolean)
   const validDays =
     Number.isInteger(days) &&
@@ -109,7 +112,7 @@ export function AgentAccessPage() {
     setRotation(key ?? null)
     setStep(0)
     setSecret('')
-    setError('')
+    setError(null)
     setCopied(false)
     setLabel(key ? `${key.label} replacement` : '')
     setPermissions(key?.permissions ?? observer)
@@ -133,7 +136,7 @@ export function AgentAccessPage() {
     )
       return
     setBusy(true)
-    setError('')
+    setError(null)
     try {
       const result = await request<{ key: string }>(
         'admin/agent-keys',
@@ -150,7 +153,7 @@ export function AgentAccessPage() {
       setStep(4)
       await cache.invalidateQueries({ queryKey: ['agent-keys'] })
     } catch (e) {
-      setError((e as Error).message)
+      setError(e instanceof Error ? e : new Error('Key creation failed.'))
     } finally {
       setBusy(false)
     }
@@ -205,9 +208,9 @@ export function AgentAccessPage() {
           approved IP addresses.
         </p>
       </div>
-      {(inventory.error || error) && (
+      {inventory.error && (
         <p role="alert" className="error">
-          {error || inventory.error?.message}
+          {inventory.error.message}
         </p>
       )}
       {inventory.isPending && <p role="status">Loading administration keys…</p>}
@@ -384,7 +387,7 @@ export function AgentAccessPage() {
             setOpen(value)
             if (!value) {
               setSecret('')
-              setError('')
+              setError(null)
             }
           }
         }}
@@ -397,7 +400,7 @@ export function AgentAccessPage() {
             <DialogTitle>
               {step === 4
                 ? 'Save your administration key'
-                : `Create administration key · ${step + 1} of 4`}
+                : `${rotation ? 'Rotate' : 'Create'} administration key · ${step + 1} of 4`}
             </DialogTitle>
             <DialogDescription>
               {step === 4
@@ -485,6 +488,13 @@ export function AgentAccessPage() {
             )}
             {step === 1 && (
               <>
+                {rotation && (
+                  <p className="text-sm">
+                    The original key allows{' '}
+                    {rotation.allowed_networks.join(', ')}. For a different
+                    network outside those ranges, use Create administration key.
+                  </p>
+                )}
                 <label className="grid gap-2">
                   Approved IP addresses or CIDRs
                   <textarea
@@ -529,10 +539,9 @@ export function AgentAccessPage() {
                     onChange={(e) => setDays(Number(e.target.value))}
                   />
                 </label>
-                <p>
-                  Rotation creates a replacement. Revoke the old key after
-                  verifying the new connection.
-                </p>
+                {rotation && (
+                  <p>Verify the replacement before revoking the old key.</p>
+                )}
               </>
             )}
             {step === 3 && (
@@ -548,14 +557,6 @@ export function AgentAccessPage() {
                     {userKeyWarning}
                   </p>
                 )}
-                <p className="text-sm">
-                  Issuance requires a sign-in within the last 15 minutes.
-                  {permissions.some((p) => sensitive.includes(p)) &&
-                    ' These sensitive permissions require a local administrator sign-in.'}
-                </p>
-                <a className="underline" href="/portal/sign-in/local">
-                  Sign in again as local administrator
-                </a>
               </>
             )}
             {step === 4 && (
@@ -574,7 +575,7 @@ export function AgentAccessPage() {
                       await navigator.clipboard.writeText(secret)
                       setCopied(true)
                     } catch {
-                      setError('Select and copy the key manually.')
+                      setError(new Error('Select and copy the key manually.'))
                     }
                   }}
                 >
@@ -589,15 +590,30 @@ export function AgentAccessPage() {
             )}
             {error && (
               <p role="alert" className="error">
-                {error}
+                {error.message}
               </p>
             )}
+            {error instanceof ApiError &&
+              (error.code === 'reauthentication_required' ||
+                error.status === 401) && (
+                <a
+                  className="underline"
+                  href={`/portal/sign-in/${localSignIn ? 'local' : 'keycloak'}?next=/portal/admin/agents`}
+                >
+                  {localSignIn
+                    ? 'Sign in again as local administrator'
+                    : 'Sign in again with Keycloak'}
+                </a>
+              )}
             <div className="flex flex-wrap gap-2">
               {step > 0 && step < 4 && (
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setStep(step - 1)}
+                  onClick={() => {
+                    setError(null)
+                    setStep(step - 1)
+                  }}
                 >
                   Back
                 </Button>
